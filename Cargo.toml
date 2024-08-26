@@ -1,0 +1,13 @@
+[package]
+name = "cfx-storage2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1"
+auto_impl = "1.2"
+kvdb-rocksdb = "0.19"
+kvdb = "0.13"
+parking_lot = "0.12"
+
+ethereum-types = "0.12"
