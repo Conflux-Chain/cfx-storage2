@@ -18,7 +18,7 @@ pub enum StorageError {
     DecodeError(#[from] DecodeError),
     
     #[error("tree error {0:?}")]
-    TreeError(#[from] TreeError<CommitID>),
+    TreeError(#[from] TreeError::<CommitID>),
 }
 
 pub type Result<T> = ::std::result::Result<T, StorageError>;

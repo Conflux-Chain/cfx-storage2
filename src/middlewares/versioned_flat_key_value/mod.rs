@@ -33,8 +33,8 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> where T::Key: Hash {
 }
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> where T::Key: Hash  {
-    pub fn get_pending_part(&self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        self.pending_part.query(commit, key)
+    pub fn get_pending_part(&mut self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
+        Ok(self.pending_part.query(commit, key)?)
     }
 
     pub fn get_historical_part(&self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
