@@ -37,6 +37,12 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> where T::Key: Hash 
         Ok(self.pending_part.query(commit, key)?)
     }
 
+    pub fn add_to_pending_part(&mut self, parent_commit: Option<CommitID>, commit: CommitID, 
+        updates: Vec::<(T::Key, Option<T::Value>)>,
+    ) -> Result<()> {
+        Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
+    }
+
     pub fn get_historical_part(&self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
         let target_history_number = if let Some(value) = self.commit_id_table.get(&commit)? {
             value.into_owned()
