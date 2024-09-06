@@ -1,5 +1,8 @@
 mod table_schema;
 
+use in_memory_tree::VersionedHashMap;
+use std::hash::Hash;
+
 use self::table_schema::{ChangeHistorySchema, HistoryIndicesSchema, VersionedKeyValueSchema};
 use crate::backends::TableReader;
 use crate::errors::Result;
@@ -20,16 +23,16 @@ impl HistoryIndices {
     }
 }
 
-struct PendingPart;
+// struct PendingPart;
 
-pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
-    pending_part: PendingPart,
+pub struct VersionedStore<'db, T: VersionedKeyValueSchema> where T::Key: Hash {
+    pending_part: VersionedHashMap<T::Key, CommitID, T::Value>,
     history_index_table: TableReader<'db, HistoryIndicesSchema<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     change_history_table: KeyValueBulks<'db, ChangeHistorySchema<T>>,
 }
 
-impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> where T::Key: Hash  {
     pub fn get_pending_part(&self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
         todo!()
     }
