@@ -12,9 +12,9 @@ parking_lot = "0.12"
 
 ethereum-types = "0.12"
 
-in-memory-tree = { path = "src/in_memory_tree" }
+in-memory-tree = { path = "src/pending_part" }
 
 [workspace]
 members = [
-    "src/in_memory_tree"
+    "src/pending_part"
 ]

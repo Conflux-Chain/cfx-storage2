@@ -3,7 +3,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use slab::Slab;
 
-use crate::TreeError;
+use crate::PendingError;
 
 type SlabIndex = usize;
 
@@ -38,11 +38,11 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
     fn commit_id_to_slab_index(
         &self,
         commit_id: CommitId,
-    ) -> Result<SlabIndex, TreeError<CommitId>> {
+    ) -> Result<SlabIndex, PendingError<CommitId>> {
         let slab_index = *self
             .index_map
             .get(&commit_id)
-            .ok_or_else(|| TreeError::CommitIDNotFound(commit_id))?;
+            .ok_or_else(|| PendingError::CommitIDNotFound(commit_id))?;
         Ok(slab_index)
     }
 
@@ -68,7 +68,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         commit_id: CommitId,
         parent_commit_id: Option<CommitId>,
         modifications: Vec<(Key, Option<Value>, Option<CommitId>)>,
-    ) -> Result<(), TreeError<CommitId>> {
+    ) -> Result<(), PendingError<CommitId>> {
         // return error if Some(parent_commit_id) but parent_commit_id does not exist
         let (parent_slab_index, parent_height) = if let Some(parent_commit_id) = parent_commit_id {
             let p_slab_index = self.commit_id_to_slab_index(parent_commit_id)?;
@@ -77,13 +77,13 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         } else {
             // return error if want to add root but there has been a root
             if self.has_root() {
-                return Err(TreeError::MultipleRootsNotAllowed);
+                return Err(PendingError::MultipleRootsNotAllowed);
             }
             (None, 0)
         };
         // return error if commit_id exists
         if self.index_map.contains_key(&commit_id) {
-            return Err(TreeError::CommitIdAlreadyExists(commit_id));
+            return Err(PendingError::CommitIdAlreadyExists(commit_id));
         }
         let node = TreeNode::new(commit_id, parent_slab_index, parent_height, modifications);
 
@@ -114,7 +114,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
     pub fn remove_subtree(
         &mut self,
         subroot_commit_id: CommitId,
-    ) -> Result<(), TreeError<CommitId>> {
+    ) -> Result<(), PendingError<CommitId>> {
         let subroot_slab_index = self.commit_id_to_slab_index(subroot_commit_id)?;
 
         let to_remove = self.bfs_subtree(subroot_slab_index);
@@ -141,7 +141,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
     pub fn find_path(
         &self,
         target_commit_id: CommitId,
-    ) -> Result<HashMap<Key, (CommitId, Option<Value>)>, TreeError<CommitId>> {
+    ) -> Result<HashMap<Key, (CommitId, Option<Value>)>, PendingError<CommitId>> {
         let target_slab_index = self.commit_id_to_slab_index(target_commit_id)?;
         let mut target_node = self.slab_index_to_node(target_slab_index);
         let mut commits_rev = HashMap::new();
@@ -165,7 +165,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
             HashMap<Key, Option<CommitId>>,
             HashMap<Key, (CommitId, Option<Value>)>,
         ),
-        TreeError<CommitId>,
+        PendingError<CommitId>,
     > {
         let current_slab_index = self.commit_id_to_slab_index(current_commit_id)?;
         let target_slab_index = self.commit_id_to_slab_index(target_commit_id)?;

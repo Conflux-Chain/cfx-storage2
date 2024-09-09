@@ -1,4 +1,4 @@
-use in_memory_tree::TreeError;
+use in_memory_tree::PendingError;
 use thiserror::Error;
 
 use crate::middlewares::CommitID;
@@ -18,7 +18,7 @@ pub enum StorageError {
     DecodeError(#[from] DecodeError),
     
     #[error("tree error {0:?}")]
-    TreeError(#[from] TreeError::<CommitID>),
+    TreeError(#[from] PendingError::<CommitID>),
 }
 
 pub type Result<T> = ::std::result::Result<T, StorageError>;

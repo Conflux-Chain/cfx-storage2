@@ -4,7 +4,7 @@ use std::{
     hash::Hash,
 };
 
-use crate::{commit_tree::Tree, TreeError};
+use crate::{commit_tree::Tree, PendingError};
 
 pub struct VersionedHashMap<
     Key: Eq + Hash + Clone + Ord,
@@ -39,7 +39,7 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
         updates: Vec<(Key, Option<Value>)>,
         commit_id: CommitId,
         parent_commit_id: Option<CommitId>,
-    ) -> Result<(), TreeError<CommitId>> {
+    ) -> Result<(), PendingError<CommitId>> {
         // let parent to be self.current
         self.walk_to_node(parent_commit_id)?;
         assert_eq!(parent_commit_id, self.current_node);
@@ -67,7 +67,7 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
         &mut self,
         commit_id: CommitId,
         key: &Key,
-    ) -> Result<Option<Value>, TreeError<CommitId>> {
+    ) -> Result<Option<Value>, PendingError<CommitId>> {
         // let queried node to be self.current
         self.walk_to_node_unchecked(commit_id)?;
         assert_eq!(Some(commit_id), self.current_node);
@@ -87,7 +87,7 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
         &'a mut self,
         commit_id: CommitId,
         key: Key,
-    ) -> Result<Box<dyn Iterator<Item = (&Key, &Value)> + 'a>, TreeError<CommitId>> {
+    ) -> Result<Box<dyn Iterator<Item = (&Key, &Value)> + 'a>, PendingError<CommitId>> {
         // let queried node to be self.current
         self.walk_to_node_unchecked(commit_id)?;
         assert_eq!(Some(commit_id), self.current_node);
@@ -112,7 +112,7 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
     fn walk_to_node(
         &mut self,
         target_commit_id: Option<CommitId>,
-    ) -> Result<(), TreeError<CommitId>> {
+    ) -> Result<(), PendingError<CommitId>> {
         if target_commit_id.is_none() {
             self.current = BTreeMap::new();
             self.current_node = None;
@@ -124,7 +124,7 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
     fn walk_to_node_unchecked(
         &mut self,
         target_commit_id: CommitId,
-    ) -> Result<(), TreeError<CommitId>> {
+    ) -> Result<(), PendingError<CommitId>> {
         let (rollbacks, commits_rev) = if self.current_node.is_none() {
             let commits_rev = self.tree.find_path(target_commit_id)?;
             (HashMap::new(), commits_rev)
@@ -257,11 +257,11 @@ mod tests {
 
         assert_eq!(
             forward_only_tree.add_node(1, None, Vec::new()),
-            Err(TreeError::MultipleRootsNotAllowed)
+            Err(PendingError::MultipleRootsNotAllowed)
         );
         assert_eq!(
             versioned_hash_map.add_node(Vec::new(), 1, None),
-            Err(TreeError::MultipleRootsNotAllowed)
+            Err(PendingError::MultipleRootsNotAllowed)
         );
     }
 
@@ -272,11 +272,11 @@ mod tests {
 
         assert_eq!(
             forward_only_tree.add_node(1, Some(0), Vec::new()),
-            Err(TreeError::CommitIDNotFound(0))
+            Err(PendingError::CommitIDNotFound(0))
         );
         assert_eq!(
             versioned_hash_map.add_node(Vec::new(), 1, Some(0)),
-            Err(TreeError::CommitIDNotFound(0))
+            Err(PendingError::CommitIDNotFound(0))
         );
     }
 
@@ -290,11 +290,11 @@ mod tests {
 
         assert_eq!(
             forward_only_tree.add_node(0, Some(0), Vec::new()),
-            Err(TreeError::CommitIdAlreadyExists(0))
+            Err(PendingError::CommitIdAlreadyExists(0))
         );
         assert_eq!(
             versioned_hash_map.add_node(Vec::new(), 0, Some(0)),
-            Err(TreeError::CommitIdAlreadyExists(0))
+            Err(PendingError::CommitIdAlreadyExists(0))
         );
     }
 }
