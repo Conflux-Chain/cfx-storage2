@@ -13,7 +13,7 @@ pub struct VersionedHashMap<
 > {
     parent_of_root: Option<CommitId>,
 
-    history: HashMap<(Key, CommitId), Option<Value>>,
+    history: HashMap<CommitId, HashMap<Key, Option<Value>>>,
     tree: Tree<Key, CommitId, Value>,
 
     current: BTreeMap<Key, (CommitId, Option<Value>)>,
@@ -49,7 +49,10 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
         // add node
         let mut modifications = Vec::new();
         for (key, value) in updates.into_iter() {
-            self.history.insert((key.clone(), commit_id), value.clone());
+            let history_inner_map = self.history
+                .entry(commit_id)
+                .or_insert_with(HashMap::new);
+            history_inner_map.insert(key.clone(), value.clone());
             let old_commit_id = {
                 if let Some((old_commit_id, _)) =
                     self.current.insert(key.clone(), (commit_id, value.clone()))
@@ -135,14 +138,9 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
                     self.current.remove(&key);
                 }
                 Some(old_commit_id) => {
-                    if let Some(value) = self.history.get(&(key.clone(), old_commit_id)) {
-                        self.current
-                            .insert(key.clone(), (old_commit_id, value.clone()));
-                    } else {
-                        unreachable!(
-                            "A modification recorded in a rollbacked commit is absent in history"
-                        );
-                    }
+                    let value = self.history.get(&old_commit_id).unwrap().get(&key).unwrap();
+                    self.current
+                        .insert(key, (old_commit_id, value.clone()));
                 }
             }
         }
