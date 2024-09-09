@@ -34,7 +34,19 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> where T::Key: Hash {
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> where T::Key: Hash  {
     pub fn get_pending_part(&mut self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        Ok(self.pending_part.query(commit, key)?)
+        let res_value = self.pending_part.query(commit, key);
+        let history_commit = match res_value {
+            Ok(None) => { self.pending_part.get_parent_of_root() },
+            Err(in_memory_tree::PendingError::CommitIDNotFound(target_commit)) if target_commit == commit
+                => { Some(commit) },
+            Ok(Some(value)) => { return Ok(value) },
+            Err(e) => { return Err(StorageError::PendingError(e)) }
+        };
+        if let Some(history_commit) = history_commit {
+            self.get_historical_part(history_commit, key)
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn add_to_pending_part(&mut self, parent_commit: Option<CommitID>, commit: CommitID, 

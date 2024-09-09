@@ -11,6 +11,8 @@ pub struct VersionedHashMap<
     CommitId: Debug + Eq + Hash + Copy,
     Value: Clone,
 > {
+    parent_of_root: Option<CommitId>,
+
     history: HashMap<(Key, CommitId), Option<Value>>,
     tree: Tree<Key, CommitId, Value>,
 
@@ -21,8 +23,9 @@ pub struct VersionedHashMap<
 impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
     VersionedHashMap<Key, CommitId, Value>
 {
-    pub fn new() -> Self {
+    pub fn new(parent_of_root: Option<CommitId>) -> Self {
         VersionedHashMap {
+            parent_of_root,
             current: BTreeMap::new(),
             history: HashMap::new(),
             tree: Tree::new(),
@@ -63,11 +66,14 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
         Ok(())
     }
 
+    // None: pending_part not know
+    // Some(None): pending_part know that this key has been deleted
+    // Some(Some(value)): pending_part know this key's value
     pub fn query(
         &mut self,
         commit_id: CommitId,
         key: &Key,
-    ) -> Result<Option<Value>, PendingError<CommitId>> {
+    ) -> Result<Option<Option<Value>>, PendingError<CommitId>> {
         // let queried node to be self.current
         self.walk_to_node_unchecked(commit_id)?;
         assert_eq!(Some(commit_id), self.current_node);
@@ -76,33 +82,11 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
             .current
             .get(key)
             .and_then(|(_, value)| Some(value.clone()));
-        if let Some(Some(value_inner)) = value {
-            Ok(Some(value_inner))
-        } else {
-            Ok(None)
-        }
+        Ok(value)
     }
 
-    pub fn query_range<'a>(
-        &'a mut self,
-        commit_id: CommitId,
-        key: Key,
-    ) -> Result<Box<dyn Iterator<Item = (&Key, &Value)> + 'a>, PendingError<CommitId>> {
-        // let queried node to be self.current
-        self.walk_to_node_unchecked(commit_id)?;
-        assert_eq!(Some(commit_id), self.current_node);
-        // query
-        let range = self
-            .current
-            .range(key..)
-            .filter_map(|(key, (_, opt_value))| {
-                if let Some(value) = opt_value {
-                    Some((key, value))
-                } else {
-                    None
-                }
-            });
-        Ok(Box::new(range))
+    pub fn get_parent_of_root(&self) -> Option<CommitId> {
+        self.parent_of_root
     }
 }
 
@@ -197,7 +181,7 @@ mod tests {
         VersionedHashMap<Key, CommitId, Value>,
     ) {
         let mut forward_only_tree = Tree::new();
-        let mut versioned_hash_map = VersionedHashMap::new();
+        let mut versioned_hash_map = VersionedHashMap::new(None);
 
         for i in 1..=num_nodes as CommitId {
             let parent_commit_id = if i == 1 {
@@ -236,11 +220,7 @@ mod tests {
                 let result = versioned_hash_map.query(commit_id, &key).unwrap();
                 let current = forward_only_tree.find_path(commit_id).unwrap();
                 let answer = current.get(&key).and_then(|(_, value)| {
-                    if value.is_some() {
-                        Some(value.clone().unwrap())
-                    } else {
-                        None
-                    }
+                    Some(value.clone())
                 });
                 assert_eq!(result, answer);
             }
@@ -250,7 +230,7 @@ mod tests {
     #[test]
     fn test_multiple_roots_err() {
         let mut forward_only_tree = Tree::<Key, CommitId, Value>::new();
-        let mut versioned_hash_map = VersionedHashMap::<Key, CommitId, Value>::new();
+        let mut versioned_hash_map = VersionedHashMap::<Key, CommitId, Value>::new(None);
 
         forward_only_tree.add_node(0, None, Vec::new()).unwrap();
         versioned_hash_map.add_node(Vec::new(), 0, None).unwrap();
@@ -268,7 +248,7 @@ mod tests {
     #[test]
     fn test_commit_id_not_found_err() {
         let mut forward_only_tree = Tree::<Key, CommitId, Value>::new();
-        let mut versioned_hash_map = VersionedHashMap::<Key, CommitId, Value>::new();
+        let mut versioned_hash_map = VersionedHashMap::<Key, CommitId, Value>::new(None);
 
         assert_eq!(
             forward_only_tree.add_node(1, Some(0), Vec::new()),
@@ -283,7 +263,7 @@ mod tests {
     #[test]
     fn test_commit_id_already_exists_err() {
         let mut forward_only_tree = Tree::<Key, CommitId, Value>::new();
-        let mut versioned_hash_map = VersionedHashMap::<Key, CommitId, Value>::new();
+        let mut versioned_hash_map = VersionedHashMap::<Key, CommitId, Value>::new(None);
 
         forward_only_tree.add_node(0, None, Vec::new()).unwrap();
         versioned_hash_map.add_node(Vec::new(), 0, None).unwrap();
