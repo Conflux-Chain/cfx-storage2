@@ -35,6 +35,13 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         }
     }
 
+    fn contains_commit_id(
+        &self,
+        commit_id: &CommitId,
+    ) -> bool {
+        self.index_map.contains_key(commit_id)
+    }
+
     fn commit_id_to_slab_index(
         &self,
         commit_id: CommitId,
@@ -186,6 +193,16 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
             current_node = self.slab_index_to_node(current_node.parent.unwrap());
             target_node.target_up(&mut commits_rev);
             target_node = self.slab_index_to_node(target_node.parent.unwrap());
+        }
+        // check rollbacks' old_commit_id because TreeNodes are deleted
+        // in a lazy way with respect to TreeNodes.modifications
+        // todo: test this lazy method
+        for (_, old_commit_id_option) in rollbacks.iter_mut() {
+            if let Some(ref old_commit_id) = old_commit_id_option {
+                if !self.contains_commit_id(old_commit_id) {
+                    *old_commit_id_option = None;
+                }
+            }
         }
         // rollbacks or commits_rev may be empty,
         // they contain current and target (if they are not lca), respectively,
