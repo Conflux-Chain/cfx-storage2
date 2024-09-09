@@ -77,7 +77,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> where T::Key: Hash 
             Some(Ok((k, indices))) => {
                 let KeyHistory(_, history_number) = k.as_ref();
                 let offset = target_history_number - history_number;
-                indices.as_ref().last(*history_number)
+                indices.as_ref().last(offset)
             }
         };
 
