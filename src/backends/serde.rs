@@ -26,7 +26,7 @@ pub trait EncodeSubKey: Encode {
     const HAVE_SUBKEY: bool;
     fn encode_subkey(&self) -> (Cow<[u8]>, Cow<[u8]>);
     fn encode_subkey_owned(input: <Self as ToOwned>::Owned) -> (Vec<u8>, Vec<u8>) {
-        let (x, y) = Self::encode_subkey(&input.borrow());
+        let (x, y) = Self::encode_subkey(input.borrow());
         (x.into_owned(), y.into_owned())
     }
 
@@ -93,12 +93,12 @@ impl Encode for u64 {
 }
 
 impl FixedLengthEncoded for u64 {
-    const LENGTH: usize = std::mem::size_of::<u64>() as usize;
+    const LENGTH: usize = std::mem::size_of::<u64>();
 }
 
 impl Decode for u64 {
     fn decode(input: &[u8]) -> DecResult<Cow<Self>> {
-        const BYTES: usize = std::mem::size_of::<u64>() as usize;
+        const BYTES: usize = std::mem::size_of::<u64>();
         if input.len() != (u64::BITS / 8) as usize {
             return Err(DecodeError::IncorrectLength);
         }
