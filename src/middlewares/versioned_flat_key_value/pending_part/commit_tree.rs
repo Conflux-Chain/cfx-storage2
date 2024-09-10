@@ -1,13 +1,13 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::{fmt::Debug, hash::Hash};
 
 use slab::Slab;
 
+use super::pending_schema::PendingKeyValueSchema;
 use super::PendingError;
 
 type SlabIndex = usize;
 
-pub struct TreeNode<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone> {
+pub struct TreeNode<S: PendingKeyValueSchema> {
     parent: Option<SlabIndex>,
     children: BTreeSet<SlabIndex>,
 
@@ -16,21 +16,19 @@ pub struct TreeNode<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, 
     // height is only used for lca
     height: usize,
 
-    commit_id: CommitId,
+    commit_id: S::CommitId,
     // before current node, the old value of this key is modified by which commit_id,
     // if none, this key is absent before current node
     // here must use CommitID instead of SlabIndex (which may be reused, see slab doc)
-    modifications: Vec<(Key, Option<Value>, Option<CommitId>)>,
+    modifications: Vec<(S::Key, Option<S::Value>, Option<S::CommitId>)>,
 }
 
-pub struct Tree<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone> {
-    nodes: Slab<TreeNode<Key, CommitId, Value>>,
-    index_map: HashMap<CommitId, SlabIndex>,
+pub struct Tree<S: PendingKeyValueSchema> {
+    nodes: Slab<TreeNode<S>>,
+    index_map: HashMap<S::CommitId, SlabIndex>,
 }
 
-impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
-    Tree<Key, CommitId, Value>
-{
+impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn new() -> Self {
         Tree {
             nodes: Slab::new(),
@@ -38,14 +36,14 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         }
     }
 
-    fn contains_commit_id(&self, commit_id: &CommitId) -> bool {
+    fn contains_commit_id(&self, commit_id: &S::CommitId) -> bool {
         self.index_map.contains_key(commit_id)
     }
 
     fn commit_id_to_slab_index(
         &self,
-        commit_id: CommitId,
-    ) -> Result<SlabIndex, PendingError<CommitId>> {
+        commit_id: S::CommitId,
+    ) -> Result<SlabIndex, PendingError<S::CommitId>> {
         let slab_index = *self
             .index_map
             .get(&commit_id)
@@ -53,7 +51,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         Ok(slab_index)
     }
 
-    fn slab_index_to_node(&self, slab_index: SlabIndex) -> &TreeNode<Key, CommitId, Value> {
+    fn slab_index_to_node(&self, slab_index: SlabIndex) -> &TreeNode<S> {
         &self.nodes[slab_index]
     }
 
@@ -61,21 +59,19 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         !self.index_map.is_empty()
     }
 
-    pub fn get_parent_commit_id(&self, node: &TreeNode<Key, CommitId, Value>) -> Option<CommitId> {
+    pub fn get_parent_commit_id(&self, node: &TreeNode<S>) -> Option<S::CommitId> {
         node.parent
             .and_then(|p_slab_index| Some(self.nodes[p_slab_index].commit_id))
     }
 }
 
-impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
-    Tree<Key, CommitId, Value>
-{
+impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn add_node(
         &mut self,
-        commit_id: CommitId,
-        parent_commit_id: Option<CommitId>,
-        modifications: Vec<(Key, Option<Value>, Option<CommitId>)>,
-    ) -> Result<(), PendingError<CommitId>> {
+        commit_id: S::CommitId,
+        parent_commit_id: Option<S::CommitId>,
+        modifications: Vec<(S::Key, Option<S::Value>, Option<S::CommitId>)>,
+    ) -> Result<(), PendingError<S::CommitId>> {
         // return error if Some(parent_commit_id) but parent_commit_id does not exist
         let (parent_slab_index, parent_height) = if let Some(parent_commit_id) = parent_commit_id {
             let p_slab_index = self.commit_id_to_slab_index(parent_commit_id)?;
@@ -103,9 +99,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
     }
 }
 
-impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
-    Tree<Key, CommitId, Value>
-{
+impl<S: PendingKeyValueSchema> Tree<S> {
     fn bfs_subtree(&self, subroot_slab_index: SlabIndex) -> Vec<SlabIndex> {
         let mut slab_indices = vec![subroot_slab_index];
         let mut head = 0;
@@ -122,7 +116,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         slab_indices
     }
 
-    fn find_path_nodes(&self, target_slab_index: SlabIndex) -> (Vec<CommitId>, HashSet<SlabIndex>) {
+    fn find_path_nodes(&self, target_slab_index: SlabIndex) -> (Vec<S::CommitId>, HashSet<SlabIndex>) {
         let mut target_node = self.slab_index_to_node(target_slab_index);
         let mut path = Vec::new();
         let mut set = HashSet::new();
@@ -138,8 +132,8 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
     // todo: test
     pub fn change_root(
         &mut self,
-        commit_id: CommitId,
-    ) -> Result<(Vec<CommitId>, Vec<CommitId>), PendingError<CommitId>> {
+        commit_id: S::CommitId,
+    ) -> Result<(Vec<S::CommitId>, Vec<S::CommitId>), PendingError<S::CommitId>> {
         let slab_index = self.commit_id_to_slab_index(commit_id)?;
 
         // (root)..=(new_root's parent)
@@ -170,13 +164,11 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
     }
 }
 
-impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
-    Tree<Key, CommitId, Value>
-{
+impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn find_path(
         &self,
-        target_commit_id: CommitId,
-    ) -> Result<HashMap<Key, (CommitId, Option<Value>)>, PendingError<CommitId>> {
+        target_commit_id: S::CommitId,
+    ) -> Result<HashMap<S::Key, (S::CommitId, Option<S::Value>)>, PendingError<S::CommitId>> {
         let target_slab_index = self.commit_id_to_slab_index(target_commit_id)?;
         let mut target_node = self.slab_index_to_node(target_slab_index);
         let mut commits_rev = HashMap::new();
@@ -193,14 +185,14 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
     // correctness based on single root
     pub fn lca(
         &self,
-        current_commit_id: CommitId,
-        target_commit_id: CommitId,
+        current_commit_id: S::CommitId,
+        target_commit_id: S::CommitId,
     ) -> Result<
         (
-            HashMap<Key, Option<CommitId>>,
-            HashMap<Key, (CommitId, Option<Value>)>,
+            HashMap<S::Key, Option<S::CommitId>>,
+            HashMap<S::Key, (S::CommitId, Option<S::Value>)>,
         ),
-        PendingError<CommitId>,
+        PendingError<S::CommitId>,
     > {
         let current_slab_index = self.commit_id_to_slab_index(current_commit_id).unwrap();
         let target_slab_index = self.commit_id_to_slab_index(target_commit_id)?;
@@ -239,14 +231,12 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
     }
 }
 
-impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
-    TreeNode<Key, CommitId, Value>
-{
+impl<S: PendingKeyValueSchema> TreeNode<S> {
     pub fn new(
-        commit_id: CommitId,
+        commit_id: S::CommitId,
         parent: Option<SlabIndex>,
         parent_height: usize,
-        modifications: Vec<(Key, Option<Value>, Option<CommitId>)>,
+        modifications: Vec<(S::Key, Option<S::Value>, Option<S::CommitId>)>,
     ) -> Self {
         Self {
             height: parent_height + 1,
@@ -257,23 +247,23 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         }
     }
 
-    pub fn get_commit_id(&self) -> CommitId {
+    pub fn get_commit_id(&self) -> S::CommitId {
         self.commit_id
     }
 
     pub fn get_modifications(
         &self,
-    ) -> impl Iterator<Item = &(Key, Option<Value>, Option<CommitId>)> {
+    ) -> impl Iterator<Item = &(S::Key, Option<S::Value>, Option<S::CommitId>)> {
         self.modifications.iter()
     }
 
-    pub fn current_up(&self, rollbacks: &mut HashMap<Key, Option<CommitId>>) {
+    pub fn current_up(&self, rollbacks: &mut HashMap<S::Key, Option<S::CommitId>>) {
         for (key, _, old_commit_id) in self.get_modifications() {
             rollbacks.insert(key.clone(), *old_commit_id);
         }
     }
 
-    pub fn target_up(&self, commits_rev: &mut HashMap<Key, (CommitId, Option<Value>)>) {
+    pub fn target_up(&self, commits_rev: &mut HashMap<S::Key, (S::CommitId, Option<S::Value>)>) {
         let commit_id = self.commit_id;
         for (key, value, _) in self.get_modifications() {
             commits_rev

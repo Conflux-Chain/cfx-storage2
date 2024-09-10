@@ -2,9 +2,12 @@ mod serde;
 mod table_schema;
 mod pending_part;
 
+use std::collections::BTreeMap;
+
 pub use pending_part::PendingError;
 
 use pending_part::VersionedHashMap;
+use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 
 use super::ChangeKey;
@@ -31,7 +34,7 @@ impl HistoryIndices {
 // struct PendingPart;
 
 pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
-    pending_part: VersionedHashMap<T::Key, CommitID, T::Value>,
+    pending_part: VersionedHashMap<PendingKeyValueConfig<T, CommitID>>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
@@ -61,7 +64,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         &mut self,
         parent_commit: Option<CommitID>,
         commit: CommitID,
-        updates: Vec<(T::Key, Option<T::Value>)>,
+        updates: BTreeMap<T::Key, Option<T::Value>>,
     ) -> Result<()> {
         Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
     }
