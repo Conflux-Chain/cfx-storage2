@@ -1,6 +1,6 @@
 use crate::backends::{TableKey, TableName, TableSchema, TableValue, VersionedKVName};
 
-use super::{HistoryIndices, HistoryIndexKey, HistoryChangeKey};
+use super::{HistoryChangeKey, HistoryIndexKey, HistoryIndices};
 
 pub trait VersionedKeyValueSchema: 'static + Copy + Send + Sync
 where

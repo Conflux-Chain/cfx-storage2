@@ -25,7 +25,7 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
         }
     }
 
-    fn iter<'a>(&'a self, _key: &T::Key) -> Result<TableIter<T>> {
+    fn iter(&self, _key: &T::Key) -> Result<TableIter<T>> {
         Ok(Box::new(crate::todo_iter::<
             DecResult<(Cow<T::Key>, Cow<T::Value>)>,
         >()))
@@ -53,7 +53,7 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
             if let Some(v) = value {
                 tx.put_vec(col, &key, v);
             } else {
-                tx.delete(col, &key.borrow())
+                tx.delete(col, key.borrow())
             }
         }
 

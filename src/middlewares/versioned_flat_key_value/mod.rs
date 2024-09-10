@@ -1,5 +1,5 @@
-mod table_schema;
 mod serde;
+mod table_schema;
 
 
 use in_memory_tree::VersionedHashMap;
@@ -7,13 +7,13 @@ use std::hash::Hash;
 
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 
+use super::ChangeKey;
+use super::CommitIDSchema;
 use crate::backends::TableReader;
 use crate::errors::Result;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
 use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
-use super::ChangeKey;
-use super::CommitIDSchema;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
