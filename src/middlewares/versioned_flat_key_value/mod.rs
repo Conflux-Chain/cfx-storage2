@@ -1,9 +1,12 @@
 mod serde;
 mod table_schema;
+mod pending_part;
 
-use in_memory_tree::VersionedHashMap;
+pub use pending_part::PendingError;
+
 use std::hash::Hash;
 
+use pending_part::VersionedHashMap;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 
 use super::ChangeKey;
@@ -47,7 +50,7 @@ where
         let res_value = self.pending_part.query(commit, key);
         let history_commit = match res_value {
             Ok(None) => self.pending_part.get_parent_of_root(),
-            Err(in_memory_tree::PendingError::CommitIDNotFound(target_commit))
+            Err(PendingError::CommitIDNotFound(target_commit))
                 if target_commit == commit =>
             {
                 Some(commit)

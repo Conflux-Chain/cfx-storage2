@@ -1,7 +1,6 @@
-use in_memory_tree::PendingError;
 use thiserror::Error;
 
-use crate::middlewares::CommitID;
+use crate::middlewares::{CommitID, PendingError};
 
 #[derive(Error, Debug)]
 pub enum StorageError {

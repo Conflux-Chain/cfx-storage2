@@ -12,9 +12,8 @@ parking_lot = "0.12"
 
 ethereum-types = "0.12"
 
-in-memory-tree = { path = "src/pending_part" }
+slab = "0.4.9"
 
-[workspace]
-members = [
-    "src/pending_part"
-]
+[dev-dependencies]
+rand = "0.8.0"
+rand_distr = "0.4.0"

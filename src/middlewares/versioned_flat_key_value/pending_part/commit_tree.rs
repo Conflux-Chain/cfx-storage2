@@ -3,7 +3,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use slab::Slab;
 
-use crate::PendingError;
+use super::PendingError;
 
 type SlabIndex = usize;
 

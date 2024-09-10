@@ -4,7 +4,7 @@ use std::{
     hash::Hash,
 };
 
-use crate::{commit_tree::Tree, PendingError};
+use super::{commit_tree::Tree, PendingError};
 
 pub struct VersionedHashMap<
     Key: Eq + Hash + Clone + Ord,
