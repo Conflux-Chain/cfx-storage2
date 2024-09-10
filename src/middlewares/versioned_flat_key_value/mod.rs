@@ -42,9 +42,9 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         let res_value = self.pending_part.query(commit, key);
         let history_commit = match res_value {
             Ok(None) => self.pending_part.get_parent_of_root(),
-            Err(PendingError::CommitIDNotFound(target_commit))
-                if target_commit == commit =>
+            Err(PendingError::CommitIDNotFound(target_commit)) =>
             {
+                assert_eq!(target_commit, commit);
                 Some(commit)
             }
             Ok(Some(value)) => return Ok(value),

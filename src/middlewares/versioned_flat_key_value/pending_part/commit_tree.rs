@@ -202,7 +202,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         ),
         PendingError<CommitId>,
     > {
-        let current_slab_index = self.commit_id_to_slab_index(current_commit_id)?;
+        let current_slab_index = self.commit_id_to_slab_index(current_commit_id).unwrap();
         let target_slab_index = self.commit_id_to_slab_index(target_commit_id)?;
         let mut current_node = self.slab_index_to_node(current_slab_index);
         let mut target_node = self.slab_index_to_node(target_slab_index);
