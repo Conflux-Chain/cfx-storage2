@@ -37,6 +37,32 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
 impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
     VersionedHashMap<Key, CommitId, Value>
 {
+    pub fn change_root(
+        &mut self, 
+        commit_id: CommitId,
+    ) -> Result<Vec<Option<HashMap<Key, Option<Value>>>>, PendingError<CommitId>> {
+        let (to_commit_rev, to_remove) = self.tree.change_root(commit_id)?;
+        if to_commit_rev.is_empty() {
+            assert!(to_remove.is_empty());
+            return Ok(Vec::new())
+        }
+        self.parent_of_root = Some(to_commit_rev[0]);
+        self.current.clear();
+        self.current_node = None;
+        for to_remove_one in to_remove.into_iter() {
+            self.history.remove(&to_remove_one);
+        }
+        let mut to_commit = Vec::new();
+        for to_commit_one in to_commit_rev.into_iter().rev() {
+            to_commit.push(self.history.remove(&to_commit_one));
+        }
+        Ok(to_commit)
+    }
+}
+
+impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
+    VersionedHashMap<Key, CommitId, Value>
+{
     pub fn add_node(
         &mut self,
         updates: Vec<(Key, Option<Value>)>,
