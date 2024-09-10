@@ -4,8 +4,6 @@ mod pending_part;
 
 pub use pending_part::PendingError;
 
-use std::hash::Hash;
-
 use pending_part::VersionedHashMap;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 
@@ -32,20 +30,14 @@ impl HistoryIndices {
 
 // struct PendingPart;
 
-pub struct VersionedStore<'db, T: VersionedKeyValueSchema>
-where
-    T::Key: Hash,
-{
+pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
     pending_part: VersionedHashMap<T::Key, CommitID, T::Value>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T>
-where
-    T::Key: Hash,
-{
+impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     pub fn get_pending_part(&mut self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
         let res_value = self.pending_part.query(commit, key);
         let history_commit = match res_value {
