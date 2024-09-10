@@ -1,35 +1,41 @@
 mod table_schema;
+mod serde;
+
 
 use in_memory_tree::VersionedHashMap;
 use std::hash::Hash;
 
-use self::table_schema::{ChangeHistorySchema, HistoryIndicesSchema, VersionedKeyValueSchema};
+use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
+
 use crate::backends::TableReader;
 use crate::errors::Result;
-use crate::middlewares::{CommitID, HistoryNumber, KeyValueBulks};
-use crate::traits::KeyValueStoreBulks;
+use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
+use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
-
+use super::ChangeKey;
 use super::CommitIDSchema;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct KeyHistory<K: Clone>(K, HistoryNumber);
+pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
+
+pub type HistoryChangeKey<K> = ChangeKey<HistoryNumber, K>;
 
 #[derive(Clone, Debug)]
 pub struct HistoryIndices;
 impl HistoryIndices {
-    fn last(&self, max: HistoryNumber) -> HistoryNumber {
-        todo!()
+    fn last(&self, offset: HistoryNumber) -> HistoryNumber {
+        offset
     }
 }
 
 // struct PendingPart;
 
+
 pub struct VersionedStore<'db, T: VersionedKeyValueSchema> where T::Key: Hash {
     pending_part: VersionedHashMap<T::Key, CommitID, T::Value>,
-    history_index_table: TableReader<'db, HistoryIndicesSchema<T>>,
+    history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
-    change_history_table: KeyValueBulks<'db, ChangeHistorySchema<T>>,
+    change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> where T::Key: Hash  {
@@ -62,7 +68,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> where T::Key: Hash 
             return Err(StorageError::CommitIDNotFound);
         };
 
-        let range_query_key = KeyHistory(key.clone(), target_history_number);
+        let range_query_key = HistoryIndexKey(key.clone(), target_history_number);
 
         let found_version_number = match self.history_index_table.iter(&range_query_key)?.next() {
             None => {
@@ -75,7 +81,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> where T::Key: Hash 
                 return Ok(None);
             }
             Some(Ok((k, indices))) => {
-                let KeyHistory(_, history_number) = k.as_ref();
+                let HistoryIndexKey(_, history_number) = k.as_ref();
                 let offset = target_history_number - history_number;
                 indices.as_ref().last(offset)
             }

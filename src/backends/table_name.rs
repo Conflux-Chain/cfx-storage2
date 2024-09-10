@@ -1,7 +1,7 @@
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TableName {
     CommitID,
-    ChangeHistory(VersionedKVName),
+    HistoryChange(VersionedKVName),
     HistoryIndex(VersionedKVName),
     #[cfg(test)]
     MockTable,
@@ -13,7 +13,7 @@ pub enum VersionedKVName {
 }
 
 pub const fn change_history(versioned_kv: VersionedKVName) -> TableName {
-    ChangeHistory(versioned_kv)
+    HistoryChange(versioned_kv)
 }
 
 pub const fn history_index(versioned_kv: VersionedKVName) -> TableName {
@@ -33,7 +33,7 @@ impl From<TableName> for u32 {
         };
         match t {
             CommitID => make_id(),
-            ChangeHistory(FlatKV) => make_id(),
+            HistoryChange(FlatKV) => make_id(),
             HistoryIndex(FlatKV) => make_id(),
             #[cfg(test)]
             MockTable => u32::MAX,
@@ -45,7 +45,7 @@ impl From<TableName> for &'static str {
     fn from(t: TableName) -> Self {
         match t {
             CommitID => "commit_id",
-            ChangeHistory(FlatKV) => "flat_kv_change_history",
+            HistoryChange(FlatKV) => "flat_kv_change_history",
             HistoryIndex(FlatKV) => "flat_kv_history_index",
             #[cfg(test)]
             MockTable => "mock_table",

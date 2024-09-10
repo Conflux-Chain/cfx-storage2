@@ -38,7 +38,7 @@ where
     }
 }
 
-pub trait KeyValueStoreBulks<K, V, C> {
+pub trait KeyValueStoreBulksTrait<K, V, C> {
     /// Commit a bundle of key-values, with provided commit version
     fn commit(
         &self,
