@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::{fmt::Debug, hash::Hash};
 
 use slab::Slab;
@@ -11,6 +11,9 @@ pub struct TreeNode<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, 
     parent: Option<SlabIndex>,
     children: BTreeSet<SlabIndex>,
 
+    // todo: test lazy height
+    // height will not be changed even when root is changed
+    // height is only used for lca
     height: usize,
 
     commit_id: CommitId,
@@ -101,8 +104,12 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         }
         Ok(())
     }
+}
 
-    fn bfs_subtree(&mut self, subroot_slab_index: SlabIndex) -> Vec<SlabIndex> {
+impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
+    Tree<Key, CommitId, Value>
+{
+    fn bfs_subtree(&self, subroot_slab_index: SlabIndex) -> Vec<SlabIndex> {
         let mut slab_indices = vec![subroot_slab_index];
         let mut head = 0;
         while head < slab_indices.len() {
@@ -118,27 +125,54 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         slab_indices
     }
 
-    pub fn remove_subtree(
+    fn find_path_nodes(
+        &self,
+        target_slab_index: SlabIndex,
+    ) -> (Vec<CommitId>, HashSet<SlabIndex>) {
+        let mut target_node = self.slab_index_to_node(target_slab_index);
+        let mut path = Vec::new();
+        let mut set = HashSet::new();
+        while target_node.parent.is_some() {
+            let slab_index = target_node.parent.unwrap();
+            set.insert(slab_index);
+            target_node = self.slab_index_to_node(slab_index);
+            path.push(target_node.commit_id);
+        }
+        (path, set)
+    }
+
+    // todo: test
+    pub fn change_root(
         &mut self,
-        subroot_commit_id: CommitId,
-    ) -> Result<(), PendingError<CommitId>> {
-        let subroot_slab_index = self.commit_id_to_slab_index(subroot_commit_id)?;
+        commit_id: CommitId,
+    ) -> Result<(Vec<CommitId>, Vec<CommitId>), PendingError<CommitId>> {
+        let slab_index = self.commit_id_to_slab_index(commit_id)?;
 
-        let to_remove = self.bfs_subtree(subroot_slab_index);
+        // (root)..=(new_root's parent)
+        let (to_commit_rev, to_commit_set) = self.find_path_nodes(slab_index);
+        
+        // subtree of new_root
+        let to_maintain_vec = self.bfs_subtree(slab_index);
+        let to_maintain = BTreeSet::from_iter(to_maintain_vec.into_iter());
 
-        // only subroot should update its parent,
-        // since, for other nodes to be removed, their parents will also be removed
-        if let Some(parent_slab_index) = self.slab_index_to_node(subroot_slab_index).parent {
-            let parent = &mut self.nodes[parent_slab_index];
-            parent.children.remove(&subroot_slab_index);
+        // tree - subtree of new_root - (root)..-(new_root's parent)
+        let mut to_remove_indices = Vec::new();
+        for (idx, _) in self.nodes.iter() {
+            if !to_maintain.contains(&idx) && !to_commit_set.contains(&idx) {
+                to_remove_indices.push(idx);
+            }
+        }
+        let mut to_remove = Vec::new();
+        for idx in to_remove_indices.into_iter() {
+            let to_remove_node = self.nodes.remove(idx);
+            self.index_map.remove(&to_remove_node.commit_id);
+            to_remove.push(to_remove_node.commit_id);
         }
 
-        for &index in to_remove.iter() {
-            let node = self.nodes.remove(index);
-            self.index_map.remove(&node.commit_id);
-        }
+        // set new_root's parent as None
+        self.nodes[slab_index].parent = None;
 
-        Ok(())
+        Ok((to_commit_rev, to_remove))
     }
 }
 
