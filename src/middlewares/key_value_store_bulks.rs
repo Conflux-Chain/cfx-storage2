@@ -6,21 +6,21 @@ use crate::{
         TableReader, TableSchema, WriteSchemaTrait,
     },
     errors::{DecResult, Result},
-    traits::KeyValueStoreBulks,
+    traits::KeyValueStoreBulksTrait,
 };
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ChangeKey<C: Copy, K: Clone>(C, K);
 
-pub struct KeyValueBulks<'db, T: TableSchema>(TableReader<'db, T>);
+pub struct KeyValueStoreBulks<'db, T: TableSchema>(TableReader<'db, T>);
 
-impl<'db, T: TableSchema> KeyValueBulks<'db, T> {
+impl<'db, T: TableSchema> KeyValueStoreBulks<'db, T> {
     pub(crate) fn new(db: TableReader<'db, T>) -> Self {
         Self(db)
     }
 }
 
-impl<'a, K, V, C, T> KeyValueStoreBulks<K, V, C> for KeyValueBulks<'a, T>
+impl<'a, K, V, C, T> KeyValueStoreBulksTrait<K, V, C> for KeyValueStoreBulks<'a, T>
 where
     T: TableSchema<Key = ChangeKey<C, K>, Value = V>,
     C: Copy,
