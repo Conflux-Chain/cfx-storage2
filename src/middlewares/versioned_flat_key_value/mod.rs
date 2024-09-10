@@ -1,7 +1,6 @@
 mod serde;
 mod table_schema;
 
-
 use in_memory_tree::VersionedHashMap;
 use std::hash::Hash;
 
@@ -30,23 +29,31 @@ impl HistoryIndices {
 
 // struct PendingPart;
 
-
-pub struct VersionedStore<'db, T: VersionedKeyValueSchema> where T::Key: Hash {
+pub struct VersionedStore<'db, T: VersionedKeyValueSchema>
+where
+    T::Key: Hash,
+{
     pending_part: VersionedHashMap<T::Key, CommitID, T::Value>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> where T::Key: Hash  {
+impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T>
+where
+    T::Key: Hash,
+{
     pub fn get_pending_part(&mut self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
         let res_value = self.pending_part.query(commit, key);
         let history_commit = match res_value {
-            Ok(None) => { self.pending_part.get_parent_of_root() },
-            Err(in_memory_tree::PendingError::CommitIDNotFound(target_commit)) if target_commit == commit
-                => { Some(commit) },
-            Ok(Some(value)) => { return Ok(value) },
-            Err(e) => { return Err(StorageError::PendingError(e)) }
+            Ok(None) => self.pending_part.get_parent_of_root(),
+            Err(in_memory_tree::PendingError::CommitIDNotFound(target_commit))
+                if target_commit == commit =>
+            {
+                Some(commit)
+            }
+            Ok(Some(value)) => return Ok(value),
+            Err(e) => return Err(StorageError::PendingError(e)),
         };
         if let Some(history_commit) = history_commit {
             self.get_historical_part(history_commit, key)
@@ -55,8 +62,11 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> where T::Key: Hash 
         }
     }
 
-    pub fn add_to_pending_part(&mut self, parent_commit: Option<CommitID>, commit: CommitID, 
-        updates: Vec::<(T::Key, Option<T::Value>)>,
+    pub fn add_to_pending_part(
+        &mut self,
+        parent_commit: Option<CommitID>,
+        commit: CommitID,
+        updates: Vec<(T::Key, Option<T::Value>)>,
     ) -> Result<()> {
         Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
     }

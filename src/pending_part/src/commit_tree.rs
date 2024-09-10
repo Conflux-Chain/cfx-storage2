@@ -38,10 +38,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         }
     }
 
-    fn contains_commit_id(
-        &self,
-        commit_id: &CommitId,
-    ) -> bool {
+    fn contains_commit_id(&self, commit_id: &CommitId) -> bool {
         self.index_map.contains_key(commit_id)
     }
 
@@ -125,10 +122,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
         slab_indices
     }
 
-    fn find_path_nodes(
-        &self,
-        target_slab_index: SlabIndex,
-    ) -> (Vec<CommitId>, HashSet<SlabIndex>) {
+    fn find_path_nodes(&self, target_slab_index: SlabIndex) -> (Vec<CommitId>, HashSet<SlabIndex>) {
         let mut target_node = self.slab_index_to_node(target_slab_index);
         let mut path = Vec::new();
         let mut set = HashSet::new();
@@ -150,7 +144,7 @@ impl<Key: Eq + Hash + Clone, CommitId: Debug + Eq + Hash + Copy, Value: Clone>
 
         // (root)..=(new_root's parent)
         let (to_commit_rev, to_commit_set) = self.find_path_nodes(slab_index);
-        
+
         // subtree of new_root
         let to_maintain_vec = self.bfs_subtree(slab_index);
         let to_maintain = BTreeSet::from_iter(to_maintain_vec.into_iter());

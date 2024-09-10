@@ -38,13 +38,13 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
     VersionedHashMap<Key, CommitId, Value>
 {
     pub fn change_root(
-        &mut self, 
+        &mut self,
         commit_id: CommitId,
     ) -> Result<Vec<Option<HashMap<Key, Option<Value>>>>, PendingError<CommitId>> {
         let (to_commit_rev, to_remove) = self.tree.change_root(commit_id)?;
         if to_commit_rev.is_empty() {
             assert!(to_remove.is_empty());
-            return Ok(Vec::new())
+            return Ok(Vec::new());
         }
         self.parent_of_root = Some(to_commit_rev[0]);
         self.current.clear();
@@ -75,9 +75,7 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
         // add node
         let mut modifications = Vec::new();
         for (key, value) in updates.into_iter() {
-            let history_inner_map = self.history
-                .entry(commit_id)
-                .or_insert_with(HashMap::new);
+            let history_inner_map = self.history.entry(commit_id).or_insert_with(HashMap::new);
             history_inner_map.insert(key.clone(), value.clone());
             let old_commit_id = {
                 if let Some((old_commit_id, _)) =
@@ -165,8 +163,7 @@ impl<Key: Eq + Hash + Clone + Ord, CommitId: Debug + Eq + Hash + Copy, Value: Cl
                 }
                 Some(old_commit_id) => {
                     let value = self.history.get(&old_commit_id).unwrap().get(&key).unwrap();
-                    self.current
-                        .insert(key, (old_commit_id, value.clone()));
+                    self.current.insert(key, (old_commit_id, value.clone()));
                 }
             }
         }
@@ -243,9 +240,7 @@ mod tests {
                 let key: Key = ikey.to_string().into_bytes();
                 let result = versioned_hash_map.query(commit_id, &key).unwrap();
                 let current = forward_only_tree.find_path(commit_id).unwrap();
-                let answer = current.get(&key).and_then(|(_, value)| {
-                    Some(value.clone())
-                });
+                let answer = current.get(&key).and_then(|(_, value)| Some(value.clone()));
                 assert_eq!(result, answer);
             }
         }
