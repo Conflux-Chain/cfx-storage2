@@ -40,7 +40,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         self.index_map.contains_key(commit_id)
     }
 
-    fn commit_id_to_slab_index(
+    fn get_slab_index_by_commit_id(
         &self,
         commit_id: S::CommitId,
     ) -> Result<SlabIndex, PendingError<S::CommitId>> {
@@ -51,7 +51,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         Ok(slab_index)
     }
 
-    fn slab_index_to_node(&self, slab_index: SlabIndex) -> &TreeNode<S> {
+    fn get_node_by_slab_index(&self, slab_index: SlabIndex) -> &TreeNode<S> {
         &self.nodes[slab_index]
     }
 
@@ -74,8 +74,8 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     ) -> Result<(), PendingError<S::CommitId>> {
         // return error if Some(parent_commit_id) but parent_commit_id does not exist
         let (parent_slab_index, parent_height) = if let Some(parent_commit_id) = parent_commit_id {
-            let p_slab_index = self.commit_id_to_slab_index(parent_commit_id)?;
-            let p_height = self.slab_index_to_node(p_slab_index).height;
+            let p_slab_index = self.get_slab_index_by_commit_id(parent_commit_id)?;
+            let p_height = self.get_node_by_slab_index(p_slab_index).height;
             (Some(p_slab_index), p_height)
         } else {
             // return error if want to add root but there has been a root
@@ -104,7 +104,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let mut slab_indices = vec![subroot_slab_index];
         let mut head = 0;
         while head < slab_indices.len() {
-            let node = self.slab_index_to_node(slab_indices[head]);
+            let node = self.get_node_by_slab_index(slab_indices[head]);
 
             for &child_index in &node.children {
                 slab_indices.push(child_index);
@@ -117,13 +117,13 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 
     fn find_path_nodes(&self, target_slab_index: SlabIndex) -> (Vec<S::CommitId>, HashSet<SlabIndex>) {
-        let mut target_node = self.slab_index_to_node(target_slab_index);
+        let mut target_node = self.get_node_by_slab_index(target_slab_index);
         let mut path = Vec::new();
         let mut set = HashSet::new();
         while target_node.parent.is_some() {
             let slab_index = target_node.parent.unwrap();
             set.insert(slab_index);
-            target_node = self.slab_index_to_node(slab_index);
+            target_node = self.get_node_by_slab_index(slab_index);
             path.push(target_node.commit_id);
         }
         (path, set)
@@ -134,7 +134,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &mut self,
         commit_id: S::CommitId,
     ) -> Result<(Vec<S::CommitId>, Vec<S::CommitId>), PendingError<S::CommitId>> {
-        let slab_index = self.commit_id_to_slab_index(commit_id)?;
+        let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // (root)..=(new_root's parent)
         let (to_commit_rev, to_commit_set) = self.find_path_nodes(slab_index);
@@ -169,15 +169,15 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         target_commit_id: S::CommitId,
     ) -> Result<HashMap<S::Key, (S::CommitId, Option<S::Value>)>, PendingError<S::CommitId>> {
-        let target_slab_index = self.commit_id_to_slab_index(target_commit_id)?;
-        let mut target_node = self.slab_index_to_node(target_slab_index);
+        let target_slab_index = self.get_slab_index_by_commit_id(target_commit_id)?;
+        let mut target_node = self.get_node_by_slab_index(target_slab_index);
         let mut commits_rev = HashMap::new();
         loop {
             target_node.target_up(&mut commits_rev);
             if target_node.parent.is_none() {
                 break;
             }
-            target_node = self.slab_index_to_node(target_node.parent.unwrap());
+            target_node = self.get_node_by_slab_index(target_node.parent.unwrap());
         }
         Ok(commits_rev)
     }
@@ -194,25 +194,25 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         ),
         PendingError<S::CommitId>,
     > {
-        let current_slab_index = self.commit_id_to_slab_index(current_commit_id).unwrap();
-        let target_slab_index = self.commit_id_to_slab_index(target_commit_id)?;
-        let mut current_node = self.slab_index_to_node(current_slab_index);
-        let mut target_node = self.slab_index_to_node(target_slab_index);
+        let current_slab_index = self.get_slab_index_by_commit_id(current_commit_id).unwrap();
+        let target_slab_index = self.get_slab_index_by_commit_id(target_commit_id)?;
+        let mut current_node = self.get_node_by_slab_index(current_slab_index);
+        let mut target_node = self.get_node_by_slab_index(target_slab_index);
         let mut rollbacks = HashMap::new();
         let mut commits_rev = HashMap::new();
         while current_node.height > target_node.height {
             current_node.current_up(&mut rollbacks);
-            current_node = self.slab_index_to_node(current_node.parent.unwrap());
+            current_node = self.get_node_by_slab_index(current_node.parent.unwrap());
         }
         while target_node.height > current_node.height {
             target_node.target_up(&mut commits_rev);
-            target_node = self.slab_index_to_node(target_node.parent.unwrap());
+            target_node = self.get_node_by_slab_index(target_node.parent.unwrap());
         }
         while current_node.commit_id != target_node.commit_id {
             current_node.current_up(&mut rollbacks);
-            current_node = self.slab_index_to_node(current_node.parent.unwrap());
+            current_node = self.get_node_by_slab_index(current_node.parent.unwrap());
             target_node.target_up(&mut commits_rev);
-            target_node = self.slab_index_to_node(target_node.parent.unwrap());
+            target_node = self.get_node_by_slab_index(target_node.parent.unwrap());
         }
         // check rollbacks' old_commit_id because TreeNodes are deleted
         // in a lazy way with respect to TreeNodes.modifications
