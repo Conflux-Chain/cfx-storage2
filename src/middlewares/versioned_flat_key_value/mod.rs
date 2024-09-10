@@ -41,14 +41,14 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     pub fn get_pending_part(&mut self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
         let res_value = self.pending_part.query(commit, key);
         let history_commit = match res_value {
+            Ok(Some(value)) => return Ok(value),
             Ok(None) => self.pending_part.get_parent_of_root(),
             Err(PendingError::CommitIDNotFound(target_commit)) =>
             {
                 assert_eq!(target_commit, commit);
                 Some(commit)
             }
-            Ok(Some(value)) => return Ok(value),
-            Err(e) => return Err(StorageError::PendingError(e)),
+            Err(other_err) => return Err(StorageError::PendingError(other_err)),
         };
         if let Some(history_commit) = history_commit {
             self.get_historical_part(history_commit, key)
