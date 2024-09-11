@@ -171,12 +171,10 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let target_slab_index = self.get_slab_index_by_commit_id(target_commit_id)?;
         let mut target_node = self.get_node_by_slab_index(target_slab_index);
         let mut commits_rev = HashMap::new();
-        loop {
+        target_node.target_up(&mut commits_rev);
+        while let Some(parent_slab_index) = target_node.parent {
+            target_node = self.get_node_by_slab_index(parent_slab_index);
             target_node.target_up(&mut commits_rev);
-            if target_node.parent.is_none() {
-                break;
-            }
-            target_node = self.get_node_by_slab_index(target_node.parent.unwrap());
         }
         Ok(commits_rev)
     }
