@@ -60,8 +60,8 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         assert_eq!(parent_commit_id, self.current_node);
         // add node
         let mut modifications = Vec::new();
+        let mut history_inner_map = HashMap::new();
         for (key, value) in updates.into_iter() {
-            let history_inner_map = self.history.entry(commit_id).or_insert_with(HashMap::new);
             history_inner_map.insert(key.clone(), value.clone());
             let old_commit_id = {
                 if let Some((old_commit_id, _)) =
@@ -74,6 +74,9 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
             };
             modifications.push((key, value, old_commit_id));
         }
+        // PendingError::CommitIdAlreadyExists(commit_id) will be reported
+        // in self.tree.add_node
+        self.history.entry(commit_id).or_insert_with(|| history_inner_map);
         self.tree
             .add_node(commit_id, parent_commit_id, modifications)?;
         self.current_node = Some(commit_id);
