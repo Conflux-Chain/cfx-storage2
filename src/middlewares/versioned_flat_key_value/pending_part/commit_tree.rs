@@ -120,10 +120,9 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let mut target_node = self.get_node_by_slab_index(target_slab_index);
         let mut path = Vec::new();
         let mut set = HashSet::new();
-        while target_node.parent.is_some() {
-            let slab_index = target_node.parent.unwrap();
-            set.insert(slab_index);
-            target_node = self.get_node_by_slab_index(slab_index);
+        while let Some(parent_slab_index) = target_node.parent {
+            set.insert(parent_slab_index);
+            target_node = self.get_node_by_slab_index(parent_slab_index);
             path.push(target_node.commit_id);
         }
         (path, set)
