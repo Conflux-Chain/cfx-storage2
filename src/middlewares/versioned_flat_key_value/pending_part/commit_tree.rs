@@ -178,10 +178,10 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     ) -> Result<HashMap<S::Key, (S::CommitId, Option<S::Value>)>, PendingError<S::CommitId>> {
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut commits_rev = HashMap::new();
-        target_node.target_up(&mut commits_rev);
+        target_node.export_commit_data(&mut commits_rev);
         while let Some(parent_slab_index) = target_node.parent {
             target_node = self.get_node_by_slab_index(parent_slab_index);
-            target_node.target_up(&mut commits_rev);
+            target_node.export_commit_data(&mut commits_rev);
         }
         Ok(commits_rev)
     }
@@ -203,17 +203,17 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let mut rollbacks = HashMap::new();
         let mut commits_rev = HashMap::new();
         while current_node.height > target_node.height {
-            current_node.current_up(&mut rollbacks);
+            current_node.export_rollback_data(&mut rollbacks);
             current_node = self.get_node_by_slab_index(current_node.parent.unwrap());
         }
         while target_node.height > current_node.height {
-            target_node.target_up(&mut commits_rev);
+            target_node.export_commit_data(&mut commits_rev);
             target_node = self.get_node_by_slab_index(target_node.parent.unwrap());
         }
         while current_node.commit_id != target_node.commit_id {
-            current_node.current_up(&mut rollbacks);
+            current_node.export_rollback_data(&mut rollbacks);
             current_node = self.get_node_by_slab_index(current_node.parent.unwrap());
-            target_node.target_up(&mut commits_rev);
+            target_node.export_commit_data(&mut commits_rev);
             target_node = self.get_node_by_slab_index(target_node.parent.unwrap());
         }
         // check rollbacks' old_commit_id because TreeNodes are deleted
@@ -259,13 +259,13 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         self.modifications.iter()
     }
 
-    pub fn current_up(&self, rollbacks: &mut HashMap<S::Key, Option<S::CommitId>>) {
+    pub fn export_rollback_data(&self, rollbacks: &mut HashMap<S::Key, Option<S::CommitId>>) {
         for (key, _, old_commit_id) in self.get_modifications() {
             rollbacks.insert(key.clone(), *old_commit_id);
         }
     }
 
-    pub fn target_up(&self, commits_rev: &mut HashMap<S::Key, (S::CommitId, Option<S::Value>)>) {
+    pub fn export_commit_data(&self, commits_rev: &mut HashMap<S::Key, (S::CommitId, Option<S::Value>)>) {
         let commit_id = self.commit_id;
         for (key, value, _) in self.get_modifications() {
             commits_rev
