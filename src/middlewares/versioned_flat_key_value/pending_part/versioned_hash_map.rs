@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 
-use super::{commit_tree::Tree, pending_schema::{Commits, Current, History, PendingKeyValueSchema, ToCommit}, PendingError};
+use super::{
+    commit_tree::Tree,
+    pending_schema::{Commits, Current, History, PendingKeyValueSchema, ToCommit},
+    PendingError,
+};
 
 pub struct VersionedHashMap<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
@@ -66,14 +70,13 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         let mut inner_map = HashMap::new();
         for (key, value) in updates.into_iter() {
             inner_map.insert(key.clone(), value.clone());
-            let old_commit_id =
-                if let Some((old_commit_id, _)) =
-                    self.current.insert(key.clone(), (commit_id, value.clone()))
-                {
-                    Some(old_commit_id)
-                } else {
-                    None
-                };
+            let old_commit_id = if let Some((old_commit_id, _)) =
+                self.current.insert(key.clone(), (commit_id, value.clone()))
+            {
+                Some(old_commit_id)
+            } else {
+                None
+            };
             modifications.push((key, value, old_commit_id));
         }
         self.history.insert(commit_id, inner_map);
@@ -95,10 +98,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         self.walk_to_node_unchecked(commit_id)?;
         assert_eq!(Some(commit_id), self.current_node);
         // query
-        let value = self
-            .current
-            .get(key)
-            .map(|(_, value)| value.clone());
+        let value = self.current.get(key).map(|(_, value)| value.clone());
         Ok(value)
     }
 
@@ -124,13 +124,11 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         &mut self,
         target_commit_id: S::CommitId,
     ) -> Result<(), PendingError<S::CommitId>> {
-        let (rollbacks, commits_rev) = 
-            if let Some(current_commit_id) = self.current_node {
-                self.tree
-                    .lca(current_commit_id, target_commit_id)?
-            } else {
-                (HashMap::new(), self.tree.find_path(target_commit_id)?)
-            };
+        let (rollbacks, commits_rev) = if let Some(current_commit_id) = self.current_node {
+            self.tree.lca(current_commit_id, target_commit_id)?
+        } else {
+            (HashMap::new(), self.tree.find_path(target_commit_id)?)
+        };
         self.rollback_without_node_update(rollbacks);
         self.commit_without_node_update(commits_rev);
         self.current_node = Some(target_commit_id);
@@ -160,7 +158,13 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{backends::VersionedKVName, middlewares::versioned_flat_key_value::{pending_part::pending_schema::PendingKeyValueConfig, table_schema::VersionedKeyValueSchema}};
+    use crate::{
+        backends::VersionedKVName,
+        middlewares::versioned_flat_key_value::{
+            pending_part::pending_schema::PendingKeyValueConfig,
+            table_schema::VersionedKeyValueSchema,
+        },
+    };
 
     use super::*;
     use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -173,7 +177,7 @@ mod tests {
 
     impl VersionedKeyValueSchema for TestSchema {
         const NAME: crate::backends::VersionedKVName = VersionedKVName::FlatKV;
-        type Key = u64; 
+        type Key = u64;
         type Value = u64;
     }
 
@@ -183,7 +187,7 @@ mod tests {
         // use a small key range to achieve more key conflicts
         let key_range = Uniform::from(0..10);
         let key: u64 = key_range.sample(rng);
-        
+
         let value: Option<u64> = if rng.gen_range(0..2) == 0 {
             Some(rng.gen::<u64>())
         } else {
@@ -196,10 +200,7 @@ mod tests {
     fn generate_random_tree(
         num_nodes: usize,
         rng: &mut StdRng,
-    ) -> (
-        Tree<TestPendingConfig>,
-        VersionedHashMap<TestPendingConfig>,
-    ) {
+    ) -> (Tree<TestPendingConfig>, VersionedHashMap<TestPendingConfig>) {
         let mut forward_only_tree = Tree::new();
         let mut versioned_hash_map = VersionedHashMap::new(None);
 
@@ -234,8 +235,8 @@ mod tests {
         let num_nodes = 100;
 
         let seed: [u8; 32] = [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31,
         ];
         let mut rng = StdRng::from_seed(seed);
 
@@ -258,7 +259,9 @@ mod tests {
         let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None);
 
         forward_only_tree.add_node(0, None, Vec::new()).unwrap();
-        versioned_hash_map.add_node(BTreeMap::new(), 0, None).unwrap();
+        versioned_hash_map
+            .add_node(BTreeMap::new(), 0, None)
+            .unwrap();
 
         assert_eq!(
             forward_only_tree.add_node(1, None, Vec::new()),
@@ -291,7 +294,9 @@ mod tests {
         let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None);
 
         forward_only_tree.add_node(0, None, Vec::new()).unwrap();
-        versioned_hash_map.add_node(BTreeMap::new(), 0, None).unwrap();
+        versioned_hash_map
+            .add_node(BTreeMap::new(), 0, None)
+            .unwrap();
 
         assert_eq!(
             forward_only_tree.add_node(0, Some(0), Vec::new()),

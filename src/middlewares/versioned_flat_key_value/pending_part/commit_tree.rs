@@ -57,7 +57,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
     fn get_node_by_commit_id(
         &self,
-        commit_id: S::CommitId
+        commit_id: S::CommitId,
     ) -> Result<&TreeNode<S>, PendingError<S::CommitId>> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
         Ok(self.get_node_by_slab_index(slab_index))
@@ -129,7 +129,10 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         slab_indices
     }
 
-    fn find_path_nodes(&self, target_slab_index: SlabIndex) -> (Vec<S::CommitId>, HashSet<SlabIndex>) {
+    fn find_path_nodes(
+        &self,
+        target_slab_index: SlabIndex,
+    ) -> (Vec<S::CommitId>, HashSet<SlabIndex>) {
         let mut target_node = self.get_node_by_slab_index(target_slab_index);
         let mut path = Vec::new();
         let mut set = HashSet::new();

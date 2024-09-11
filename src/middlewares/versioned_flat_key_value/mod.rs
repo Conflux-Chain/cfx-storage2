@@ -1,14 +1,14 @@
+mod pending_part;
 mod serde;
 mod table_schema;
-mod pending_part;
 
 use std::collections::BTreeMap;
 
 pub use pending_part::PendingError;
 
-use pending_part::VersionedHashMap;
 use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
+use pending_part::VersionedHashMap;
 
 use super::ChangeKey;
 use super::CommitIDSchema;
@@ -46,8 +46,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         let history_commit = match res_value {
             Ok(Some(value)) => return Ok(value),
             Ok(None) => self.pending_part.get_parent_of_root(),
-            Err(PendingError::CommitIDNotFound(target_commit)) =>
-            {
+            Err(PendingError::CommitIDNotFound(target_commit)) => {
                 assert_eq!(target_commit, commit);
                 Some(commit)
             }
