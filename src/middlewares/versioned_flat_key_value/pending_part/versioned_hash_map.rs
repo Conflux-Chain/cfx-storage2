@@ -112,11 +112,11 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         &mut self,
         target_commit_id: Option<S::CommitId>,
     ) -> Result<(), PendingError<S::CommitId>> {
-        if target_commit_id.is_none() {
+        if let Some(target_commit_id) = target_commit_id {
+            self.walk_to_node_unchecked(target_commit_id)?;
+        } else {
             self.current = BTreeMap::new();
             self.current_node = None;
-        } else {
-            self.walk_to_node_unchecked(target_commit_id.unwrap())?;
         }
         Ok(())
     }
@@ -124,13 +124,13 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         &mut self,
         target_commit_id: S::CommitId,
     ) -> Result<(), PendingError<S::CommitId>> {
-        let (rollbacks, commits_rev) = if self.current_node.is_none() {
-            let commits_rev = self.tree.find_path(target_commit_id)?;
-            (HashMap::new(), commits_rev)
-        } else {
-            self.tree
-                .lca(self.current_node.unwrap(), target_commit_id)?
-        };
+        let (rollbacks, commits_rev) = 
+            if let Some(current_commit_id) = self.current_node {
+                self.tree
+                    .lca(current_commit_id, target_commit_id)?
+            } else {
+                (HashMap::new(), self.tree.find_path(target_commit_id)?)
+            };
         self.rollback_without_node_update(rollbacks);
         self.commit_without_node_update(commits_rev);
         self.current_node = Some(target_commit_id);

@@ -187,7 +187,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 
     // correctness based on single root
-    pub fn lca(
+    pub(super) fn lca(
         &self,
         current_commit_id: S::CommitId,
         target_commit_id: S::CommitId,
