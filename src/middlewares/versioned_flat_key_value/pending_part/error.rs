@@ -2,7 +2,7 @@ use std::{fmt::Debug, hash::Hash};
 
 use thiserror::Error;
 
-#[derive(Debug, PartialEq, Error)]
+#[derive(Debug, PartialEq, Error, Eq)]
 pub enum PendingError<CommitId: Debug + Eq + Hash> {
     #[error("commit id not found")]
     CommitIDNotFound(CommitId),
