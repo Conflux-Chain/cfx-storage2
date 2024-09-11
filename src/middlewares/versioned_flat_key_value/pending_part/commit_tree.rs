@@ -71,6 +71,11 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         node.parent
             .and_then(|p_slab_index| Some(self.nodes[p_slab_index].commit_id))
     }
+
+    fn get_parent_node(&self, node: &TreeNode<S>) -> Option<&TreeNode<S>> {
+        node.parent
+            .and_then(|p_slab_index| Some(self.get_node_by_slab_index(p_slab_index)))  
+    }
 }
 
 impl<S: PendingKeyValueSchema> Tree<S> {
@@ -204,17 +209,17 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let mut commits_rev = HashMap::new();
         while current_node.height > target_node.height {
             current_node.export_rollback_data(&mut rollbacks);
-            current_node = self.get_node_by_slab_index(current_node.parent.unwrap());
+            current_node = self.get_parent_node(current_node).unwrap();
         }
         while target_node.height > current_node.height {
             target_node.export_commit_data(&mut commits_rev);
-            target_node = self.get_node_by_slab_index(target_node.parent.unwrap());
+            target_node = self.get_parent_node(target_node).unwrap();
         }
         while current_node.commit_id != target_node.commit_id {
             current_node.export_rollback_data(&mut rollbacks);
-            current_node = self.get_node_by_slab_index(current_node.parent.unwrap());
+            current_node = self.get_parent_node(current_node).unwrap();
             target_node.export_commit_data(&mut commits_rev);
-            target_node = self.get_node_by_slab_index(target_node.parent.unwrap());
+            target_node = self.get_parent_node(target_node).unwrap();
         }
         // check rollbacks' old_commit_id because TreeNodes are deleted
         // in a lazy way with respect to TreeNodes.modifications
