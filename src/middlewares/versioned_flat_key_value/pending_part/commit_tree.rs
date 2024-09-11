@@ -55,6 +55,14 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self.nodes[slab_index]
     }
 
+    fn get_node_by_commit_id(
+        &self,
+        commit_id: S::CommitId
+    ) -> Result<&TreeNode<S>, PendingError<S::CommitId>> {
+        let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
+        Ok(self.get_node_by_slab_index(slab_index))
+    }
+
     fn has_root(&self) -> bool {
         !self.index_map.is_empty()
     }
@@ -168,8 +176,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         target_commit_id: S::CommitId,
     ) -> Result<HashMap<S::Key, (S::CommitId, Option<S::Value>)>, PendingError<S::CommitId>> {
-        let target_slab_index = self.get_slab_index_by_commit_id(target_commit_id)?;
-        let mut target_node = self.get_node_by_slab_index(target_slab_index);
+        let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut commits_rev = HashMap::new();
         target_node.target_up(&mut commits_rev);
         while let Some(parent_slab_index) = target_node.parent {
@@ -191,10 +198,8 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         ),
         PendingError<S::CommitId>,
     > {
-        let current_slab_index = self.get_slab_index_by_commit_id(current_commit_id).unwrap();
-        let target_slab_index = self.get_slab_index_by_commit_id(target_commit_id)?;
-        let mut current_node = self.get_node_by_slab_index(current_slab_index);
-        let mut target_node = self.get_node_by_slab_index(target_slab_index);
+        let mut current_node = self.get_node_by_commit_id(current_commit_id).unwrap();
+        let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut rollbacks = HashMap::new();
         let mut commits_rev = HashMap::new();
         while current_node.height > target_node.height {
