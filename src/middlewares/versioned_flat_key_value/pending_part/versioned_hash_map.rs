@@ -63,15 +63,14 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         let mut history_inner_map = HashMap::new();
         for (key, value) in updates.into_iter() {
             history_inner_map.insert(key.clone(), value.clone());
-            let old_commit_id = {
+            let old_commit_id =
                 if let Some((old_commit_id, _)) =
                     self.current.insert(key.clone(), (commit_id, value.clone()))
                 {
                     Some(old_commit_id)
                 } else {
                     None
-                }
-            };
+                };
             modifications.push((key, value, old_commit_id));
         }
         // PendingError::CommitIdAlreadyExists(commit_id) will be reported
