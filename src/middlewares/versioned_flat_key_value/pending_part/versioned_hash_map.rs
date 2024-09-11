@@ -55,14 +55,17 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         commit_id: S::CommitId,
         parent_commit_id: Option<S::CommitId>,
     ) -> Result<(), PendingError<S::CommitId>> {
+        if self.history.contains_key(&commit_id) {
+            return Err(PendingError::CommitIdAlreadyExists(commit_id));
+        }
         // let parent to be self.current
         self.walk_to_node(parent_commit_id)?;
         assert_eq!(parent_commit_id, self.current_node);
         // add node
         let mut modifications = Vec::new();
-        let mut history_inner_map = HashMap::new();
+        let mut inner_map = HashMap::new();
         for (key, value) in updates.into_iter() {
-            history_inner_map.insert(key.clone(), value.clone());
+            inner_map.insert(key.clone(), value.clone());
             let old_commit_id =
                 if let Some((old_commit_id, _)) =
                     self.current.insert(key.clone(), (commit_id, value.clone()))
@@ -73,9 +76,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
                 };
             modifications.push((key, value, old_commit_id));
         }
-        // PendingError::CommitIdAlreadyExists(commit_id) will be reported
-        // in self.tree.add_node
-        self.history.entry(commit_id).or_insert_with(|| history_inner_map);
+        self.history.insert(commit_id, inner_map);
         self.tree
             .add_node(commit_id, parent_commit_id, modifications)?;
         self.current_node = Some(commit_id);
