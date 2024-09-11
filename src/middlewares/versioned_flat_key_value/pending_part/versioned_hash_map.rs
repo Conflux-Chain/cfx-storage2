@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, HashMap};
 
-use super::{commit_tree::Tree, pending_schema::PendingKeyValueSchema, PendingError};
+use super::{commit_tree::Tree, pending_schema::{Commits, Current, History, PendingKeyValueSchema, ToCommit}, PendingError};
 
 pub struct VersionedHashMap<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
 
-    history: HashMap<S::CommitId, HashMap<S::Key, Option<S::Value>>>,
+    history: History<S>,
     tree: Tree<S>,
 
-    current: BTreeMap<S::Key, (S::CommitId, Option<S::Value>)>,
+    current: Current<S>,
     current_node: Option<S::CommitId>,
 }
 
@@ -28,7 +28,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> Result<Vec<Option<HashMap<S::Key, Option<S::Value>>>>, PendingError<S::CommitId>> {
+    ) -> Result<ToCommit<S>, PendingError<S::CommitId>> {
         let (to_commit_rev, to_remove) = self.tree.change_root(commit_id)?;
         if to_commit_rev.is_empty() {
             assert!(to_remove.is_empty());
@@ -42,7 +42,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         }
         let mut to_commit = Vec::new();
         for to_commit_one in to_commit_rev.into_iter().rev() {
-            to_commit.push(self.history.remove(&to_commit_one));
+            to_commit.push((to_commit_one, self.history.remove(&to_commit_one)));
         }
         Ok(to_commit)
     }
@@ -98,7 +98,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         let value = self
             .current
             .get(key)
-            .and_then(|(_, value)| Some(value.clone()));
+            .map(|(_, value)| value.clone());
         Ok(value)
     }
 
@@ -137,7 +137,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         Ok(())
     }
 
-    fn commit_without_node_update(&mut self, commits_rev: HashMap<S::Key, (S::CommitId, Option<S::Value>)>) {
+    fn commit_without_node_update(&mut self, commits_rev: Commits<S>) {
         for (key, (commit_id, value)) in commits_rev.into_iter() {
             self.current.insert(key, (commit_id, value));
         }
