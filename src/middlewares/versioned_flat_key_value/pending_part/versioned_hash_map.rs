@@ -2,14 +2,15 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::{
     commit_tree::Tree,
-    pending_schema::{Commits, Current, History, PendingKeyValueSchema, ToCommit},
+    pending_schema::{Commits, Current, PendingKeyValueSchema, ToCommit},
     PendingError,
 };
 
 pub struct VersionedHashMap<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
 
-    history: History<S>,
+    #[allow(clippy::type_complexity)]
+    history: HashMap<S::CommitId, HashMap<S::Key, Option<S::Value>>>,
     tree: Tree<S>,
 
     current: Current<S>,
