@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::{
     commit_tree::Tree,
-    pending_schema::{Commits, PendingKeyValueSchema, ToCommit},
+    pending_schema::{Commits, PendingKeyValueSchema},
     PendingError,
 };
 
@@ -31,10 +31,14 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
+    #[allow(clippy::type_complexity)]
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> Result<ToCommit<S>, PendingError<S::CommitId>> {
+    ) -> Result<
+        Vec<(S::CommitId, Option<HashMap<S::Key, Option<S::Value>>>)>,
+        PendingError<S::CommitId>,
+    > {
         let (to_commit_rev, to_remove) = self.tree.change_root(commit_id)?;
         if to_commit_rev.is_empty() {
             assert!(to_remove.is_empty());

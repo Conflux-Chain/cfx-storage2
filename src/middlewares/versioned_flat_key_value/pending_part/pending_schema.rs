@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    hash::Hash,
-    marker::PhantomData,
-};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, marker::PhantomData};
 
 use crate::middlewares::versioned_flat_key_value::table_schema::VersionedKeyValueSchema;
 
@@ -20,7 +15,6 @@ pub type CommitId<S> = <S as PendingKeyValueSchema>::CommitId;
 pub type Modifications<S> = Vec<(Key<S>, Option<Value<S>>, Option<CommitId<S>>)>;
 pub type Commits<S> = HashMap<Key<S>, (CommitId<S>, Option<Value<S>>)>;
 pub type Rollbacks<S> = HashMap<Key<S>, Option<CommitId<S>>>;
-pub type ToCommit<S> = Vec<(CommitId<S>, Option<HashMap<Key<S>, Option<Value<S>>>>)>;
 pub type CIdVecPair<S> = (Vec<CommitId<S>>, Vec<CommitId<S>>);
 pub type RollComm<S> = (Rollbacks<S>, Commits<S>);
 
