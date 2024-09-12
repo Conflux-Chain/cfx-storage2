@@ -2,7 +2,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use slab::Slab;
 
-use super::pending_schema::{CIdOptValue, CIdVec, OptCId, OptValue, PendResult, PendingKeyValueSchema, RollComm};
+use super::pending_schema::{
+    CIdOptValue, CIdVec, OptCId, OptValue, PendResult, PendingKeyValueSchema, RollComm,
+};
 use super::PendingError;
 
 type SlabIndex = usize;
@@ -40,10 +42,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         self.index_map.contains_key(commit_id)
     }
 
-    fn get_slab_index_by_commit_id(
-        &self,
-        commit_id: S::CommitId,
-    ) -> PendResult<SlabIndex, S> {
+    fn get_slab_index_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<SlabIndex, S> {
         let slab_index = *self
             .index_map
             .get(&commit_id)
@@ -55,10 +54,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self.nodes[slab_index]
     }
 
-    fn get_node_by_commit_id(
-        &self,
-        commit_id: S::CommitId,
-    ) -> PendResult<&TreeNode<S>, S> {
+    fn get_node_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<&TreeNode<S>, S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
         Ok(self.get_node_by_slab_index(slab_index))
     }
@@ -145,10 +141,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 
     // todo: test
-    pub fn change_root(
-        &mut self,
-        commit_id: S::CommitId,
-    ) -> PendResult<(CIdVec<S>, CIdVec<S>), S> {
+    pub fn change_root(&mut self, commit_id: S::CommitId) -> PendResult<(CIdVec<S>, CIdVec<S>), S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // (root)..=(new_root's parent)

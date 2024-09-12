@@ -29,10 +29,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
-    pub fn change_root(
-        &mut self,
-        commit_id: S::CommitId,
-    ) -> PendResult<ToCommit<S>, S> {
+    pub fn change_root(&mut self, commit_id: S::CommitId) -> PendResult<ToCommit<S>, S> {
         let (to_commit_rev, to_remove) = self.tree.change_root(commit_id)?;
         if to_commit_rev.is_empty() {
             assert!(to_remove.is_empty());
@@ -108,10 +105,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
-    fn walk_to_node(
-        &mut self,
-        target_commit_id: Option<S::CommitId>,
-    ) -> PendResult<(), S> {
+    fn walk_to_node(&mut self, target_commit_id: Option<S::CommitId>) -> PendResult<(), S> {
         if let Some(target_commit_id) = target_commit_id {
             self.walk_to_node_unchecked(target_commit_id)?;
         } else {
@@ -120,10 +114,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         }
         Ok(())
     }
-    fn walk_to_node_unchecked(
-        &mut self,
-        target_commit_id: S::CommitId,
-    ) -> PendResult<(), S> {
+    fn walk_to_node_unchecked(&mut self, target_commit_id: S::CommitId) -> PendResult<(), S> {
         let (rollbacks, commits_rev) = if let Some(current_commit_id) = self.current_node {
             self.tree.lca(current_commit_id, target_commit_id)?
         } else {

@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    hash::Hash,
-    marker::PhantomData,
-};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, marker::PhantomData};
 
 use crate::middlewares::versioned_flat_key_value::table_schema::VersionedKeyValueSchema;
 
@@ -18,6 +13,7 @@ pub trait PendingKeyValueSchema {
 pub type Key<S> = <S as PendingKeyValueSchema>::Key;
 pub type Value<S> = <S as PendingKeyValueSchema>::Value;
 pub type CommitId<S> = <S as PendingKeyValueSchema>::CommitId;
+
 pub type OptValue<S> = Option<Value<S>>;
 pub type OptCId<S> = Option<CommitId<S>>;
 pub type CIdOptValue<S> = (CommitId<S>, OptValue<S>);
