@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use slab::Slab;
 
-use super::pending_schema::{CIdVecPair, Commits, Modifications, PendingKeyValueSchema, RollComm};
+use super::pending_schema::{Commits, Modifications, PendingKeyValueSchema, RollComm};
 use super::PendingError;
 
 type SlabIndex = usize;
@@ -145,10 +145,11 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 
     // todo: test
+    #[allow(clippy::type_complexity)]
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> Result<CIdVecPair<S>, PendingError<S::CommitId>> {
+    ) -> Result<(Vec<S::CommitId>, Vec<S::CommitId>), PendingError<S::CommitId>> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // (root)..=(new_root's parent)
