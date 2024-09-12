@@ -2,17 +2,17 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::{
     commit_tree::Tree,
-    pending_schema::{Commits, Current, History, PendingKeyValueSchema, ToCommit},
+    pending_schema::{CIdOptValue, OptValue, PendResult, PendingKeyValueSchema, ToCommit},
     PendingError,
 };
 
 pub struct VersionedHashMap<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
 
-    history: History<S>,
+    history: HashMap<S::CommitId, HashMap<S::Key, OptValue<S>>>,
     tree: Tree<S>,
 
-    current: Current<S>,
+    current: BTreeMap<S::Key, CIdOptValue<S>>,
     current_node: Option<S::CommitId>,
 }
 
@@ -32,7 +32,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> Result<ToCommit<S>, PendingError<S::CommitId>> {
+    ) -> PendResult<ToCommit<S>, S> {
         let (to_commit_rev, to_remove) = self.tree.change_root(commit_id)?;
         if to_commit_rev.is_empty() {
             assert!(to_remove.is_empty());
@@ -58,7 +58,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         updates: BTreeMap<S::Key, Option<S::Value>>,
         commit_id: S::CommitId,
         parent_commit_id: Option<S::CommitId>,
-    ) -> Result<(), PendingError<S::CommitId>> {
+    ) -> PendResult<(), S> {
         if self.history.contains_key(&commit_id) {
             return Err(PendingError::CommitIdAlreadyExists(commit_id));
         }
@@ -93,7 +93,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         &mut self,
         commit_id: S::CommitId,
         key: &S::Key,
-    ) -> Result<Option<Option<S::Value>>, PendingError<S::CommitId>> {
+    ) -> PendResult<Option<Option<S::Value>>, S> {
         // let queried node to be self.current
         self.walk_to_node_unchecked(commit_id)?;
         assert_eq!(Some(commit_id), self.current_node);
@@ -111,7 +111,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     fn walk_to_node(
         &mut self,
         target_commit_id: Option<S::CommitId>,
-    ) -> Result<(), PendingError<S::CommitId>> {
+    ) -> PendResult<(), S> {
         if let Some(target_commit_id) = target_commit_id {
             self.walk_to_node_unchecked(target_commit_id)?;
         } else {
@@ -123,7 +123,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     fn walk_to_node_unchecked(
         &mut self,
         target_commit_id: S::CommitId,
-    ) -> Result<(), PendingError<S::CommitId>> {
+    ) -> PendResult<(), S> {
         let (rollbacks, commits_rev) = if let Some(current_commit_id) = self.current_node {
             self.tree.lca(current_commit_id, target_commit_id)?
         } else {
@@ -135,7 +135,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         Ok(())
     }
 
-    fn commit_without_node_update(&mut self, commits_rev: Commits<S>) {
+    fn commit_without_node_update(&mut self, commits_rev: HashMap<S::Key, CIdOptValue<S>>) {
         for (key, (commit_id, value)) in commits_rev.into_iter() {
             self.current.insert(key, (commit_id, value));
         }

@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use slab::Slab;
 
-use super::pending_schema::{CIdVecPair, Commits, Modifications, PendingKeyValueSchema, RollComm};
+use super::pending_schema::{CIdOptValue, CIdVec, OptCId, OptValue, PendResult, PendingKeyValueSchema, RollComm};
 use super::PendingError;
 
 type SlabIndex = usize;
@@ -20,7 +20,7 @@ pub struct TreeNode<S: PendingKeyValueSchema> {
     // before current node, the old value of this key is modified by which commit_id,
     // if none, this key is absent before current node
     // here must use CommitID instead of SlabIndex (which may be reused, see slab doc)
-    modifications: Modifications<S>,
+    modifications: Vec<(S::Key, OptValue<S>, OptCId<S>)>,
 }
 
 pub struct Tree<S: PendingKeyValueSchema> {
@@ -43,7 +43,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     fn get_slab_index_by_commit_id(
         &self,
         commit_id: S::CommitId,
-    ) -> Result<SlabIndex, PendingError<S::CommitId>> {
+    ) -> PendResult<SlabIndex, S> {
         let slab_index = *self
             .index_map
             .get(&commit_id)
@@ -58,7 +58,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     fn get_node_by_commit_id(
         &self,
         commit_id: S::CommitId,
-    ) -> Result<&TreeNode<S>, PendingError<S::CommitId>> {
+    ) -> PendResult<&TreeNode<S>, S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
         Ok(self.get_node_by_slab_index(slab_index))
     }
@@ -83,8 +83,8 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &mut self,
         commit_id: S::CommitId,
         parent_commit_id: Option<S::CommitId>,
-        modifications: Modifications<S>,
-    ) -> Result<(), PendingError<S::CommitId>> {
+        modifications: Vec<(S::Key, OptValue<S>, OptCId<S>)>,
+    ) -> PendResult<(), S> {
         // return error if Some(parent_commit_id) but parent_commit_id does not exist
         let (parent_slab_index, parent_height) = if let Some(parent_commit_id) = parent_commit_id {
             let p_slab_index = self.get_slab_index_by_commit_id(parent_commit_id)?;
@@ -148,7 +148,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> Result<CIdVecPair<S>, PendingError<S::CommitId>> {
+    ) -> PendResult<(CIdVec<S>, CIdVec<S>), S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // (root)..=(new_root's parent)
@@ -183,7 +183,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn find_path(
         &self,
         target_commit_id: S::CommitId,
-    ) -> Result<Commits<S>, PendingError<S::CommitId>> {
+    ) -> PendResult<HashMap<S::Key, CIdOptValue<S>>, S> {
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut commits_rev = HashMap::new();
         target_node.export_commit_data(&mut commits_rev);
@@ -199,7 +199,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         current_commit_id: S::CommitId,
         target_commit_id: S::CommitId,
-    ) -> Result<RollComm<S>, PendingError<S::CommitId>> {
+    ) -> PendResult<RollComm<S>, S> {
         let mut current_node = self.get_node_by_commit_id(current_commit_id).unwrap();
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut rollbacks = HashMap::new();
@@ -240,7 +240,7 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         commit_id: S::CommitId,
         parent: Option<SlabIndex>,
         parent_height: usize,
-        modifications: Modifications<S>,
+        modifications: Vec<(S::Key, OptValue<S>, OptCId<S>)>,
     ) -> Self {
         Self {
             height: parent_height + 1,
@@ -267,7 +267,7 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         }
     }
 
-    pub fn export_commit_data(&self, commits_rev: &mut Commits<S>) {
+    pub fn export_commit_data(&self, commits_rev: &mut HashMap<S::Key, CIdOptValue<S>>) {
         let commit_id = self.commit_id;
         for (key, value, _) in self.get_modifications() {
             commits_rev

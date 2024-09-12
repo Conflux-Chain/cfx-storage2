@@ -1,11 +1,13 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     fmt::Debug,
     hash::Hash,
     marker::PhantomData,
 };
 
 use crate::middlewares::versioned_flat_key_value::table_schema::VersionedKeyValueSchema;
+
+use super::PendingError;
 
 pub trait PendingKeyValueSchema {
     type Key: Eq + Hash + Clone + Ord;
@@ -16,15 +18,15 @@ pub trait PendingKeyValueSchema {
 pub type Key<S> = <S as PendingKeyValueSchema>::Key;
 pub type Value<S> = <S as PendingKeyValueSchema>::Value;
 pub type CommitId<S> = <S as PendingKeyValueSchema>::CommitId;
+pub type OptValue<S> = Option<Value<S>>;
+pub type OptCId<S> = Option<CommitId<S>>;
+pub type CIdOptValue<S> = (CommitId<S>, OptValue<S>);
 
-pub type Modifications<S> = Vec<(Key<S>, Option<Value<S>>, Option<CommitId<S>>)>;
-pub type Commits<S> = HashMap<Key<S>, (CommitId<S>, Option<Value<S>>)>;
-pub type Rollbacks<S> = HashMap<Key<S>, Option<CommitId<S>>>;
-pub type History<S> = HashMap<CommitId<S>, HashMap<Key<S>, Option<Value<S>>>>;
-pub type Current<S> = BTreeMap<Key<S>, (CommitId<S>, Option<Value<S>>)>;
-pub type ToCommit<S> = Vec<(CommitId<S>, Option<HashMap<Key<S>, Option<Value<S>>>>)>;
-pub type CIdVecPair<S> = (Vec<CommitId<S>>, Vec<CommitId<S>>);
-pub type RollComm<S> = (Rollbacks<S>, Commits<S>);
+pub type CIdVec<S> = Vec<CommitId<S>>;
+pub type ToCommit<S> = Vec<(CommitId<S>, Option<HashMap<Key<S>, OptValue<S>>>)>;
+pub type RollComm<S> = (HashMap<Key<S>, OptCId<S>>, HashMap<Key<S>, CIdOptValue<S>>);
+
+pub type PendResult<T, S> = Result<T, PendingError<CommitId<S>>>;
 
 pub struct PendingKeyValueConfig<T, CId> {
     _marker: PhantomData<(T, CId)>,
