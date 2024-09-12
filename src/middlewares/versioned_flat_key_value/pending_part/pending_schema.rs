@@ -13,38 +13,42 @@ pub trait PendingKeyValueSchema {
     type Value: Clone;
 }
 
+pub type Key<S> = <S as PendingKeyValueSchema>::Key;
+pub type Value<S> = <S as PendingKeyValueSchema>::Value;
+pub type CommitId<S> = <S as PendingKeyValueSchema>::CommitId;
+
 pub type Modifications<S> = Vec<(
-    <S as PendingKeyValueSchema>::Key,
-    Option<<S as PendingKeyValueSchema>::Value>,
-    Option<<S as PendingKeyValueSchema>::CommitId>,
+    Key<S>,
+    Option<Value<S>>,
+    Option<CommitId<S>>,
 )>;
 pub type Commits<S> = HashMap<
-    <S as PendingKeyValueSchema>::Key,
+    Key<S>,
     (
-        <S as PendingKeyValueSchema>::CommitId,
-        Option<<S as PendingKeyValueSchema>::Value>,
+        CommitId<S>,
+        Option<Value<S>>,
     ),
 >;
 pub type Rollbacks<S> =
-    HashMap<<S as PendingKeyValueSchema>::Key, Option<<S as PendingKeyValueSchema>::CommitId>>;
+    HashMap<Key<S>, Option<CommitId<S>>>;
 pub type History<S> = HashMap<
-    <S as PendingKeyValueSchema>::CommitId,
-    HashMap<<S as PendingKeyValueSchema>::Key, Option<<S as PendingKeyValueSchema>::Value>>,
+    CommitId<S>,
+    HashMap<Key<S>, Option<Value<S>>>,
 >;
 pub type Current<S> = BTreeMap<
-    <S as PendingKeyValueSchema>::Key,
+    Key<S>,
     (
-        <S as PendingKeyValueSchema>::CommitId,
-        Option<<S as PendingKeyValueSchema>::Value>,
+        CommitId<S>,
+        Option<Value<S>>,
     ),
 >;
 pub type ToCommit<S> = Vec<(
-    <S as PendingKeyValueSchema>::CommitId,
-    Option<HashMap<<S as PendingKeyValueSchema>::Key, Option<<S as PendingKeyValueSchema>::Value>>>,
+    CommitId<S>,
+    Option<HashMap<Key<S>, Option<Value<S>>>>,
 )>;
 pub type CIdVecPair<S> = (
-    Vec<<S as PendingKeyValueSchema>::CommitId>,
-    Vec<<S as PendingKeyValueSchema>::CommitId>,
+    Vec<CommitId<S>>,
+    Vec<CommitId<S>>,
 );
 pub type RollComm<S> = (Rollbacks<S>, Commits<S>);
 
