@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use slab::Slab;
 
-use super::pending_schema::{Commits, Modifications, PendingKeyValueSchema, RollComm};
+use super::pending_schema::{Commits, Modifications, PendingKeyValueSchema};
 use super::PendingError;
 
 type SlabIndex = usize;
@@ -196,11 +196,12 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 
     // correctness based on single root
+    #[allow(clippy::type_complexity)]
     pub(super) fn lca(
         &self,
         current_commit_id: S::CommitId,
         target_commit_id: S::CommitId,
-    ) -> Result<RollComm<S>, PendingError<S::CommitId>> {
+    ) -> Result<(HashMap<S::Key, Option<S::CommitId>>, Commits<S>), PendingError<S::CommitId>> {
         let mut current_node = self.get_node_by_commit_id(current_commit_id).unwrap();
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut rollbacks = HashMap::new();

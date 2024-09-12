@@ -14,8 +14,6 @@ pub type CommitId<S> = <S as PendingKeyValueSchema>::CommitId;
 
 pub type Modifications<S> = Vec<(Key<S>, Option<Value<S>>, Option<CommitId<S>>)>;
 pub type Commits<S> = HashMap<Key<S>, (CommitId<S>, Option<Value<S>>)>;
-pub type Rollbacks<S> = HashMap<Key<S>, Option<CommitId<S>>>;
-pub type RollComm<S> = (Rollbacks<S>, Commits<S>);
 
 pub struct PendingKeyValueConfig<T, CId> {
     _marker: PhantomData<(T, CId)>,
