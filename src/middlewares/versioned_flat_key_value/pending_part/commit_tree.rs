@@ -16,7 +16,7 @@ pub struct TreeNode<S: PendingKeyValueSchema> {
 
     // todo: test lazy height
     // height will not be changed even when root is changed
-    // height is only used for lca
+    // height is only used for lca in Tree.collect_rollback_and_apply_ops()
     height: usize,
 
     commit_id: S::CommitId,
@@ -64,11 +64,6 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         !self.index_map.is_empty()
     }
 
-    pub fn get_parent_commit_id(&self, node: &TreeNode<S>) -> Option<S::CommitId> {
-        node.parent
-            .map(|p_slab_index| self.nodes[p_slab_index].commit_id)
-    }
-
     fn get_parent_node(&self, node: &TreeNode<S>) -> Option<&TreeNode<S>> {
         node.parent
             .map(|p_slab_index| self.get_node_by_slab_index(p_slab_index))
@@ -81,10 +76,11 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         commit_id: S::CommitId,
         modifications: RecoverMap<S>,
     ) -> PendResult<(), S> {
-        if !self.index_map.is_empty() {
+        // return error if there is root
+        if self.has_root() {
             return Err(PendingError::MultipleRootsNotAllowed);
         }
-        // PendingError::CommitIdAlreadyExists(_) cannot happend because self.index_map is empty
+        // PendingError::CommitIdAlreadyExists(_) cannot happend because no root indicates no node
 
         // new root
         let root = TreeNode::new_root(commit_id, modifications);
@@ -102,20 +98,19 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         parent_commit_id: S::CommitId,
         modifications: RecoverMap<S>,
     ) -> PendResult<(), S> {
-        // return error if Some(parent_commit_id) but parent_commit_id does not exist
+        // return error if parent_commit_id does not exist
         let parent_slab_index = self.get_slab_index_by_commit_id(parent_commit_id)?;
-        let parent_height = self.get_node_by_slab_index(parent_slab_index).height;
-
+        
         // return error if commit_id exists
-        if self.index_map.contains_key(&commit_id) {
+        if self.contains_commit_id(&commit_id) {
             return Err(PendingError::CommitIdAlreadyExists(commit_id));
         }
 
         // new node
         let node = TreeNode::new(
             commit_id,
-            Some(parent_slab_index),
-            parent_height,
+            parent_slab_index,
+            self.get_node_by_slab_index(parent_slab_index).height + 1,
             modifications,
         );
 
@@ -264,14 +259,14 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
     }
     pub fn new(
         commit_id: S::CommitId,
-        parent: Option<SlabIndex>,
-        parent_height: usize,
+        parent: SlabIndex,
+        height: usize,
         modifications: RecoverMap<S>,
     ) -> Self {
         Self {
-            height: parent_height + 1,
+            height,
             commit_id,
-            parent,
+            parent: Some(parent),
             children: BTreeSet::new(),
             modifications,
         }
