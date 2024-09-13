@@ -205,7 +205,9 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
             current.commit_id = target_commit_id;
         } else {
             let mut current = CurrentMap::<S>::new(target_commit_id);
-            let applys = self.tree.get_apply_map_from_root_included(target_commit_id)?;
+            let applys = self
+                .tree
+                .get_apply_map_from_root_included(target_commit_id)?;
             current.apply(applys);
             self.current = Some(current)
         };

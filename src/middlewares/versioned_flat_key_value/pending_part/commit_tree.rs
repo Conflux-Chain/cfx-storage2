@@ -100,7 +100,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     ) -> PendResult<(), S> {
         // return error if parent_commit_id does not exist
         let parent_slab_index = self.get_slab_index_by_commit_id(parent_commit_id)?;
-        
+
         // return error if commit_id exists
         if self.contains_commit_id(&commit_id) {
             return Err(PendingError::CommitIdAlreadyExists(commit_id));
@@ -257,6 +257,7 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
             modifications,
         }
     }
+
     pub fn new(
         commit_id: S::CommitId,
         parent: SlabIndex,
