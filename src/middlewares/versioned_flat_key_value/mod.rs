@@ -2,7 +2,7 @@ mod pending_part;
 mod serde;
 mod table_schema;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 pub use pending_part::PendingError;
 

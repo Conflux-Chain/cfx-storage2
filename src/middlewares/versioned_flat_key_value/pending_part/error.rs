@@ -10,4 +10,6 @@ pub enum PendingError<CommitId: Debug + Eq + Hash> {
     MultipleRootsNotAllowed,
     #[error("commit id already exists")]
     CommitIdAlreadyExists(CommitId),
+    #[error("non_root node should have parent")]
+    NonRootNodeHasNoParentError,
 }

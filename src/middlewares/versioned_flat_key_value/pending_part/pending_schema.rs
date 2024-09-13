@@ -1,9 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt::Debug,
-    hash::Hash,
-    marker::PhantomData,
-};
+use std::{collections::BTreeMap, fmt::Debug, hash::Hash, marker::PhantomData};
 
 use crate::middlewares::versioned_flat_key_value::table_schema::VersionedKeyValueSchema;
 
@@ -29,8 +24,8 @@ pub struct ApplyRecord<S: PendingKeyValueSchema> {
     pub commit_id: S::CommitId,
 }
 
-pub type RecoverMap<S> = BTreeMap<Key<S>, RecoverRecord<S>>;
 pub type KeyValueMap<S> = BTreeMap<Key<S>, Option<Value<S>>>;
+pub type RecoverMap<S> = BTreeMap<Key<S>, RecoverRecord<S>>;
 pub type ApplyMap<S> = BTreeMap<Key<S>, ApplyRecord<S>>;
 
 pub type CommitIdVec<S> = Vec<CommitId<S>>;

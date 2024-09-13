@@ -76,35 +76,54 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 }
 
 impl<S: PendingKeyValueSchema> Tree<S> {
-    pub fn add_node(
+    pub fn add_root(
         &mut self,
         commit_id: S::CommitId,
-        parent_commit_id: Option<S::CommitId>,
+        modifications: RecoverMap<S>,
+    ) -> PendResult<(), S> {
+        if !self.index_map.is_empty() {
+            return Err(PendingError::MultipleRootsNotAllowed);
+        }
+        // PendingError::CommitIdAlreadyExists(_) cannot happend because self.index_map is empty
+
+        // new root
+        let root = TreeNode::new_root(commit_id, modifications);
+
+        // add root to tree
+        let slab_index = self.nodes.insert(root);
+        self.index_map.insert(commit_id, slab_index);
+
+        Ok(())
+    }
+
+    pub fn add_non_root_node(
+        &mut self,
+        commit_id: S::CommitId,
+        parent_commit_id: S::CommitId,
         modifications: RecoverMap<S>,
     ) -> PendResult<(), S> {
         // return error if Some(parent_commit_id) but parent_commit_id does not exist
-        let (parent_slab_index, parent_height) = if let Some(parent_commit_id) = parent_commit_id {
-            let p_slab_index = self.get_slab_index_by_commit_id(parent_commit_id)?;
-            let p_height = self.get_node_by_slab_index(p_slab_index).height;
-            (Some(p_slab_index), p_height)
-        } else {
-            // return error if want to add root but there has been a root
-            if self.has_root() {
-                return Err(PendingError::MultipleRootsNotAllowed);
-            }
-            (None, 0)
-        };
+        let parent_slab_index = self.get_slab_index_by_commit_id(parent_commit_id)?;
+        let parent_height = self.get_node_by_slab_index(parent_slab_index).height;
+
         // return error if commit_id exists
         if self.index_map.contains_key(&commit_id) {
             return Err(PendingError::CommitIdAlreadyExists(commit_id));
         }
-        let node = TreeNode::new(commit_id, parent_slab_index, parent_height, modifications);
 
+        // new node
+        let node = TreeNode::new(
+            commit_id,
+            Some(parent_slab_index),
+            parent_height,
+            modifications,
+        );
+
+        // add node to tree
         let slab_index = self.nodes.insert(node);
         self.index_map.insert(commit_id, slab_index);
-        if let Some(parent_slab_index) = parent_slab_index {
-            self.nodes[parent_slab_index].children.insert(slab_index);
-        }
+        self.nodes[parent_slab_index].children.insert(slab_index);
+
         Ok(())
     }
 }
@@ -192,6 +211,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 
     // correctness based on single root
+    #[allow(clippy::type_complexity)]
     pub(super) fn collect_rollback_and_apply_ops(
         &self,
         current_commit_id: S::CommitId,
@@ -233,6 +253,15 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 }
 
 impl<S: PendingKeyValueSchema> TreeNode<S> {
+    pub fn new_root(commit_id: S::CommitId, modifications: RecoverMap<S>) -> Self {
+        Self {
+            height: 0,
+            commit_id,
+            parent: None,
+            children: BTreeSet::new(),
+            modifications,
+        }
+    }
     pub fn new(
         commit_id: S::CommitId,
         parent: Option<SlabIndex>,
