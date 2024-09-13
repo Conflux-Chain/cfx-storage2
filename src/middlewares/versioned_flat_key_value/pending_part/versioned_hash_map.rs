@@ -205,7 +205,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
             current.commit_id = target_commit_id;
         } else {
             let mut current = CurrentMap::<S>::new(target_commit_id);
-            let applys = self.tree.get_apply_map_from_root(target_commit_id)?;
+            let applys = self.tree.get_apply_map_from_root_included(target_commit_id)?;
             current.apply(applys);
             self.current = Some(current)
         };
@@ -319,7 +319,7 @@ mod tests {
                 let key: u64 = ikey;
                 let result = versioned_hash_map.query(commit_id, &key).unwrap();
                 let current = forward_only_tree
-                    .get_apply_map_from_root(commit_id)
+                    .get_apply_map_from_root_included(commit_id)
                     .unwrap();
                 let answer = current.get(&key).map(|a| a.value.clone());
                 assert_eq!(result, answer);

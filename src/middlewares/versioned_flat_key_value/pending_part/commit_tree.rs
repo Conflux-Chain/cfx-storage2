@@ -191,7 +191,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 }
 
 impl<S: PendingKeyValueSchema> Tree<S> {
-    pub fn get_apply_map_from_root(
+    pub fn get_apply_map_from_root_included(
         &self,
         target_commit_id: S::CommitId,
     ) -> PendResult<ApplyMap<S>, S> {
