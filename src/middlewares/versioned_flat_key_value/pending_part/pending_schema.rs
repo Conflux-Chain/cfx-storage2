@@ -1,6 +1,13 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash, marker::PhantomData};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Debug,
+    hash::Hash,
+    marker::PhantomData,
+};
 
 use crate::middlewares::versioned_flat_key_value::table_schema::VersionedKeyValueSchema;
+
+use super::PendingError;
 
 pub trait PendingKeyValueSchema {
     type Key: Eq + Hash + Clone + Ord;
@@ -8,12 +15,26 @@ pub trait PendingKeyValueSchema {
     type Value: Clone;
 }
 
-pub type Key<S> = <S as PendingKeyValueSchema>::Key;
-pub type Value<S> = <S as PendingKeyValueSchema>::Value;
-pub type CommitId<S> = <S as PendingKeyValueSchema>::CommitId;
+type Key<S> = <S as PendingKeyValueSchema>::Key;
+type Value<S> = <S as PendingKeyValueSchema>::Value;
+type CommitId<S> = <S as PendingKeyValueSchema>::CommitId;
 
-pub type Modifications<S> = Vec<(Key<S>, Option<Value<S>>, Option<CommitId<S>>)>;
-pub type Commits<S> = HashMap<Key<S>, (CommitId<S>, Option<Value<S>>)>;
+pub struct RecoverRecord<S: PendingKeyValueSchema> {
+    pub value: Option<S::Value>,
+    pub last_commit_id: Option<S::CommitId>,
+}
+
+pub struct ApplyRecord<S: PendingKeyValueSchema> {
+    pub value: Option<S::Value>,
+    pub commit_id: S::CommitId,
+}
+
+pub type RecoverMap<S> = BTreeMap<Key<S>, RecoverRecord<S>>;
+pub type KeyValueMap<S> = BTreeMap<Key<S>, Option<Value<S>>>;
+pub type ApplyMap<S> = BTreeMap<Key<S>, ApplyRecord<S>>;
+
+pub type CommitIdVec<S> = Vec<CommitId<S>>;
+pub type Result<T, S> = std::result::Result<T, PendingError<CommitId<S>>>;
 
 pub struct PendingKeyValueConfig<T, CId> {
     _marker: PhantomData<(T, CId)>,

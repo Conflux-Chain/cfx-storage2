@@ -1,52 +1,83 @@
 use std::collections::{BTreeMap, HashMap};
 
+use crate::middlewares::versioned_flat_key_value::pending_part::pending_schema::RecoverRecord;
+
 use super::{
     commit_tree::Tree,
-    pending_schema::{Commits, PendingKeyValueSchema},
+    pending_schema::{
+        ApplyMap, ApplyRecord, KeyValueMap, PendingKeyValueSchema, Result as PendResult,
+    },
     PendingError,
 };
 
 pub struct VersionedHashMap<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
-
-    #[allow(clippy::type_complexity)]
-    history: HashMap<S::CommitId, HashMap<S::Key, Option<S::Value>>>,
     tree: Tree<S>,
+    history: HashMap<S::CommitId, KeyValueMap<S>>,
+    current: Option<CurrentMap<S>>,
+}
 
-    #[allow(clippy::type_complexity)]
-    current: BTreeMap<S::Key, (S::CommitId, Option<S::Value>)>,
-    current_node: Option<S::CommitId>,
+pub struct CurrentMap<S: PendingKeyValueSchema> {
+    pub map: BTreeMap<S::Key, ApplyRecord<S>>,
+    pub commit_id: S::CommitId,
+}
+
+impl<S: PendingKeyValueSchema> CurrentMap<S> {
+    pub fn new(commit_id: S::CommitId) -> Self {
+        Self {
+            map: BTreeMap::new(),
+            commit_id,
+        }
+    }
+
+    fn rollback(
+        &mut self,
+        rollbacks: BTreeMap<S::Key, Option<S::CommitId>>,
+        history: &HashMap<S::CommitId, KeyValueMap<S>>,
+    ) {
+        for (key, to_commit_id) in rollbacks.into_iter() {
+            match to_commit_id {
+                None => {
+                    self.map.remove(&key);
+                }
+                Some(commit_id) => {
+                    let value = history.get(&commit_id).unwrap().get(&key).unwrap().clone();
+                    self.map.insert(key, ApplyRecord { commit_id, value });
+                }
+            }
+        }
+    }
+
+    fn apply(&mut self, applys: ApplyMap<S>) {
+        for (key, apply) in applys.into_iter() {
+            self.map.insert(key, apply);
+        }
+    }
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     pub fn new(parent_of_root: Option<S::CommitId>) -> Self {
         VersionedHashMap {
             parent_of_root,
-            current: BTreeMap::new(),
             history: HashMap::new(),
             tree: Tree::new(),
-            current_node: None,
+            current: None,
         }
     }
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
-    #[allow(clippy::type_complexity)]
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> Result<
-        Vec<(S::CommitId, Option<HashMap<S::Key, Option<S::Value>>>)>,
-        PendingError<S::CommitId>,
-    > {
+    ) -> PendResult<Vec<(S::CommitId, Option<KeyValueMap<S>>)>, S> {
         let (to_commit_rev, to_remove) = self.tree.change_root(commit_id)?;
         if to_commit_rev.is_empty() {
             assert!(to_remove.is_empty());
             return Ok(Vec::new());
         }
         self.parent_of_root = Some(to_commit_rev[0]);
-        self.current.clear();
-        self.current_node = None;
+        self.current = None;
         for to_remove_one in to_remove.into_iter() {
             self.history.remove(&to_remove_one);
         }
@@ -63,29 +94,27 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         &mut self,
         updates: BTreeMap<S::Key, Option<S::Value>>,
         commit_id: S::CommitId,
-        parent_commit_id: Option<S::CommitId>,
-    ) -> Result<(), PendingError<S::CommitId>> {
+        parent_commit_id: S::CommitId,
+    ) -> PendResult<(), S> {
         if self.history.contains_key(&commit_id) {
             return Err(PendingError::CommitIdAlreadyExists(commit_id));
         }
         // let parent to be self.current
-        self.walk_to_node(parent_commit_id)?;
-        assert_eq!(parent_commit_id, self.current_node);
+        self.checkout_current(parent_commit_id)?;
+        let current = self.current.as_ref().unwrap();
         // add node
-        let mut modifications = Vec::new();
-        let mut inner_map = HashMap::new();
-        for (key, value) in updates.into_iter() {
-            inner_map.insert(key.clone(), value.clone());
-            let old_commit_id = if let Some((old_commit_id, _)) =
-                self.current.insert(key.clone(), (commit_id, value.clone()))
-            {
-                Some(old_commit_id)
-            } else {
-                None
-            };
-            modifications.push((key, value, old_commit_id));
+        let mut modifications = BTreeMap::new();
+        for (key, value) in updates.iter() {
+            let last_commit_id = current.map.get(key).map(|s| s.commit_id);
+            modifications.insert(
+                key.clone(),
+                RecoverRecord {
+                    value: value.clone(),
+                    last_commit_id,
+                },
+            );
         }
-        self.history.insert(commit_id, inner_map);
+        self.history.insert(commit_id, updates);
         self.tree
             .add_node(commit_id, parent_commit_id, modifications)?;
         self.current_node = Some(commit_id);
@@ -99,13 +128,12 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         &mut self,
         commit_id: S::CommitId,
         key: &S::Key,
-    ) -> Result<Option<Option<S::Value>>, PendingError<S::CommitId>> {
+    ) -> PendResult<Option<Option<S::Value>>, S> {
         // let queried node to be self.current
-        self.walk_to_node_unchecked(commit_id)?;
+        self.checkout_current(commit_id)?;
         assert_eq!(Some(commit_id), self.current_node);
         // query
-        let value = self.current.get(key).map(|(_, value)| value.clone());
-        Ok(value)
+        Ok(self.current.get(key).map(|c| c.value.clone()))
     }
 
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
@@ -114,51 +142,24 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
-    fn walk_to_node(
-        &mut self,
-        target_commit_id: Option<S::CommitId>,
-    ) -> Result<(), PendingError<S::CommitId>> {
-        if let Some(target_commit_id) = target_commit_id {
-            self.walk_to_node_unchecked(target_commit_id)?;
+    fn checkout_current(&mut self, target_commit_id: S::CommitId) -> PendResult<(), S> {
+        if let Some(ref mut current) = self.current {
+            let (rollbacks, applys) = self
+                .tree
+                .collect_rollback_and_apply_ops(current.commit_id, target_commit_id)?;
+            current.rollback(rollbacks, &self.history);
+            current.apply(applys);
+            current.commit_id = target_commit_id;
         } else {
-            self.current = BTreeMap::new();
-            self.current_node = None;
-        }
-        Ok(())
-    }
-    fn walk_to_node_unchecked(
-        &mut self,
-        target_commit_id: S::CommitId,
-    ) -> Result<(), PendingError<S::CommitId>> {
-        let (rollbacks, commits_rev) = if let Some(current_commit_id) = self.current_node {
-            self.tree.lca(current_commit_id, target_commit_id)?
-        } else {
-            (HashMap::new(), self.tree.find_path(target_commit_id)?)
+            let mut current = CurrentMap::<S>::new(target_commit_id);
+            let applys = self.tree.get_apply_map_from_root(target_commit_id)?;
+            current.apply(applys);
+            self.current = Some(current)
         };
-        self.rollback_without_node_update(rollbacks);
-        self.commit_without_node_update(commits_rev);
-        self.current_node = Some(target_commit_id);
+
+        assert_eq!(self.current.unwrap().commit_id, target_commit_id);
+
         Ok(())
-    }
-
-    fn commit_without_node_update(&mut self, commits_rev: Commits<S>) {
-        for (key, (commit_id, value)) in commits_rev.into_iter() {
-            self.current.insert(key, (commit_id, value));
-        }
-    }
-
-    fn rollback_without_node_update(&mut self, rollbacks: HashMap<S::Key, Option<S::CommitId>>) {
-        for (key, old_commit_id) in rollbacks.into_iter() {
-            match old_commit_id {
-                None => {
-                    self.current.remove(&key);
-                }
-                Some(old_commit_id) => {
-                    let value = self.history.get(&old_commit_id).unwrap().get(&key).unwrap();
-                    self.current.insert(key, (old_commit_id, value.clone()));
-                }
-            }
-        }
     }
 }
 
@@ -223,7 +224,15 @@ mod tests {
             }
             let updates_none = updates
                 .iter()
-                .map(|(key, value)| (key.clone(), value.clone(), None))
+                .map(|(key, value)| {
+                    (
+                        *key,
+                        RecoverRecord {
+                            value: *value,
+                            last_commit_id: None,
+                        },
+                    )
+                })
                 .collect();
 
             forward_only_tree
@@ -252,8 +261,10 @@ mod tests {
             for ikey in 0..10 {
                 let key: u64 = ikey;
                 let result = versioned_hash_map.query(commit_id, &key).unwrap();
-                let current = forward_only_tree.find_path(commit_id).unwrap();
-                let answer = current.get(&key).and_then(|(_, value)| Some(value.clone()));
+                let current = forward_only_tree
+                    .get_apply_map_from_root(commit_id)
+                    .unwrap();
+                let answer = current.get(&key).map(|a| a.value.clone());
                 assert_eq!(result, answer);
             }
         }
@@ -264,13 +275,15 @@ mod tests {
         let mut forward_only_tree = Tree::<TestPendingConfig>::new();
         let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None);
 
-        forward_only_tree.add_node(0, None, Vec::new()).unwrap();
+        forward_only_tree
+            .add_node(0, None, BTreeMap::new())
+            .unwrap();
         versioned_hash_map
             .add_node(BTreeMap::new(), 0, None)
             .unwrap();
 
         assert_eq!(
-            forward_only_tree.add_node(1, None, Vec::new()),
+            forward_only_tree.add_node(1, None, BTreeMap::new()),
             Err(PendingError::MultipleRootsNotAllowed)
         );
         assert_eq!(
@@ -285,7 +298,7 @@ mod tests {
         let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None);
 
         assert_eq!(
-            forward_only_tree.add_node(1, Some(0), Vec::new()),
+            forward_only_tree.add_node(1, Some(0), BTreeMap::new()),
             Err(PendingError::CommitIDNotFound(0))
         );
         assert_eq!(
@@ -299,13 +312,15 @@ mod tests {
         let mut forward_only_tree = Tree::<TestPendingConfig>::new();
         let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None);
 
-        forward_only_tree.add_node(0, None, Vec::new()).unwrap();
+        forward_only_tree
+            .add_node(0, None, BTreeMap::new())
+            .unwrap();
         versioned_hash_map
             .add_node(BTreeMap::new(), 0, None)
             .unwrap();
 
         assert_eq!(
-            forward_only_tree.add_node(0, Some(0), Vec::new()),
+            forward_only_tree.add_node(0, Some(0), BTreeMap::new()),
             Err(PendingError::CommitIdAlreadyExists(0))
         );
         assert_eq!(
