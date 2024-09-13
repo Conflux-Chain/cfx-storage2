@@ -140,7 +140,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         slab_indices
     }
 
-    fn find_path_nodes(
+    fn find_path(
         &self,
         target_slab_index: SlabIndex,
     ) -> (CommitIdVec<S>, HashSet<SlabIndex>) {
@@ -163,7 +163,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // (root)..=(new_root's parent)
-        let (to_commit_rev, to_commit_set) = self.find_path_nodes(slab_index);
+        let (to_commit_rev, to_commit_set) = self.find_path(slab_index);
 
         // subtree of new_root
         let to_maintain_vec = self.bfs_subtree(slab_index);
@@ -248,7 +248,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 }
 
 impl<S: PendingKeyValueSchema> TreeNode<S> {
-    pub fn new_root(commit_id: S::CommitId, modifications: RecoverMap<S>) -> Self {
+    fn new_root(commit_id: S::CommitId, modifications: RecoverMap<S>) -> Self {
         Self {
             height: 0,
             commit_id,
@@ -258,7 +258,7 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         }
     }
 
-    pub fn new(
+    fn new(
         commit_id: S::CommitId,
         parent: SlabIndex,
         height: usize,
@@ -273,21 +273,13 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         }
     }
 
-    pub fn get_commit_id(&self) -> S::CommitId {
-        self.commit_id
-    }
-
-    pub fn get_modifications(&self) -> &RecoverMap<S> {
-        &self.modifications
-    }
-
-    pub fn export_rollback_data(&self, rollbacks: &mut BTreeMap<S::Key, Option<S::CommitId>>) {
+    fn export_rollback_data(&self, rollbacks: &mut BTreeMap<S::Key, Option<S::CommitId>>) {
         for (key, RecoverRecord { last_commit_id, .. }) in self.modifications.iter() {
             rollbacks.insert(key.clone(), *last_commit_id);
         }
     }
 
-    pub fn export_commit_data(&self, commits_rev: &mut ApplyMap<S>) {
+    fn export_commit_data(&self, commits_rev: &mut ApplyMap<S>) {
         let commit_id = self.commit_id;
         for (key, RecoverRecord { value, .. }) in self.modifications.iter() {
             commits_rev
