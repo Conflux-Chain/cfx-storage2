@@ -168,7 +168,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let to_maintain_vec = self.bfs_subtree(slab_index);
         let to_maintain = BTreeSet::from_iter(to_maintain_vec);
 
-        // tree - subtree of new_root - root..=new_root's parent
+        // remove: tree - subtree of new_root - root..=new_root's parent
         let mut to_remove_indices = Vec::new();
         for (idx, _) in self.nodes.iter() {
             if !to_maintain.contains(&idx) && !to_commit_set.contains(&idx) {
@@ -185,6 +185,12 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         // set new_root's parent as None
         self.nodes[slab_index].parent = None;
 
+        // remove: root..=new_root's parent
+        for idx in to_commit_set.into_iter() {
+            self.index_map.remove(&self.nodes.remove(idx).commit_id);
+        }
+
+        // ((root..=new_root's parent).rev(), tree - subtree of new_root - root..=new_root's parent)
         Ok((to_commit_rev, to_remove))
     }
 }
