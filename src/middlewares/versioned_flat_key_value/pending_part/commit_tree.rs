@@ -124,6 +124,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 }
 
 impl<S: PendingKeyValueSchema> Tree<S> {
+    // including subroot
     fn bfs_subtree(&self, subroot_slab_index: SlabIndex) -> Vec<SlabIndex> {
         let mut slab_indices = vec![subroot_slab_index];
         let mut head = 0;
@@ -140,10 +141,8 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         slab_indices
     }
 
-    fn find_path(
-        &self,
-        target_slab_index: SlabIndex,
-    ) -> (CommitIdVec<S>, HashSet<SlabIndex>) {
+    // excluding target
+    fn find_path(&self, target_slab_index: SlabIndex) -> (CommitIdVec<S>, HashSet<SlabIndex>) {
         let mut target_node = self.get_node_by_slab_index(target_slab_index);
         let mut path = Vec::new();
         let mut set = HashSet::new();
@@ -162,14 +161,14 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     ) -> PendResult<(CommitIdVec<S>, CommitIdVec<S>), S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
-        // (root)..=(new_root's parent)
+        // (root..=new_root's parent).rev()
         let (to_commit_rev, to_commit_set) = self.find_path(slab_index);
 
         // subtree of new_root
         let to_maintain_vec = self.bfs_subtree(slab_index);
         let to_maintain = BTreeSet::from_iter(to_maintain_vec);
 
-        // tree - subtree of new_root - (root)..-(new_root's parent)
+        // tree - subtree of new_root - root..=new_root's parent
         let mut to_remove_indices = Vec::new();
         for (idx, _) in self.nodes.iter() {
             if !to_maintain.contains(&idx) && !to_commit_set.contains(&idx) {
@@ -178,9 +177,9 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
         let mut to_remove = Vec::new();
         for idx in to_remove_indices.into_iter() {
-            let to_remove_node = self.nodes.remove(idx);
-            self.index_map.remove(&to_remove_node.commit_id);
-            to_remove.push(to_remove_node.commit_id);
+            let to_remove_commit_id = self.nodes.remove(idx).commit_id;
+            self.index_map.remove(&to_remove_commit_id);
+            to_remove.push(to_remove_commit_id);
         }
 
         // set new_root's parent as None
