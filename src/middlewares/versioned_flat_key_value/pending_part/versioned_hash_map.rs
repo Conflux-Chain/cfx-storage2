@@ -1,11 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::middlewares::versioned_flat_key_value::pending_part::pending_schema::RecoverRecord;
-
 use super::{
     commit_tree::Tree,
     pending_schema::{
-        ApplyMap, ApplyRecord, KeyValueMap, PendingKeyValueSchema, Result as PendResult,
+        ApplyMap, ApplyRecord, KeyValueMap, PendingKeyValueSchema, RecoverRecord,
+        Result as PendResult,
     },
     PendingError,
 };
@@ -17,13 +16,13 @@ pub struct VersionedHashMap<S: PendingKeyValueSchema> {
     current: Option<CurrentMap<S>>,
 }
 
-pub struct CurrentMap<S: PendingKeyValueSchema> {
-    pub map: BTreeMap<S::Key, ApplyRecord<S>>,
-    pub commit_id: S::CommitId,
+struct CurrentMap<S: PendingKeyValueSchema> {
+    map: BTreeMap<S::Key, ApplyRecord<S>>,
+    commit_id: S::CommitId,
 }
 
 impl<S: PendingKeyValueSchema> CurrentMap<S> {
-    pub fn new(commit_id: S::CommitId) -> Self {
+    fn new(commit_id: S::CommitId) -> Self {
         Self {
             map: BTreeMap::new(),
             commit_id,
@@ -68,10 +67,13 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     #[allow(clippy::type_complexity)]
+    // root..=new_root's parent: (commit_id, key_value_map)
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
     ) -> PendResult<Vec<(S::CommitId, Option<KeyValueMap<S>>)>, S> {
+        // to_commit_rev: (root..=new_root's parent).rev()
+        // to_remove: tree - subtree of new_root - root..=new_root's parent
         let (to_commit_rev, to_remove) = self.tree.change_root(commit_id)?;
         if to_commit_rev.is_empty() {
             assert!(to_remove.is_empty());
@@ -320,10 +322,10 @@ mod tests {
             for ikey in 0..10 {
                 let key: u64 = ikey;
                 let result = versioned_hash_map.query(commit_id, &key).unwrap();
-                let current = forward_only_tree
+                let apply_map = forward_only_tree
                     .get_apply_map_from_root_included(commit_id)
                     .unwrap();
-                let answer = current.get(&key).map(|a| a.value.clone());
+                let answer = apply_map.get(&key).map(|a| a.value.clone());
                 assert_eq!(result, answer);
             }
         }

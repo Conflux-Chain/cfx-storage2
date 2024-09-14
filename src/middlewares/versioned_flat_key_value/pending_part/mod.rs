@@ -1,4 +1,4 @@
-pub mod commit_tree;
+mod commit_tree;
 pub mod error;
 pub mod pending_schema;
 pub mod versioned_hash_map;
