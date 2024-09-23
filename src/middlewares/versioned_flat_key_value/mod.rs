@@ -106,14 +106,19 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         write_schema: &impl WriteSchemaTrait,
     ) -> Result<()> {
         // old root..=new root's parent
-        let confirmed_ids_maps = self.pending_part.change_root(new_root_commit_id)?;
-        for (confirmed_commit_id, updates) in confirmed_ids_maps.into_iter() {
-            // allocate a history_number to confired_commit_id
-            let history_number = 0; //todo!();
+        let (start_history_number, confirmed_ids_maps) =
+            self.pending_part.change_root(new_root_commit_id)?;
+        for (delta_history_number, (confirmed_commit_id, updates)) in
+            confirmed_ids_maps.into_iter().enumerate()
+        {
+            let history_number = start_history_number + delta_history_number;
             // self.commit_id_table
             //     .set(confirmed_commit_id, history_number);
-            self.change_history_table
-                .commit(history_number, updates.into_iter(), write_schema)?;
+            self.change_history_table.commit(
+                history_number as u64,
+                updates.into_iter(),
+                write_schema,
+            )?;
             // self.history_index_table;
         }
         Ok(())

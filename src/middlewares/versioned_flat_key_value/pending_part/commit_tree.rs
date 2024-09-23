@@ -158,7 +158,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> PendResult<(CommitIdVec<S>, CommitIdVec<S>), S> {
+    ) -> PendResult<(usize, CommitIdVec<S>, CommitIdVec<S>), S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // (root..=new_root's parent).rev()
@@ -191,7 +191,11 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
 
         // ((root..=new_root's parent).rev(), tree - subtree of new_root - root..=new_root's parent)
-        Ok((to_commit_rev, to_remove))
+        Ok((
+            self.nodes[slab_index].height - to_commit_rev.len(),
+            to_commit_rev,
+            to_remove,
+        ))
     }
 }
 

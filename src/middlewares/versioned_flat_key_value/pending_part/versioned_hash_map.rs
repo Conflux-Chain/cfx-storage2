@@ -71,13 +71,14 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> PendResult<Vec<(S::CommitId, KeyValueMap<S>)>, S> {
+    ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
         // to_commit_rev: (root..=new_root's parent).rev()
         // to_remove: tree - subtree of new_root - root..=new_root's parent
-        let (to_commit_rev, to_remove) = self.tree.change_root(commit_id)?;
+        let (start_height_to_commit, to_commit_rev, to_remove) =
+            self.tree.change_root(commit_id)?;
         if to_commit_rev.is_empty() {
             assert!(to_remove.is_empty());
-            return Ok(Vec::new());
+            return Ok((0, Vec::new()));
         }
         self.parent_of_root = Some(to_commit_rev[0]);
         self.current = None;
@@ -88,7 +89,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         for to_commit_one in to_commit_rev.into_iter().rev() {
             to_commit.push((to_commit_one, self.history.remove(&to_commit_one).unwrap()));
         }
-        Ok(to_commit)
+        Ok((start_height_to_commit, to_commit))
     }
 }
 
