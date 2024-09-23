@@ -43,7 +43,7 @@ pub trait KeyValueStoreBulksTrait<K, V, C> {
     fn commit(
         &self,
         commit: C,
-        bulk: impl Iterator<Item = (K, V)>,
+        bulk: impl Iterator<Item = (K, Option<V>)>,
         write_schema: &impl WriteSchemaTrait,
     ) -> Result<()>;
 

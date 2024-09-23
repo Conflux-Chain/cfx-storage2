@@ -12,7 +12,7 @@ use pending_part::VersionedHashMap;
 
 use super::ChangeKey;
 use super::CommitIDSchema;
-use crate::backends::TableReader;
+use crate::backends::{TableReader, WriteSchemaTrait};
 use crate::errors::Result;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
 use crate::traits::KeyValueStoreBulksTrait;
@@ -96,5 +96,26 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
 
         self.change_history_table
             .get_versioned_key(&found_version_number, key)
+    }
+}
+
+impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+    fn confirmed_pending_to_history(
+        &mut self,
+        new_root_commit_id: CommitID,
+        write_schema: &impl WriteSchemaTrait,
+    ) -> Result<()> {
+        // old root..=new root's parent
+        let confirmed_ids_maps = self.pending_part.change_root(new_root_commit_id)?;
+        for (confirmed_commit_id, updates) in confirmed_ids_maps.into_iter() {
+            // allocate a history_number to confired_commit_id
+            let history_number = 0; //todo!();
+            // self.commit_id_table
+            //     .set(confirmed_commit_id, history_number);
+            self.change_history_table
+                .commit(history_number, updates.into_iter(), write_schema)?;
+            // self.history_index_table;
+        }
+        Ok(())
     }
 }
