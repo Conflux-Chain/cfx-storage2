@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use super::{
     commit_tree::Tree,
@@ -12,7 +12,6 @@ use super::{
 pub struct VersionedHashMap<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
     tree: Tree<S>,
-    history: HashMap<S::CommitId, KeyValueMap<S>>,
     current: Option<CurrentMap<S>>,
 }
 
@@ -29,19 +28,14 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
         }
     }
 
-    fn rollback(
-        &mut self,
-        rollbacks: BTreeMap<S::Key, Option<S::CommitId>>,
-        history: &HashMap<S::CommitId, KeyValueMap<S>>,
-    ) {
-        for (key, to_commit_id) in rollbacks.into_iter() {
-            match to_commit_id {
+    fn rollback(&mut self, rollbacks: BTreeMap<S::Key, Option<ApplyRecord<S>>>) {
+        for (key, to_rollback) in rollbacks.into_iter() {
+            match to_rollback {
                 None => {
                     self.map.remove(&key);
                 }
-                Some(commit_id) => {
-                    let value = history.get(&commit_id).unwrap().get(&key).unwrap().clone();
-                    self.map.insert(key, ApplyRecord { commit_id, value });
+                Some(to_rollback_record) => {
+                    self.map.insert(key, to_rollback_record);
                 }
             }
         }
@@ -58,7 +52,6 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     pub fn new(parent_of_root: Option<S::CommitId>) -> Self {
         VersionedHashMap {
             parent_of_root,
-            history: HashMap::new(),
             tree: Tree::new(),
             current: None,
         }
@@ -72,38 +65,29 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         &mut self,
         commit_id: S::CommitId,
     ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
-        // to_commit_rev: (root..=new_root's parent).rev()
-        // to_remove: tree - subtree of new_root - root..=new_root's parent
-        let (start_height_to_commit, to_commit_rev, to_remove) =
-            self.tree.change_root(commit_id)?;
-        if to_commit_rev.is_empty() {
-            assert!(to_remove.is_empty());
-            return Ok((0, Vec::new()));
+        // to_commit: root..=new_root's parent
+        let (start_height_to_commit, to_commit) = self.tree.change_root(commit_id)?;
+
+        if let Some(parent_of_new_root) = to_commit.last() {
+            self.parent_of_root = Some(parent_of_new_root.0);
+            self.current = None;
         }
-        self.parent_of_root = Some(to_commit_rev[0]);
-        self.current = None;
-        for to_remove_one in to_remove.into_iter() {
-            self.history.remove(&to_remove_one).unwrap();
-        }
-        let mut to_commit = Vec::new();
-        for to_commit_one in to_commit_rev.into_iter().rev() {
-            to_commit.push((to_commit_one, self.history.remove(&to_commit_one).unwrap()));
-        }
+
         Ok((start_height_to_commit, to_commit))
     }
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
+    pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
+        self.parent_of_root
+    }
+
     pub fn add_node(
         &mut self,
         updates: KeyValueMap<S>,
         commit_id: S::CommitId,
         parent_commit_id: Option<S::CommitId>,
     ) -> PendResult<(), S> {
-        if self.history.contains_key(&commit_id) {
-            return Err(PendingError::CommitIdAlreadyExists(commit_id));
-        }
-
         if self.get_parent_of_root() == parent_commit_id {
             self.add_root(updates, commit_id)
         } else if let Some(parent_commit_id) = parent_commit_id {
@@ -114,27 +98,24 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     }
 
     fn add_root(&mut self, updates: KeyValueMap<S>, commit_id: S::CommitId) -> PendResult<(), S> {
-        if self.current.is_some() || !self.history.is_empty() {
+        if self.current.is_some() {
             return Err(PendingError::MultipleRootsNotAllowed);
         }
 
         // add root to tree
         let modifications = updates
-            .iter()
-            .map(|(k, v)| {
+            .into_iter()
+            .map(|(key, value)| {
                 (
-                    k.clone(),
+                    key,
                     RecoverRecord::<S> {
-                        value: v.clone(),
+                        value,
                         last_commit_id: None,
                     },
                 )
             })
             .collect();
         self.tree.add_root(commit_id, modifications)?;
-
-        // add root to history
-        self.history.insert(commit_id, updates);
 
         Ok(())
     }
@@ -152,12 +133,12 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         // add node to tree
         let current = self.current.as_ref().unwrap();
         let mut modifications = BTreeMap::new();
-        for (key, value) in updates.iter() {
-            let last_commit_id = current.map.get(key).map(|s| s.commit_id);
+        for (key, value) in updates.into_iter() {
+            let last_commit_id = current.map.get(&key).map(|s| s.commit_id);
             modifications.insert(
-                key.clone(),
+                key,
                 RecoverRecord {
-                    value: value.clone(),
+                    value,
                     last_commit_id,
                 },
             );
@@ -165,12 +146,11 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         self.tree
             .add_non_root_node(commit_id, parent_commit_id, modifications)?;
 
-        // add node to history
-        self.history.insert(commit_id, updates);
-
         Ok(())
     }
+}
 
+impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     // None: pending_part not know
     // Some(None): pending_part know that this key has been deleted
     // Some(Some(value)): pending_part know this key's value
@@ -191,10 +171,6 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
             .get(key)
             .map(|c| c.value.clone()))
     }
-
-    pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
-        self.parent_of_root
-    }
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
@@ -203,7 +179,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
             let (rollbacks, applys) = self
                 .tree
                 .collect_rollback_and_apply_ops(current.commit_id, target_commit_id)?;
-            current.rollback(rollbacks, &self.history);
+            current.rollback(rollbacks);
             current.apply(applys);
             current.commit_id = target_commit_id;
         } else {

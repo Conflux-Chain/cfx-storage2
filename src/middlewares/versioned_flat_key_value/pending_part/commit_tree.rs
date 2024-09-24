@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use slab::Slab;
 
 use super::pending_schema::{
-    ApplyMap, ApplyRecord, CommitIdVec, PendingKeyValueSchema, RecoverMap, RecoverRecord,
+    ApplyMap, ApplyRecord, KeyValueMap, PendingKeyValueSchema, RecoverMap, RecoverRecord,
     Result as PendResult,
 };
 use super::PendingError;
@@ -67,6 +67,15 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     fn get_parent_node(&self, node: &TreeNode<S>) -> Option<&TreeNode<S>> {
         node.parent
             .map(|p_slab_index| self.get_node_by_slab_index(p_slab_index))
+    }
+
+    fn get_by_commit_id(
+        &self,
+        commit_id: S::CommitId,
+        key: &S::Key,
+    ) -> PendResult<Option<Option<S::Value>>, S> {
+        let node = self.get_node_by_commit_id(commit_id)?;
+        Ok(node.modifications.get(key).map(|v| v.value.clone()))
     }
 }
 
@@ -142,60 +151,52 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 
     // excluding target
-    fn find_path(&self, target_slab_index: SlabIndex) -> (CommitIdVec<S>, HashSet<SlabIndex>) {
+    fn find_path(&self, target_slab_index: SlabIndex) -> Vec<(S::CommitId, KeyValueMap<S>)> {
         let mut target_node = self.get_node_by_slab_index(target_slab_index);
-        let mut path = Vec::new();
-        let mut set = HashSet::new();
+        let mut path = VecDeque::new();
         while let Some(parent_slab_index) = target_node.parent {
-            set.insert(parent_slab_index);
             target_node = self.get_node_by_slab_index(parent_slab_index);
-            path.push(target_node.commit_id);
+            path.push_front((target_node.commit_id, target_node.get_updates()));
         }
-        (path, set)
+        path.into()
     }
 
     // todo: test
+    #[allow(clippy::type_complexity)]
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> PendResult<(usize, CommitIdVec<S>, CommitIdVec<S>), S> {
+    ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
-        // (root..=new_root's parent).rev()
-        let (to_commit_rev, to_commit_set) = self.find_path(slab_index);
+        // root..=new_root's parent
+        let to_commit = self.find_path(slab_index);
+
+        // early return if new_root == root
+        if to_commit.is_empty() {
+            return Ok((self.nodes[slab_index].height - to_commit.len(), to_commit));
+        }
 
         // subtree of new_root
         let to_maintain_vec = self.bfs_subtree(slab_index);
         let to_maintain = BTreeSet::from_iter(to_maintain_vec);
 
-        // remove: tree - subtree of new_root - root..=new_root's parent
-        let mut to_remove_indices = Vec::new();
+        // remove: tree - subtree of new_root
+        let mut to_remove = Vec::new();
         for (idx, _) in self.nodes.iter() {
-            if !to_maintain.contains(&idx) && !to_commit_set.contains(&idx) {
-                to_remove_indices.push(idx);
+            if !to_maintain.contains(&idx) {
+                to_remove.push(idx);
             }
         }
-        let mut to_remove = Vec::new();
-        for idx in to_remove_indices.into_iter() {
-            let to_remove_commit_id = self.nodes.remove(idx).commit_id;
-            self.index_map.remove(&to_remove_commit_id);
-            to_remove.push(to_remove_commit_id);
+        for idx in to_remove {
+            self.index_map.remove(&self.nodes.remove(idx).commit_id);
         }
 
         // set new_root's parent as None
         self.nodes[slab_index].parent = None;
 
-        // remove: root..=new_root's parent
-        for idx in to_commit_set.into_iter() {
-            self.index_map.remove(&self.nodes.remove(idx).commit_id);
-        }
-
-        // ((root..=new_root's parent).rev(), tree - subtree of new_root - root..=new_root's parent)
-        Ok((
-            self.nodes[slab_index].height - to_commit_rev.len(),
-            to_commit_rev,
-            to_remove,
-        ))
+        // (height of new_root's parent, root..=new_root's parent)
+        Ok((self.nodes[slab_index].height - to_commit.len(), to_commit))
     }
 }
 
@@ -220,7 +221,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         current_commit_id: S::CommitId,
         target_commit_id: S::CommitId,
-    ) -> PendResult<(BTreeMap<S::Key, Option<S::CommitId>>, ApplyMap<S>), S> {
+    ) -> PendResult<(BTreeMap<S::Key, Option<ApplyRecord<S>>>, ApplyMap<S>), S> {
         let mut current_node = self.get_node_by_commit_id(current_commit_id).unwrap();
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut rollbacks = BTreeMap::new();
@@ -249,10 +250,28 @@ impl<S: PendingKeyValueSchema> Tree<S> {
                 }
             }
         }
+
+        let rollbacks_with_value: BTreeMap<_, _> = rollbacks
+            .into_iter()
+            .map(|(k, old_cid_opt)| match old_cid_opt {
+                None => (k, None),
+                Some(rollback_cid) => {
+                    let rollback_value = self.get_by_commit_id(rollback_cid, &k).unwrap().unwrap();
+                    (
+                        k,
+                        Some(ApplyRecord::<S> {
+                            value: rollback_value,
+                            commit_id: rollback_cid,
+                        }),
+                    )
+                }
+            })
+            .collect();
+
         // rollbacks or commits_rev may be empty,
         // they contain current and target (if they are not lca), respectively,
         // but they do not contain lca
-        Ok((rollbacks, commits_rev))
+        Ok((rollbacks_with_value, commits_rev))
     }
 }
 
@@ -280,6 +299,13 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
             children: BTreeSet::new(),
             modifications,
         }
+    }
+
+    fn get_updates(&self) -> KeyValueMap<S> {
+        self.modifications
+            .iter()
+            .map(|(k, RecoverRecord { value, .. })| (k.clone(), value.clone()))
+            .collect()
     }
 
     fn export_rollback_data(&self, rollbacks: &mut BTreeMap<S::Key, Option<S::CommitId>>) {
