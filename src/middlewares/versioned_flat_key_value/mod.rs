@@ -77,6 +77,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
 
         let range_query_key = HistoryIndexKey(key.clone(), target_history_number);
 
+        // history_number should be decreasing, use !height
         let found_version_number = match self.history_index_table.iter(&range_query_key)?.next() {
             None => {
                 return Ok(None);
@@ -89,8 +90,8 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             }
             Some(Ok((k, indices))) => {
                 let HistoryIndexKey(_, history_number) = k.as_ref();
-                let offset = target_history_number - history_number;
-                indices.as_ref().last(offset)
+                // let offset = target_history_number - history_number;
+                indices.as_ref().last(*history_number)
             }
         };
 
@@ -106,12 +107,13 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         write_schema: &impl WriteSchemaTrait,
     ) -> Result<()> {
         // old root..=new root's parent
-        let (start_history_number, confirmed_ids_maps) =
+        let (start_height, confirmed_ids_maps) =
             self.pending_part.change_root(new_root_commit_id)?;
-        for (delta_history_number, (confirmed_commit_id, updates)) in
+        for (delta_height, (confirmed_commit_id, updates)) in
             confirmed_ids_maps.into_iter().enumerate()
         {
-            let history_number = start_history_number + delta_history_number;
+            let height = (start_height + delta_height) as u64;
+            let history_number = !height;
             // self.commit_id_table
             //     .set(confirmed_commit_id, history_number);
             self.change_history_table.commit(
