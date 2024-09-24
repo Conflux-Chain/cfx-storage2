@@ -49,10 +49,10 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
-    pub fn new(parent_of_root: Option<S::CommitId>) -> Self {
+    pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: usize) -> Self {
         VersionedHashMap {
             parent_of_root,
-            tree: Tree::new(),
+            tree: Tree::new(height_of_root),
             current: None,
         }
     }
@@ -242,8 +242,8 @@ mod tests {
         num_nodes: usize,
         rng: &mut StdRng,
     ) -> (Tree<TestPendingConfig>, VersionedHashMap<TestPendingConfig>) {
-        let mut forward_only_tree = Tree::new();
-        let mut versioned_hash_map = VersionedHashMap::new(None);
+        let mut forward_only_tree = Tree::new(0);
+        let mut versioned_hash_map = VersionedHashMap::new(None, 0);
 
         for i in 1..=num_nodes as CommitId {
             let parent_commit_id = if i == 1 {
@@ -310,8 +310,8 @@ mod tests {
 
     #[test]
     fn test_multiple_roots_err() {
-        let mut forward_only_tree = Tree::<TestPendingConfig>::new();
-        let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None);
+        let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
+        let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None, 0);
 
         forward_only_tree.add_root(0, BTreeMap::new()).unwrap();
         versioned_hash_map
@@ -330,8 +330,8 @@ mod tests {
 
     #[test]
     fn test_commit_id_not_found_err() {
-        let mut forward_only_tree = Tree::<TestPendingConfig>::new();
-        let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None);
+        let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
+        let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None, 0);
 
         assert_eq!(
             forward_only_tree.add_non_root_node(1, 0, BTreeMap::new()),
@@ -345,8 +345,8 @@ mod tests {
 
     #[test]
     fn test_commit_id_already_exists_err() {
-        let mut forward_only_tree = Tree::<TestPendingConfig>::new();
-        let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None);
+        let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
+        let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None, 0);
 
         forward_only_tree.add_root(0, BTreeMap::new()).unwrap();
         versioned_hash_map

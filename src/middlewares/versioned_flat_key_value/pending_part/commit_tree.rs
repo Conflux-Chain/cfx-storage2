@@ -27,13 +27,15 @@ pub struct TreeNode<S: PendingKeyValueSchema> {
 }
 
 pub struct Tree<S: PendingKeyValueSchema> {
+    height_of_root: usize,
     nodes: Slab<TreeNode<S>>,
     index_map: HashMap<S::CommitId, SlabIndex>,
 }
 
 impl<S: PendingKeyValueSchema> Tree<S> {
-    pub fn new() -> Self {
+    pub fn new(height_of_root: usize) -> Self {
         Tree {
+            height_of_root,
             nodes: Slab::new(),
             index_map: HashMap::new(),
         }
@@ -92,7 +94,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         // PendingError::CommitIdAlreadyExists(_) cannot happend because no root indicates no node
 
         // new root
-        let root = TreeNode::new_root(commit_id, modifications);
+        let root = TreeNode::new_root(commit_id, modifications, self.height_of_root);
 
         // add root to tree
         let slab_index = self.nodes.insert(root);
@@ -276,9 +278,9 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 }
 
 impl<S: PendingKeyValueSchema> TreeNode<S> {
-    fn new_root(commit_id: S::CommitId, modifications: RecoverMap<S>) -> Self {
+    fn new_root(commit_id: S::CommitId, modifications: RecoverMap<S>, height: usize) -> Self {
         Self {
-            height: 0,
+            height,
             commit_id,
             parent: None,
             children: BTreeSet::new(),

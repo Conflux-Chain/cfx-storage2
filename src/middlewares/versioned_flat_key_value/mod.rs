@@ -48,11 +48,13 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             Ok(Some(value)) => {
                 return Ok(value);
             }
-            Ok(None) => if let Some(commit) = self.pending_part.get_parent_of_root() {
-                commit
-            } else {
-                return Ok(None);
-            },
+            Ok(None) => {
+                if let Some(commit) = self.pending_part.get_parent_of_root() {
+                    commit
+                } else {
+                    return Ok(None);
+                }
+            }
             Err(PendingError::CommitIDNotFound(target_commit)) => {
                 assert_eq!(target_commit, commit);
                 commit
@@ -62,7 +64,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             }
         };
 
-        let history_number =  if let Some(value) = self.commit_id_table.get(&commit)? {
+        let history_number = if let Some(value) = self.commit_id_table.get(&commit)? {
             value.into_owned()
         } else {
             return Err(StorageError::CommitIDNotFound);
@@ -79,10 +81,14 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
     }
 
-    pub fn get_historical_part(&self, query_version_number: HistoryNumber, key: &T::Key) -> Result<Option<T::Value>> {
+    pub fn get_historical_part(
+        &self,
+        query_version_number: HistoryNumber,
+        key: &T::Key,
+    ) -> Result<Option<T::Value>> {
         let range_query_key = HistoryIndexKey(key.clone(), query_version_number);
 
-        // history_number should be decreasing, use !height
+        // history_number should be decreasing
         let found_version_number = match self.history_index_table.iter(&range_query_key)?.next() {
             None => {
                 return Ok(None);
@@ -119,7 +125,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             confirmed_ids_maps.into_iter().enumerate()
         {
             let height = (start_height + delta_height) as u64;
-            let history_number = !height;
+            let history_number = height;
 
             assert!(self.commit_id_table.get(&confirmed_commit_id)?.is_none());
 
