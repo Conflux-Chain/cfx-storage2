@@ -117,6 +117,8 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             let height = (start_height + delta_height) as u64;
             let history_number = !height;
 
+            assert!(self.commit_id_table.get(&confirmed_commit_id)?.is_none());
+
             let commit_id_table_op = (
                 Cow::Owned(confirmed_commit_id),
                 Some(Cow::Owned(history_number)),
