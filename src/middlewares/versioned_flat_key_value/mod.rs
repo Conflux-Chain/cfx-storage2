@@ -45,19 +45,29 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     pub fn get_pending_part(&mut self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
         let res_value = self.pending_part.query(commit, key);
         let history_commit = match res_value {
-            Ok(Some(value)) => return Ok(value),
-            Ok(None) => self.pending_part.get_parent_of_root(),
+            Ok(Some(value)) => {
+                return Ok(value);
+            }
+            Ok(None) => if let Some(commit) = self.pending_part.get_parent_of_root() {
+                commit
+            } else {
+                return Ok(None);
+            },
             Err(PendingError::CommitIDNotFound(target_commit)) => {
                 assert_eq!(target_commit, commit);
-                Some(commit)
+                commit
             }
-            Err(other_err) => return Err(StorageError::PendingError(other_err)),
+            Err(other_err) => {
+                return Err(StorageError::PendingError(other_err));
+            }
         };
-        if let Some(history_commit) = history_commit {
-            self.get_historical_part(history_commit, key)
+
+        let history_number =  if let Some(value) = self.commit_id_table.get(&commit)? {
+            value.into_owned()
         } else {
-            Ok(None)
-        }
+            return Err(StorageError::CommitIDNotFound);
+        };
+        self.get_historical_part(history_number, key)
     }
 
     pub fn add_to_pending_part(
@@ -69,14 +79,8 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
     }
 
-    pub fn get_historical_part(&self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        let target_history_number = if let Some(value) = self.commit_id_table.get(&commit)? {
-            value.into_owned()
-        } else {
-            return Err(StorageError::CommitIDNotFound);
-        };
-
-        let range_query_key = HistoryIndexKey(key.clone(), target_history_number);
+    pub fn get_historical_part(&self, query_version_number: HistoryNumber, key: &T::Key) -> Result<Option<T::Value>> {
+        let range_query_key = HistoryIndexKey(key.clone(), query_version_number);
 
         // history_number should be decreasing, use !height
         let found_version_number = match self.history_index_table.iter(&range_query_key)?.next() {
@@ -136,7 +140,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             self.change_history_table
                 .commit(history_number, updates.into_iter(), write_schema)?;
         }
-        
+
         Ok(())
     }
 }
