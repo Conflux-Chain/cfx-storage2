@@ -2,6 +2,7 @@ mod pending_part;
 mod serde;
 mod table_schema;
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 pub use pending_part::PendingError;
@@ -109,19 +110,29 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         // old root..=new root's parent
         let (start_height, confirmed_ids_maps) =
             self.pending_part.change_root(new_root_commit_id)?;
+
         for (delta_height, (confirmed_commit_id, updates)) in
             confirmed_ids_maps.into_iter().enumerate()
         {
             let height = (start_height + delta_height) as u64;
             let history_number = !height;
-            // self.commit_id_table
-            //     .set(confirmed_commit_id, history_number);
-            self.change_history_table.commit(
-                history_number as u64,
-                updates.into_iter(),
-                write_schema,
-            )?;
-            // self.history_index_table;
+
+            let commit_id_table_op = (
+                Cow::Owned(confirmed_commit_id),
+                Some(Cow::Owned(history_number)),
+            );
+            write_schema.write::<CommitIDSchema>(commit_id_table_op);
+
+            let history_index_table_op = updates.keys().map(|key| {
+                (
+                    Cow::Owned(HistoryIndexKey(key.clone(), history_number)),
+                    Some(Cow::Owned(HistoryIndices)),
+                )
+            });
+            write_schema.write_batch::<HistoryIndicesTable<T>>(history_index_table_op);
+
+            self.change_history_table
+                .commit(history_number, updates.into_iter(), write_schema)?;
         }
         Ok(())
     }
