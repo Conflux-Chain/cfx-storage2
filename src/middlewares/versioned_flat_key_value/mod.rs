@@ -125,17 +125,18 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             );
             write_schema.write::<CommitIDSchema>(commit_id_table_op);
 
-            let history_index_table_op = updates.keys().map(|key| {
+            let history_indices_table_op = updates.keys().map(|key| {
                 (
                     Cow::Owned(HistoryIndexKey(key.clone(), history_number)),
                     Some(Cow::Owned(HistoryIndices)),
                 )
             });
-            write_schema.write_batch::<HistoryIndicesTable<T>>(history_index_table_op);
+            write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
 
             self.change_history_table
                 .commit(history_number, updates.into_iter(), write_schema)?;
         }
+        
         Ok(())
     }
 }
