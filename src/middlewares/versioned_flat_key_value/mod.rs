@@ -5,6 +5,7 @@ mod table_schema;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use parking_lot::RwLock;
 pub use pending_part::PendingError;
 
 use self::pending_part::pending_schema::PendingKeyValueConfig;
@@ -35,21 +36,21 @@ impl HistoryIndices {
 // struct PendingPart;
 
 pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
-    pending_part: VersionedHashMap<PendingKeyValueConfig<T, CommitID>>,
+    pending_part: &'db RwLock<VersionedHashMap<PendingKeyValueConfig<T, CommitID>>>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
-    pub fn get_pending_part(&mut self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        let res_value = self.pending_part.query(commit, key);
+    pub fn get_pending_part(&self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
+        let res_value = self.pending_part.write().query(commit, key);
         let history_commit = match res_value {
             Ok(Some(value)) => {
                 return Ok(value);
             }
             Ok(None) => {
-                if let Some(commit) = self.pending_part.get_parent_of_root() {
+                if let Some(commit) = self.pending_part.write().get_parent_of_root() {
                     commit
                 } else {
                     return Ok(None);
@@ -78,7 +79,10 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         commit: CommitID,
         updates: BTreeMap<T::Key, Option<T::Value>>,
     ) -> Result<()> {
-        Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
+        Ok(self
+            .pending_part
+            .write()
+            .add_node(updates, commit, parent_commit)?)
     }
 
     pub fn get_historical_part(
@@ -119,7 +123,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     ) -> Result<()> {
         // old root..=new root's parent
         let (start_height, confirmed_ids_maps) =
-            self.pending_part.change_root(new_root_commit_id)?;
+            self.pending_part.write().change_root(new_root_commit_id)?;
 
         for (delta_height, (confirmed_commit_id, updates)) in
             confirmed_ids_maps.into_iter().enumerate()
