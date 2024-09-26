@@ -178,12 +178,11 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
-    #[allow(clippy::type_complexity)]
-    pub fn iter_historical_changes(
-        &self,
+    pub fn iter_historical_changes<'a>(
+        &'a self,
         commit_id: &S::CommitId,
         key: &S::Key,
-    ) -> PendResult<Vec<(S::CommitId, Option<S::Value>)>, S> {
+    ) -> PendResult<impl 'a + Iterator<Item = (&S::CommitId, &Option<S::Value>)>, S> {
         self.tree.iter_historical_changes(commit_id, key)
     }
 }
