@@ -5,7 +5,6 @@ mod table_schema;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use parking_lot::RwLock;
 pub use pending_part::PendingError;
 
 use self::pending_part::pending_schema::PendingKeyValueConfig;
@@ -17,6 +16,7 @@ use super::CommitIDSchema;
 use crate::backends::{TableReader, WriteSchemaTrait};
 use crate::errors::Result;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
+// use crate::traits::{KeyValueStoreBulksTrait, KeyValueStoreManager};
 use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
 
@@ -36,7 +36,7 @@ impl HistoryIndices {
 // struct PendingPart;
 
 pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
-    pending_part: &'db RwLock<VersionedHashMap<PendingKeyValueConfig<T, CommitID>>>,
+    pending_part: &'db mut VersionedHashMap<PendingKeyValueConfig<T, CommitID>>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
@@ -44,13 +44,13 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     pub fn get_pending_part(&self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        let res_value = self.pending_part.write().query(commit, key);
+        let res_value = self.pending_part.query(commit, key);
         let history_commit = match res_value {
             Ok(Some(value)) => {
                 return Ok(value);
             }
             Ok(None) => {
-                if let Some(commit) = self.pending_part.write().get_parent_of_root() {
+                if let Some(commit) = self.pending_part.get_parent_of_root() {
                     commit
                 } else {
                     return Ok(None);
@@ -79,10 +79,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         commit: CommitID,
         updates: BTreeMap<T::Key, Option<T::Value>>,
     ) -> Result<()> {
-        Ok(self
-            .pending_part
-            .write()
-            .add_node(updates, commit, parent_commit)?)
+        Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
     }
 
     pub fn get_historical_part(
@@ -123,7 +120,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     ) -> Result<()> {
         // old root..=new root's parent
         let (start_height, confirmed_ids_maps) =
-            self.pending_part.write().change_root(new_root_commit_id)?;
+            self.pending_part.change_root(new_root_commit_id)?;
 
         for (delta_height, (confirmed_commit_id, updates)) in
             confirmed_ids_maps.into_iter().enumerate()
@@ -154,3 +151,55 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         Ok(())
     }
 }
+
+// impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
+//     for VersionedStore<'db, T>
+// {
+//     fn iter_historical_changes<'a>(
+//         &'a self,
+//         commit_id: &CommitID,
+//         key: &T::Key,
+//     ) -> Result<impl 'a + Iterator<Item = (&CommitID, &Option<T::Value>)>> {
+//         let pending_res = self.pending_part.iter_historical_changes(commit_id, key);
+//         let (history_commit, pending_vec) = match pending_res {
+//             Ok(pending_vec) => {
+//                 if let Some(commit) = self.pending_part.get_parent_of_root() {
+//                     (commit, pending_vec)
+//                 } else {
+//                     return Ok(pending_vec.into_iter())
+//                 }
+//             }
+//             Err(PendingError::CommitIDNotFound(target_commit)) => {
+//                 assert_eq!(target_commit, commit);
+//                 commit
+//             }
+//             Err(other_err) => {
+//                 return Err(StorageError::PendingError(other_err));
+//             }
+//         };
+
+//         let history_number = if let Some(value) = self.commit_id_table.get(&commit)? {
+//             value.into_owned()
+//         } else {
+//             return Err(StorageError::CommitIDNotFound);
+//         };
+//         self.get_historical_part(history_number, key)
+
+//     }
+
+//     fn discard(self, commit: CommitID) -> Result<()> {
+//         todo!()
+//     }
+
+//     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
+//         todo!()
+//     }
+
+//     fn versioned_iter<'a>(
+//         &'a self,
+//         commit: &CommitID,
+//         key: &T::Key,
+//     ) -> Result<impl 'a + Iterator<Item = (&T::Key, &T::Value)>> {
+//         todo!()
+//     }
+// }

@@ -9,10 +9,12 @@ use super::{
     PendingError,
 };
 
+use parking_lot::RwLock;
+
 pub struct VersionedHashMap<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
     tree: Tree<S>,
-    current: Option<CurrentMap<S>>,
+    current: RwLock<Option<CurrentMap<S>>>,
 }
 
 struct CurrentMap<S: PendingKeyValueSchema> {
@@ -53,7 +55,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         VersionedHashMap {
             parent_of_root,
             tree: Tree::new(height_of_root),
-            current: None,
+            current: RwLock::new(None),
         }
     }
 }
@@ -70,7 +72,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
 
         if let Some(parent_of_new_root) = to_commit.last() {
             self.parent_of_root = Some(parent_of_new_root.0);
-            self.current = None;
+            *self.current.write() = None;
         }
 
         Ok((start_height_to_commit, to_commit))
@@ -98,7 +100,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     }
 
     fn add_root(&mut self, updates: KeyValueMap<S>, commit_id: S::CommitId) -> PendResult<(), S> {
-        if self.current.is_some() {
+        if self.current.read().is_some() {
             return Err(PendingError::MultipleRootsNotAllowed);
         }
 
@@ -131,7 +133,8 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         self.checkout_current(parent_commit_id)?;
 
         // add node to tree
-        let current = self.current.as_ref().unwrap();
+        let current_read = self.current.read();
+        let current = current_read.as_ref().unwrap();
         let mut modifications = BTreeMap::new();
         for (key, value) in updates.into_iter() {
             let last_commit_id = current.map.get(&key).map(|s| s.commit_id);
@@ -155,7 +158,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     // Some(None): pending_part know that this key has been deleted
     // Some(Some(value)): pending_part know this key's value
     pub fn query(
-        &mut self,
+        &self,
         commit_id: S::CommitId,
         key: &S::Key,
     ) -> PendResult<Option<Option<S::Value>>, S> {
@@ -165,6 +168,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         // query
         Ok(self
             .current
+            .read()
             .as_ref()
             .unwrap()
             .map
@@ -174,11 +178,25 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
-    fn checkout_current(&mut self, target_commit_id: S::CommitId) -> PendResult<(), S> {
-        if let Some(ref mut current) = self.current {
+    #[allow(clippy::type_complexity)]
+    pub fn iter_historical_changes(
+        &self,
+        commit_id: &S::CommitId,
+        key: &S::Key,
+    ) -> PendResult<Vec<(S::CommitId, Option<S::Value>)>, S> {
+        self.tree.iter_historical_changes(commit_id, key)
+    }
+}
+
+impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
+    fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
+        let current_commit_id = self.current.read().as_ref().map(|c| c.commit_id);
+        if let Some(current_commit_id) = current_commit_id {
             let (rollbacks, applys) = self
                 .tree
-                .collect_rollback_and_apply_ops(current.commit_id, target_commit_id)?;
+                .collect_rollback_and_apply_ops(current_commit_id, target_commit_id)?;
+            let mut current_option = self.current.write();
+            let current = current_option.as_mut().unwrap();
             current.rollback(rollbacks);
             current.apply(applys);
             current.commit_id = target_commit_id;
@@ -188,10 +206,13 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
                 .tree
                 .get_apply_map_from_root_included(target_commit_id)?;
             current.apply(applys);
-            self.current = Some(current)
-        };
+            *self.current.write() = Some(current);
+        }
 
-        assert_eq!(self.current.as_ref().unwrap().commit_id, target_commit_id);
+        assert_eq!(
+            self.current.read().as_ref().unwrap().commit_id,
+            target_commit_id
+        );
 
         Ok(())
     }
@@ -293,7 +314,7 @@ mod tests {
         ];
         let mut rng = StdRng::from_seed(seed);
 
-        let (forward_only_tree, mut versioned_hash_map) = generate_random_tree(num_nodes, &mut rng);
+        let (forward_only_tree, versioned_hash_map) = generate_random_tree(num_nodes, &mut rng);
         for _ in 0..100 {
             let commit_id = rng.gen_range(1..=num_nodes) as CommitId;
             for ikey in 0..10 {
