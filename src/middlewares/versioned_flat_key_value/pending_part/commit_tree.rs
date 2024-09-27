@@ -218,6 +218,21 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
         Ok(path.into_iter())
     }
+
+    pub fn get_versioned_key(
+        &self,
+        commit_id: &S::CommitId,
+        key: &S::Key,
+    ) -> PendResult<Option<Option<S::Value>>, S> {
+        let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
+        while let Some(node) = node_option {
+            if let Some(RecoverRecord { value, .. }) = node.modifications.get(key) {
+                return Ok(Some(value.clone()));
+            }
+            node_option = self.get_parent_node(node);
+        }
+        Ok(None)
+    }
 }
 
 impl<S: PendingKeyValueSchema> Tree<S> {

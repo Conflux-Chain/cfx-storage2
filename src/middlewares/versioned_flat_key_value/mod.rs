@@ -45,34 +45,12 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
 }
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
-    pub fn get_pending_part(&self, commit: CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        let res_value = self.pending_part.query(commit, key);
-        let history_commit = match res_value {
-            Ok(Some(value)) => {
-                return Ok(value);
-            }
-            Ok(None) => {
-                if let Some(commit) = self.pending_part.get_parent_of_root() {
-                    commit
-                } else {
-                    return Ok(None);
-                }
-            }
-            Err(PendingError::CommitIDNotFound(target_commit)) => {
-                assert_eq!(target_commit, commit);
-                commit
-            }
-            Err(other_err) => {
-                return Err(StorageError::PendingError(other_err));
-            }
-        };
-
-        let history_number = if let Some(value) = self.commit_id_table.get(&commit)? {
-            value.into_owned()
+    fn get_history_number_by_commit_id(&self, commit: CommitID) -> Result<HistoryNumber> {
+        if let Some(value) = self.commit_id_table.get(&commit)? {
+            Ok(value.into_owned())
         } else {
-            return Err(StorageError::CommitIDNotFound);
-        };
-        self.get_historical_part(history_number, key)
+            Err(StorageError::CommitIDNotFound)
+        }
     }
 
     pub fn add_to_pending_part(
@@ -216,6 +194,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     // impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     //     for VersionedStore<'db, T>
     // {
+    #[allow(clippy::type_complexity)]
     fn iter_historical_changes<'a>(
         &'a self,
         commit_id: &CommitID,
@@ -225,28 +204,53 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         match pending_res {
             Ok(pending_iter) => {
                 if let Some(history_commit) = self.pending_part.get_parent_of_root() {
-                    let history_iter = self.iter_historical_changes_history_part(&history_commit, key)?;
-                    return Ok(Box::new(pending_iter.chain(history_iter)))
+                    let history_iter =
+                        self.iter_historical_changes_history_part(&history_commit, key)?;
+                    Ok(Box::new(pending_iter.chain(history_iter)))
                 } else {
-                    return Ok(Box::new(pending_iter))
+                    Ok(Box::new(pending_iter))
                 }
             }
             Err(PendingError::CommitIDNotFound(target_commit)) => {
                 assert_eq!(target_commit, *commit_id);
-                let history_iter = self.iter_historical_changes_history_part(&target_commit, key)?;
-                    return Ok(Box::new(history_iter))
+                let history_iter =
+                    self.iter_historical_changes_history_part(&target_commit, key)?;
+                Ok(Box::new(history_iter))
             }
-            _ => unreachable!("pending_part's iter_historical_changes() does not return other errors")
-        };
+            Err(other_err) => Err(StorageError::PendingError(other_err)),
+        }
     }
 
     //     fn discard(self, commit: CommitID) -> Result<()> {
     //         todo!()
     //     }
 
-    //     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-    //         todo!()
-    //     }
+    fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
+        // let pending_res = self.pending_part.get_versioned_key(commit, key); // this will checkout_current
+        let pending_res = self.pending_part.get_versioned_key(commit, key); // this does not checkout_current
+        let history_commit = match pending_res {
+            Ok(Some(value)) => {
+                return Ok(value);
+            }
+            Ok(None) => {
+                if let Some(commit) = self.pending_part.get_parent_of_root() {
+                    commit
+                } else {
+                    return Ok(None);
+                }
+            }
+            Err(PendingError::CommitIDNotFound(target_commit)) => {
+                assert_eq!(target_commit, *commit);
+                target_commit
+            }
+            Err(other_err) => {
+                return Err(StorageError::PendingError(other_err));
+            }
+        };
+
+        let history_number = self.get_history_number_by_commit_id(history_commit)?;
+        self.get_historical_part(history_number, key)
+    }
 
     //     fn versioned_iter<'a>(
     //         &'a self,

@@ -157,7 +157,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     // None: pending_part not know
     // Some(None): pending_part know that this key has been deleted
     // Some(Some(value)): pending_part know this key's value
-    pub fn query(
+    pub fn query_frequent_commit_id(
         &self,
         commit_id: S::CommitId,
         key: &S::Key,
@@ -177,6 +177,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     }
 }
 
+// only one key, no need to invoke checkout_current
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     pub fn iter_historical_changes<'a>(
         &'a self,
@@ -184,6 +185,14 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         key: &'a S::Key,
     ) -> PendResult<impl 'a + Iterator<Item = (S::CommitId, &S::Key, Option<S::Value>)>, S> {
         self.tree.iter_historical_changes(commit_id, key)
+    }
+
+    pub fn get_versioned_key(
+        &self,
+        commit_id: &S::CommitId,
+        key: &S::Key,
+    ) -> PendResult<Option<Option<S::Value>>, S> {
+        self.tree.get_versioned_key(commit_id, key)
     }
 }
 
@@ -318,7 +327,9 @@ mod tests {
             let commit_id = rng.gen_range(1..=num_nodes) as CommitId;
             for ikey in 0..10 {
                 let key: u64 = ikey;
-                let result = versioned_hash_map.query(commit_id, &key).unwrap();
+                let result = versioned_hash_map
+                    .query_frequent_commit_id(commit_id, &key)
+                    .unwrap();
                 let apply_map = forward_only_tree
                     .get_apply_map_from_root_included(commit_id)
                     .unwrap();
