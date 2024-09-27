@@ -161,9 +161,6 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
 }
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
-    // impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
-    //     for VersionedStore<'db, T>
-    // {
     fn iter_historical_changes_history_part<'a>(
         &'a self,
         commit_id: &CommitID,
@@ -213,35 +210,35 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             });
         Ok(history_iter)
     }
+}
 
-    // fn iter_historical_changes<'a>(
-    //     &'a self,
-    //     commit_id: &CommitID,
-    //     key: &T::Key,
-    // ) -> Result<impl 'a + Iterator<Item = (&CommitID, &Option<T::Value>)>> {
-    //     let pending_res = self.pending_part.iter_historical_changes(commit_id, key);
-    //     let (history_commit, pending_iter) = match pending_res {
-    //         Ok(pending_iter) => {
-    //             if let Some(history_commit) = self.pending_part.get_parent_of_root() {
-    //                 (history_commit, pending_iter)
-    //             } else {
-    //                 return Ok(pending_iter)
-    //             }
-    //         }
-    //         Err(PendingError::CommitIDNotFound(target_commit)) => {
-    //             assert_eq!(target_commit, *commit_id);
-    //             (target_commit, Default::default())
-    //         }
-    //     };
-
-    //     let history_number = if let Some(value) = self.commit_id_table.get(&commit)? {
-    //         value.into_owned()
-    //     } else {
-    //         return Err(StorageError::CommitIDNotFound);
-    //     };
-    //     self.get_historical_part(history_number, key)
-
-    // }
+impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+    // impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
+    //     for VersionedStore<'db, T>
+    // {
+    fn iter_historical_changes<'a>(
+        &'a self,
+        commit_id: &CommitID,
+        key: &'a T::Key,
+    ) -> Result<Box<dyn 'a + Iterator<Item = (CommitID, &T::Key, Option<T::Value>)>>> {
+        let pending_res = self.pending_part.iter_historical_changes(commit_id, key);
+        match pending_res {
+            Ok(pending_iter) => {
+                if let Some(history_commit) = self.pending_part.get_parent_of_root() {
+                    let history_iter = self.iter_historical_changes_history_part(&history_commit, key)?;
+                    return Ok(Box::new(pending_iter.chain(history_iter)))
+                } else {
+                    return Ok(Box::new(pending_iter))
+                }
+            }
+            Err(PendingError::CommitIDNotFound(target_commit)) => {
+                assert_eq!(target_commit, *commit_id);
+                let history_iter = self.iter_historical_changes_history_part(&target_commit, key)?;
+                    return Ok(Box::new(history_iter))
+            }
+            _ => unreachable!("pending_part's iter_historical_changes() does not return other errors")
+        };
+    }
 
     //     fn discard(self, commit: CommitID) -> Result<()> {
     //         todo!()
