@@ -181,8 +181,8 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     pub fn iter_historical_changes<'a>(
         &'a self,
         commit_id: &S::CommitId,
-        key: &S::Key,
-    ) -> PendResult<impl 'a + Iterator<Item = (&S::CommitId, &Option<S::Value>)>, S> {
+        key: &'a S::Key,
+    ) -> PendResult<impl 'a + Iterator<Item = (S::CommitId, &S::Key, Option<S::Value>)>, S> {
         self.tree.iter_historical_changes(commit_id, key)
     }
 }

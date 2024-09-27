@@ -206,13 +206,13 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn iter_historical_changes<'a>(
         &'a self,
         commit_id: &S::CommitId,
-        key: &S::Key,
-    ) -> PendResult<impl 'a + Iterator<Item = (&S::CommitId, &Option<S::Value>)>, S> {
+        key: &'a S::Key,
+    ) -> PendResult<impl 'a + Iterator<Item = (S::CommitId, &S::Key, Option<S::Value>)>, S> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
         let mut path = Vec::new();
         while let Some(node) = node_option {
             if let Some(RecoverRecord { value, .. }) = node.modifications.get(key) {
-                path.push((&node.commit_id, value));
+                path.push((node.commit_id, key, value.clone()));
             }
             node_option = self.get_parent_node(node);
         }
