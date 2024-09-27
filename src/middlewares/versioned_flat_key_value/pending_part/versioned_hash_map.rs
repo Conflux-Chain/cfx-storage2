@@ -194,6 +194,17 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     ) -> PendResult<Option<Option<S::Value>>, S> {
         self.tree.get_versioned_key(commit_id, key)
     }
+
+    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
+        let is_root = self.tree.discard(commit_id)?;
+        let current_commit_id = self.current.read().as_ref().map(|c| c.commit_id);
+        if let Some(current_commit_id) = current_commit_id {
+            if !self.tree.contains_commit_id(&current_commit_id) {
+                *self.current.write() = None;
+            }
+        }
+        Ok(is_root)
+    }
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {

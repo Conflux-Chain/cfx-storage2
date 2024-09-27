@@ -41,7 +41,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
     }
 
-    fn contains_commit_id(&self, commit_id: &S::CommitId) -> bool {
+    pub(super) fn contains_commit_id(&self, commit_id: &S::CommitId) -> bool {
         self.index_map.contains_key(commit_id)
     }
 
@@ -55,6 +55,10 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
     fn get_node_by_slab_index(&self, slab_index: SlabIndex) -> &TreeNode<S> {
         &self.nodes[slab_index]
+    }
+
+    fn get_mut_node_by_slab_index(&mut self, slab_index: SlabIndex) -> &mut TreeNode<S> {
+        &mut self.nodes[slab_index]
     }
 
     fn get_node_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<&TreeNode<S>, S> {
@@ -232,6 +236,25 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             node_option = self.get_parent_node(node);
         }
         Ok(None)
+    }
+
+    // true: is_root, false: is_not_root
+    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
+        let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
+        let node = self.get_node_by_slab_index(slab_index);
+        if let Some(parent_of_discard) = node.parent {
+            let to_remove = self.bfs_subtree(slab_index);
+            for idx in to_remove {
+                self.index_map.remove(&self.nodes.remove(idx).commit_id);
+            }
+            let parent_node = self.get_mut_node_by_slab_index(parent_of_discard);
+            parent_node.children.remove(&slab_index);
+            Ok(false)
+        } else {
+            self.nodes.clear();
+            self.index_map.clear();
+            Ok(true)
+        }
     }
 }
 
