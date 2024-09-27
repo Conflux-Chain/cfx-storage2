@@ -22,7 +22,7 @@ pub enum StorageError {
 
 pub type Result<T> = ::std::result::Result<T, StorageError>;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Copy)]
 pub enum DecodeError {
     #[error("incorrect input length")]
     IncorrectLength,

@@ -1,6 +1,7 @@
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TableName {
     CommitID,
+    HistoryNumber,
     HistoryChange(VersionedKVName),
     HistoryIndex(VersionedKVName),
     #[cfg(test)]
@@ -33,6 +34,7 @@ impl From<TableName> for u32 {
         };
         match t {
             CommitID => make_id(),
+            HistoryNumber => make_id(),
             HistoryChange(FlatKV) => make_id(),
             HistoryIndex(FlatKV) => make_id(),
             #[cfg(test)]
@@ -45,6 +47,7 @@ impl From<TableName> for &'static str {
     fn from(t: TableName) -> Self {
         match t {
             CommitID => "commit_id",
+            HistoryNumber => "history_number",
             HistoryChange(FlatKV) => "flat_kv_change_history",
             HistoryIndex(FlatKV) => "flat_kv_history_index",
             #[cfg(test)]

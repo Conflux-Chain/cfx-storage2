@@ -20,3 +20,12 @@ impl TableSchema for CommitIDSchema {
     type Key = CommitID;
     type Value = HistoryNumber;
 }
+
+#[derive(Clone, Copy)]
+pub struct HistoryNumberSchema;
+
+impl TableSchema for HistoryNumberSchema {
+    const NAME: TableName = TableName::HistoryNumber;
+    type Key = HistoryNumber;
+    type Value = CommitID;
+}

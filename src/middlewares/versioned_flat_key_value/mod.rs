@@ -11,6 +11,7 @@ use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 use pending_part::VersionedHashMap;
 
+use super::commit_id_schema::HistoryNumberSchema;
 use super::ChangeKey;
 use super::CommitIDSchema;
 use crate::backends::{TableReader, WriteSchemaTrait};
@@ -39,6 +40,7 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
     pending_part: &'db mut VersionedHashMap<PendingKeyValueConfig<T, CommitID>>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
+    history_number_table: TableReader<'db, HistoryNumberSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
@@ -136,6 +138,12 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             );
             write_schema.write::<CommitIDSchema>(commit_id_table_op);
 
+            let history_number_table_op = (
+                Cow::Owned(history_number),
+                Some(Cow::Owned(confirmed_commit_id)),
+            );
+            write_schema.write::<HistoryNumberSchema>(history_number_table_op);
+
             let history_indices_table_op = updates.keys().map(|key| {
                 (
                     Cow::Owned(HistoryIndexKey(key.clone(), history_number)),
@@ -152,54 +160,103 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     }
 }
 
-// impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
-//     for VersionedStore<'db, T>
-// {
-//     fn iter_historical_changes<'a>(
-//         &'a self,
-//         commit_id: &CommitID,
-//         key: &T::Key,
-//     ) -> Result<impl 'a + Iterator<Item = (&CommitID, &Option<T::Value>)>> {
-//         let pending_res = self.pending_part.iter_historical_changes(commit_id, key);
-//         let (history_commit, pending_vec) = match pending_res {
-//             Ok(pending_vec) => {
-//                 if let Some(commit) = self.pending_part.get_parent_of_root() {
-//                     (commit, pending_vec)
-//                 } else {
-//                     return Ok(pending_vec.into_iter())
-//                 }
-//             }
-//             Err(PendingError::CommitIDNotFound(target_commit)) => {
-//                 assert_eq!(target_commit, commit);
-//                 commit
-//             }
-//             Err(other_err) => {
-//                 return Err(StorageError::PendingError(other_err));
-//             }
-//         };
+impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+    // impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
+    //     for VersionedStore<'db, T>
+    // {
+    fn iter_historical_changes_history_part<'a>(
+        &'a self,
+        commit_id: &CommitID,
+        key: &'a T::Key,
+    ) -> Result<impl 'a + Iterator<Item = (CommitID, &T::Key, Option<T::Value>)>> {
+        let query_number = if let Some(value) = self.commit_id_table.get(commit_id)? {
+            value.into_owned()
+        } else {
+            return Err(StorageError::CommitIDNotFound);
+        };
 
-//         let history_number = if let Some(value) = self.commit_id_table.get(&commit)? {
-//             value.into_owned()
-//         } else {
-//             return Err(StorageError::CommitIDNotFound);
-//         };
-//         self.get_historical_part(history_number, key)
+        let mut num_items = 0;
+        let range_query_key = HistoryIndexKey(key.clone(), query_number);
+        for item in self.history_index_table.iter(&range_query_key)? {
+            let (k_with_history_number, indices) = item?;
+            let HistoryIndexKey(k, history_number) = k_with_history_number.as_ref();
+            if k != key {
+                break;
+            } else {
+                let found_version_number = indices.as_ref().last(*history_number);
+                let found_value = self
+                    .change_history_table
+                    .get_versioned_key(&found_version_number, key)?;
+                let found_commit_id = self.history_number_table.get(&found_version_number)?;
+                num_items += 1;
+            }
+        }
 
-//     }
+        let history_iter = self
+            .history_index_table
+            .iter(&range_query_key)?
+            .take(num_items)
+            .map(move |item| {
+                let (k_with_history_number, indices) =
+                    item.expect("previous for + take() should truncate before err");
+                let HistoryIndexKey(k, history_number) = k_with_history_number.as_ref();
+                let found_version_number = indices.as_ref().last(*history_number);
+                let found_value = self
+                    .change_history_table
+                    .get_versioned_key(&found_version_number, key)
+                    .expect("previous for + take() should truncate before err");
+                let found_commit_id = self
+                    .history_number_table
+                    .get(&found_version_number)
+                    .expect("previous for + take() should truncate before err");
+                (found_commit_id.unwrap().into_owned(), key, found_value)
+            });
+        Ok(history_iter)
+    }
 
-//     fn discard(self, commit: CommitID) -> Result<()> {
-//         todo!()
-//     }
+    // fn iter_historical_changes<'a>(
+    //     &'a self,
+    //     commit_id: &CommitID,
+    //     key: &T::Key,
+    // ) -> Result<impl 'a + Iterator<Item = (&CommitID, &Option<T::Value>)>> {
+    //     let pending_res = self.pending_part.iter_historical_changes(commit_id, key);
+    //     let (history_commit, pending_iter) = match pending_res {
+    //         Ok(pending_iter) => {
+    //             if let Some(history_commit) = self.pending_part.get_parent_of_root() {
+    //                 (history_commit, pending_iter)
+    //             } else {
+    //                 return Ok(pending_iter)
+    //             }
+    //         }
+    //         Err(PendingError::CommitIDNotFound(target_commit)) => {
+    //             assert_eq!(target_commit, *commit_id);
+    //             (target_commit, Default::default())
+    //         }
+    //     };
 
-//     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-//         todo!()
-//     }
+    //     let history_number = if let Some(value) = self.commit_id_table.get(&commit)? {
+    //         value.into_owned()
+    //     } else {
+    //         return Err(StorageError::CommitIDNotFound);
+    //     };
+    //     self.get_historical_part(history_number, key)
 
-//     fn versioned_iter<'a>(
-//         &'a self,
-//         commit: &CommitID,
-//         key: &T::Key,
-//     ) -> Result<impl 'a + Iterator<Item = (&T::Key, &T::Value)>> {
-//         todo!()
-//     }
-// }
+    // }
+
+    //     fn discard(self, commit: CommitID) -> Result<()> {
+    //         todo!()
+    //     }
+
+    //     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
+    //         todo!()
+    //     }
+
+    //     fn versioned_iter<'a>(
+    //         &'a self,
+    //         commit: &CommitID,
+    //         key: &T::Key,
+    //     ) -> Result<impl 'a + Iterator<Item = (&T::Key, &T::Value)>> {
+    //         todo!()
+    //     }
+    // }
+}
