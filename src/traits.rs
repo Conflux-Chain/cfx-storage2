@@ -25,6 +25,7 @@ where
     fn get_versioned_store(&self, commit: &C) -> Result<Self::Store>;
 
     /// Start from the given commit, and iter changes backforward
+    #[allow(clippy::type_complexity)]
     fn iter_historical_changes<'a>(
         &'a self,
         commit_id: &C,

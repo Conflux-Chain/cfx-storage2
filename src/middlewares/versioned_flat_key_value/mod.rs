@@ -18,7 +18,7 @@ use super::CommitIDSchema;
 use crate::backends::{TableReader, WriteSchemaTrait};
 use crate::errors::Result;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
-use crate::traits::{KeyValueStoreBulksTrait, KeyValueStoreManager, KeyValueStore};
+use crate::traits::{KeyValueStore, KeyValueStoreBulksTrait, KeyValueStoreManager};
 use crate::StorageError;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -191,13 +191,24 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
 }
 
 pub struct OneStore<K: Ord, V: Clone, C> {
-    map: BTreeMap::<K, V>, 
+    map: BTreeMap<K, V>,
     _marker: PhantomData<C>,
 }
 
-impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStore<K, V, C> for OneStore<K, V, C> {
+impl<K: Ord, V: Clone, C> OneStore<K, V, C> {
+    pub fn from_map(map: BTreeMap<K, V>) -> Self {
+        OneStore {
+            map,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStore<K, V, C>
+    for OneStore<K, V, C>
+{
     fn get(&self, key: &K) -> Result<Option<V>> {
-        Ok(self.map.get(key).map(|v| v.clone()))
+        Ok(self.map.get(key).cloned())
     }
 
     fn iter<'a>(&'a self, key: &K) -> Result<impl 'a + Iterator<Item = (&K, &V)>> {
@@ -209,13 +220,21 @@ impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStore<K, V, C> fo
     }
 }
 
-// impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
 impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     for VersionedStore<'db, T>
 {
     type Store = OneStore<T::Key, T::Value, CommitID>;
     fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
-        todo!()
+        let pending_res = self.pending_part.get_versioned_store(*commit);
+        match pending_res {
+            Ok(pending_map) => Ok(OneStore::from_map(pending_map)),
+            Err(PendingError::CommitIDNotFound(target_commit_id)) => {
+                assert_eq!(target_commit_id, *commit);
+                let history_map: BTreeMap<T::Key, T::Value> = BTreeMap::new(); //todo
+                Ok(OneStore::from_map(history_map))
+            }
+            Err(other_err) => Err(StorageError::PendingError(other_err)),
+        }
     }
 
     #[allow(clippy::type_complexity)]

@@ -209,6 +209,24 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         }
         Ok(())
     }
+
+    pub fn get_versioned_store(
+        &self,
+        commit_id: S::CommitId,
+    ) -> PendResult<BTreeMap<S::Key, S::Value>, S> {
+        self.checkout_current(commit_id)?;
+        let current_read = self.current.read();
+        let map: BTreeMap<_, _> = current_read
+            .as_ref()
+            .unwrap()
+            .map
+            .iter()
+            .filter_map(|(k, apply_record)| {
+                apply_record.value.as_ref().map(|v| (k.clone(), v.clone()))
+            })
+            .collect();
+        Ok(map)
+    }
 }
 
 impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
