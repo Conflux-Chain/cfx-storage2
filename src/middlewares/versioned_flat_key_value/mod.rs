@@ -221,9 +221,9 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         }
     }
 
-    //     fn discard(self, commit: CommitID) -> Result<()> {
-    //         todo!()
-    //     }
+    fn discard(&mut self, commit: CommitID) -> Result<()> {
+        Ok(self.pending_part.discard(commit)?)
+    }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
         // let pending_res = self.pending_part.get_versioned_key(commit, key); // this will checkout_current

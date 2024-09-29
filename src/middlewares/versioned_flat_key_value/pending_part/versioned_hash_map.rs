@@ -84,6 +84,10 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         self.parent_of_root
     }
 
+    pub fn get_height_of_root(&self) -> usize {
+        self.tree.get_height_of_root()
+    }
+
     pub fn add_node(
         &mut self,
         updates: KeyValueMap<S>,
@@ -195,15 +199,15 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         self.tree.get_versioned_key(commit_id, key)
     }
 
-    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
-        let is_root = self.tree.discard(commit_id)?;
+    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
+        self.tree.discard(commit_id)?;
         let current_commit_id = self.current.read().as_ref().map(|c| c.commit_id);
         if let Some(current_commit_id) = current_commit_id {
             if !self.tree.contains_commit_id(&current_commit_id) {
                 *self.current.write() = None;
             }
         }
-        Ok(is_root)
+        Ok(())
     }
 }
 
