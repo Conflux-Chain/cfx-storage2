@@ -4,6 +4,7 @@ mod table_schema;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
 pub use pending_part::PendingError;
 
@@ -17,8 +18,7 @@ use super::CommitIDSchema;
 use crate::backends::{TableReader, WriteSchemaTrait};
 use crate::errors::Result;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
-// use crate::traits::{KeyValueStoreBulksTrait, KeyValueStoreManager};
-use crate::traits::KeyValueStoreBulksTrait;
+use crate::traits::{KeyValueStoreBulksTrait, KeyValueStoreManager, KeyValueStore};
 use crate::StorageError;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -190,10 +190,34 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     }
 }
 
-impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
-    // impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
-    //     for VersionedStore<'db, T>
-    // {
+pub struct OneStore<K: Ord, V: Clone, C> {
+    map: BTreeMap::<K, V>, 
+    _marker: PhantomData<C>,
+}
+
+impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStore<K, V, C> for OneStore<K, V, C> {
+    fn get(&self, key: &K) -> Result<Option<V>> {
+        Ok(self.map.get(key).map(|v| v.clone()))
+    }
+
+    fn iter<'a>(&'a self, key: &K) -> Result<impl 'a + Iterator<Item = (&K, &V)>> {
+        Ok(self.map.range(key..))
+    }
+
+    fn commit(self, commit: C, changes: impl Iterator<Item = (K, V)>) {
+        todo!()
+    }
+}
+
+// impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
+    for VersionedStore<'db, T>
+{
+    type Store = OneStore<T::Key, T::Value, CommitID>;
+    fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
+        todo!()
+    }
+
     #[allow(clippy::type_complexity)]
     fn iter_historical_changes<'a>(
         &'a self,
@@ -251,13 +275,4 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         let history_number = self.get_history_number_by_commit_id(history_commit)?;
         self.get_historical_part(history_number, key)
     }
-
-    //     fn versioned_iter<'a>(
-    //         &'a self,
-    //         commit: &CommitID,
-    //         key: &T::Key,
-    //     ) -> Result<impl 'a + Iterator<Item = (&T::Key, &T::Value)>> {
-    //         todo!()
-    //     }
-    // }
 }

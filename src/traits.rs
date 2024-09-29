@@ -19,26 +19,19 @@ where
     V: 'static,
     C: 'static,
 {
-    //type Store: KeyValueStore<K, V, C>;
+    type Store: KeyValueStore<K, V, C>;
 
     /// Get the key value store after the commit of given id
-    //fn get_versioned_store(&self, commit: &C) -> Result<Self::Store>;
-
-    /// iter key at the key value store after the commit of given id, only FlatKV requires
-    fn versioned_iter<'a>(
-        &'a self,
-        commit: &C,
-        key: &K,
-    ) -> Result<impl 'a + Iterator<Item = (&K, &V)>>;
+    fn get_versioned_store(&self, commit: &C) -> Result<Self::Store>;
 
     /// Start from the given commit, and iter changes backforward
     fn iter_historical_changes<'a>(
         &'a self,
         commit_id: &C,
-        key: &K,
-    ) -> Result<impl 'a + Iterator<Item = (&C, Option<&V>)>>;
+        key: &'a K,
+    ) -> Result<Box<dyn 'a + Iterator<Item = (C, &K, Option<V>)>>>;
 
-    fn discard(self, commit: C) -> Result<()>;
+    fn discard(&mut self, commit: C) -> Result<()>;
 
     fn get_versioned_key(&self, commit: &C, key: &K) -> Result<Option<V>>;
 }
