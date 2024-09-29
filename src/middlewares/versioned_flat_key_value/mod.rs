@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
+use parking_lot::RwLock;
 pub use pending_part::PendingError;
 
 use self::pending_part::pending_schema::PendingKeyValueConfig;
@@ -34,7 +35,7 @@ impl HistoryIndices {
     }
 }
 
-// struct PendingPart;
+const MIN_HISTORY_NUMBER_MINUS_ONE: HistoryNumber = 0;
 
 pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
     pending_part: &'db mut VersionedHashMap<PendingKeyValueConfig<T, CommitID>>,
@@ -42,6 +43,7 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
     commit_id_table: TableReader<'db, CommitIDSchema>,
     history_number_table: TableReader<'db, HistoryNumberSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
+    history_min_key: RwLock<Option<T::Key>>,
 }
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
@@ -69,7 +71,6 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     ) -> Result<Option<T::Value>> {
         let range_query_key = HistoryIndexKey(key.clone(), query_version_number);
 
-        // history_number should be decreasing
         let found_version_number = match self.history_index_table.iter(&range_query_key)?.next() {
             None => {
                 return Ok(None);
@@ -90,6 +91,28 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         self.change_history_table
             .get_versioned_key(&found_version_number, key)
     }
+
+    pub fn find_larger_key(&self, key: &T::Key) -> Result<Option<T::Key>> {
+        // todo: here correct?
+        let range_query_key = HistoryIndexKey(key.clone(), MIN_HISTORY_NUMBER_MINUS_ONE);
+
+        match self.history_index_table.iter(&range_query_key)?.next() {
+            None => Ok(None),
+            Some(Err(e)) => Err(e.into()),
+            Some(Ok((k, _))) if &k.as_ref().0 > key => Ok(Some(k.as_ref().0.to_owned())),
+            _ => unreachable!(
+                "iter((key, MIN_HISTORY_NUMBER_MINUS_ONE)) should not result in k <= key"
+            ),
+        }
+    }
+}
+
+fn need_update_min_key<K: Ord>(original_min: Option<&K>, challenge_min: &K) -> bool {
+    if let Some(original_min) = original_min {
+        original_min > challenge_min
+    } else {
+        true
+    }
 }
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
@@ -102,11 +125,13 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         let (start_height, confirmed_ids_maps) =
             self.pending_part.change_root(new_root_commit_id)?;
 
+        let mut confirmed_min_key = None;
+
         for (delta_height, (confirmed_commit_id, updates)) in
             confirmed_ids_maps.into_iter().enumerate()
         {
             let height = (start_height + delta_height) as u64;
-            let history_number = height;
+            let history_number = height + 1;
 
             assert!(self.commit_id_table.get(&confirmed_commit_id)?.is_none());
 
@@ -130,8 +155,23 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             });
             write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
 
+            if let Some(this_min_k) = updates.keys().min().cloned() {
+                let update_min_k = need_update_min_key(confirmed_min_key.as_ref(), &this_min_k);
+                if update_min_k {
+                    confirmed_min_key = Some(this_min_k);
+                }
+            }
+
             self.change_history_table
                 .commit(history_number, updates.into_iter(), write_schema)?;
+        }
+
+        if let Some(confirmed_min_k) = confirmed_min_key {
+            let previous_min_key = self.history_min_key.read().clone();
+            let update_min_k = need_update_min_key(previous_min_key.as_ref(), &confirmed_min_k);
+            if update_min_k {
+                *self.history_min_key.write() = Some(confirmed_min_k);
+            }
         }
 
         Ok(())
@@ -144,11 +184,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         commit_id: &CommitID,
         key: &'a T::Key,
     ) -> Result<impl 'a + Iterator<Item = (CommitID, &T::Key, Option<T::Value>)>> {
-        let query_number = if let Some(value) = self.commit_id_table.get(commit_id)? {
-            value.into_owned()
-        } else {
-            return Err(StorageError::CommitIDNotFound);
-        };
+        let query_number = self.get_history_number_by_commit_id(*commit_id)?;
 
         let mut num_items = 0;
         let range_query_key = HistoryIndexKey(key.clone(), query_number);
@@ -187,6 +223,23 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
                 (found_commit_id.unwrap().into_owned(), key, found_value)
             });
         Ok(history_iter)
+    }
+
+    fn get_versioned_store_history_part(
+        &self,
+        commit_id: &CommitID,
+    ) -> Result<BTreeMap<T::Key, T::Value>> {
+        let query_number = self.get_history_number_by_commit_id(*commit_id)?;
+        let mut key_opt = self.history_min_key.read().as_ref().cloned();
+        let mut map = BTreeMap::new();
+        while let Some(key) = key_opt {
+            let value = self.get_historical_part(query_number, &key)?;
+            if let Some(value) = value {
+                map.insert(key.clone(), value);
+            }
+            key_opt = self.find_larger_key(&key)?;
+        }
+        Ok(map)
     }
 }
 
@@ -230,8 +283,9 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, Com
             Ok(pending_map) => Ok(OneStore::from_map(pending_map)),
             Err(PendingError::CommitIDNotFound(target_commit_id)) => {
                 assert_eq!(target_commit_id, *commit);
-                let history_map: BTreeMap<T::Key, T::Value> = BTreeMap::new(); //todo
-                Ok(OneStore::from_map(history_map))
+                Ok(OneStore::from_map(
+                    self.get_versioned_store_history_part(commit)?,
+                ))
             }
             Err(other_err) => Err(StorageError::PendingError(other_err)),
         }
