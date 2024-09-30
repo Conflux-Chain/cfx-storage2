@@ -19,6 +19,7 @@ pub struct Tree<S: PendingKeyValueSchema> {
     index_map: HashMap<S::CommitId, SlabIndex>,
 }
 
+// basic methods
 impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn new(height_of_root: usize) -> Self {
         Tree {
@@ -70,8 +71,26 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let node = self.get_node_by_commit_id(commit_id)?;
         Ok(node.get_modified_value(key))
     }
+
+    // including subroot
+    fn bfs_subtree(&self, subroot_slab_index: SlabIndex) -> Vec<SlabIndex> {
+        let mut slab_indices = vec![subroot_slab_index];
+        let mut head = 0;
+        while head < slab_indices.len() {
+            let node = self.get_node_by_slab_index(slab_indices[head]);
+
+            for &child_index in node.get_children() {
+                slab_indices.push(child_index);
+            }
+
+            head += 1;
+        }
+
+        slab_indices
+    }
 }
 
+// methods to support VersionedMap::add_node()
 impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn add_root(
         &mut self,
@@ -125,24 +144,8 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 }
 
+// methods to support VersionedMap::change_root()
 impl<S: PendingKeyValueSchema> Tree<S> {
-    // including subroot
-    fn bfs_subtree(&self, subroot_slab_index: SlabIndex) -> Vec<SlabIndex> {
-        let mut slab_indices = vec![subroot_slab_index];
-        let mut head = 0;
-        while head < slab_indices.len() {
-            let node = self.get_node_by_slab_index(slab_indices[head]);
-
-            for &child_index in node.get_children() {
-                slab_indices.push(child_index);
-            }
-
-            head += 1;
-        }
-
-        slab_indices
-    }
-
     // excluding target
     fn find_path(&self, target_slab_index: SlabIndex) -> Vec<(S::CommitId, KeyValueMap<S>)> {
         let mut target_node = self.get_node_by_slab_index(target_slab_index);
@@ -200,6 +203,9 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 }
 
+// Internal Tree methods supporting
+// helper methods in VersionedMap for
+// implementing `KeyValueStoreManager` for `VersionedStore`.
 impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn iter_historical_changes<'a>(
         &'a self,
@@ -232,7 +238,6 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         Ok(None)
     }
 
-    // true: is_root, false: is_not_root
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
         let node = self.get_node_by_slab_index(slab_index);
@@ -251,6 +256,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 }
 
+// methods to support VersionedMap::checkout_current()
 impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn get_apply_map_from_root_included(
         &self,
