@@ -356,6 +356,9 @@ mod tests {
             let commit_id = rng.gen_range(1..=num_nodes) as CommitId;
             for ikey in 0..10 {
                 let key: u64 = ikey;
+                let versioned_value = versioned_hash_map
+                    .get_versioned_key(&commit_id, &key)
+                    .unwrap();
                 let result = versioned_hash_map
                     .query_frequent_commit_id(commit_id, &key)
                     .unwrap();
@@ -363,6 +366,7 @@ mod tests {
                     .get_apply_map_from_root_included(commit_id)
                     .unwrap();
                 let answer = apply_map.get(&key).map(|a| a.value.clone());
+                assert_eq!(versioned_value, answer);
                 assert_eq!(result, answer);
             }
         }
