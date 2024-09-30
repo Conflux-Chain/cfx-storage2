@@ -2,10 +2,8 @@ use std::collections::BTreeMap;
 
 use super::{
     commit_tree::Tree,
-    pending_schema::{
-        ApplyMap, ApplyRecord, KeyValueMap, PendingKeyValueSchema, RecoverRecord,
-        Result as PendResult,
-    },
+    current_map::CurrentMap,
+    pending_schema::{KeyValueMap, PendingKeyValueSchema, RecoverRecord, Result as PendResult},
     PendingError,
 };
 
@@ -15,39 +13,6 @@ pub struct VersionedMap<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
     tree: Tree<S>,
     current: RwLock<Option<CurrentMap<S>>>,
-}
-
-struct CurrentMap<S: PendingKeyValueSchema> {
-    map: BTreeMap<S::Key, ApplyRecord<S>>,
-    commit_id: S::CommitId,
-}
-
-impl<S: PendingKeyValueSchema> CurrentMap<S> {
-    fn new(commit_id: S::CommitId) -> Self {
-        Self {
-            map: BTreeMap::new(),
-            commit_id,
-        }
-    }
-
-    fn rollback(&mut self, rollbacks: BTreeMap<S::Key, Option<ApplyRecord<S>>>) {
-        for (key, to_rollback) in rollbacks.into_iter() {
-            match to_rollback {
-                None => {
-                    self.map.remove(&key);
-                }
-                Some(to_rollback_record) => {
-                    self.map.insert(key, to_rollback_record);
-                }
-            }
-        }
-    }
-
-    fn apply(&mut self, applys: ApplyMap<S>) {
-        for (key, apply) in applys.into_iter() {
-            self.map.insert(key, apply);
-        }
-    }
 }
 
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
@@ -137,7 +102,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         let current = current_read.as_ref().unwrap();
         let mut modifications = BTreeMap::new();
         for (key, value) in updates.into_iter() {
-            let last_commit_id = current.map.get(&key).map(|s| s.commit_id);
+            let last_commit_id = current.get_map().get(&key).map(|s| s.commit_id);
             modifications.insert(
                 key,
                 RecoverRecord {
@@ -171,7 +136,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             .read()
             .as_ref()
             .unwrap()
-            .map
+            .get_map()
             .get(key)
             .map(|c| c.value.clone()))
     }
@@ -197,7 +162,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
         self.tree.discard(commit_id)?;
-        let current_commit_id = self.current.read().as_ref().map(|c| c.commit_id);
+        let current_commit_id = self.current.read().as_ref().map(|c| *c.get_commit_id());
         if let Some(current_commit_id) = current_commit_id {
             if !self.tree.contains_commit_id(&current_commit_id) {
                 *self.current.write() = None;
@@ -215,7 +180,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         let map: BTreeMap<_, _> = current_read
             .as_ref()
             .unwrap()
-            .map
+            .get_map()
             .iter()
             .filter_map(|(k, apply_record)| {
                 apply_record.value.as_ref().map(|v| (k.clone(), v.clone()))
@@ -227,7 +192,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
-        let current_commit_id = self.current.read().as_ref().map(|c| c.commit_id);
+        let current_commit_id = self.current.read().as_ref().map(|c| *c.get_commit_id());
         if let Some(current_commit_id) = current_commit_id {
             let (rollbacks, applys) = self
                 .tree
@@ -236,7 +201,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             let current = current_option.as_mut().unwrap();
             current.rollback(rollbacks);
             current.apply(applys);
-            current.commit_id = target_commit_id;
+            current.set_commit_id(target_commit_id);
         } else {
             let mut current = CurrentMap::<S>::new(target_commit_id);
             let applys = self
@@ -247,7 +212,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
 
         assert_eq!(
-            self.current.read().as_ref().unwrap().commit_id,
+            *self.current.read().as_ref().unwrap().get_commit_id(),
             target_commit_id
         );
 
