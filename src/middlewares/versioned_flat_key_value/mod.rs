@@ -11,7 +11,7 @@ pub use pending_part::PendingError;
 
 use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
-use pending_part::VersionedHashMap;
+use pending_part::VersionedMap;
 
 use super::commit_id_schema::HistoryNumberSchema;
 use super::ChangeKey;
@@ -38,7 +38,7 @@ impl HistoryIndices {
 const MIN_HISTORY_NUMBER_MINUS_ONE: HistoryNumber = 0;
 
 pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
-    pending_part: &'db mut VersionedHashMap<PendingKeyValueConfig<T, CommitID>>,
+    pending_part: &'db mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     history_number_table: TableReader<'db, HistoryNumberSchema>,

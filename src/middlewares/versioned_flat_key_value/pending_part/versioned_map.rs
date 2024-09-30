@@ -11,7 +11,7 @@ use super::{
 
 use parking_lot::RwLock;
 
-pub struct VersionedHashMap<S: PendingKeyValueSchema> {
+pub struct VersionedMap<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
     tree: Tree<S>,
     current: RwLock<Option<CurrentMap<S>>>,
@@ -50,9 +50,9 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
     }
 }
 
-impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
+impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: usize) -> Self {
-        VersionedHashMap {
+        VersionedMap {
             parent_of_root,
             tree: Tree::new(height_of_root),
             current: RwLock::new(None),
@@ -60,7 +60,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     }
 }
 
-impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
+impl<S: PendingKeyValueSchema> VersionedMap<S> {
     #[allow(clippy::type_complexity)]
     // root..=new_root's parent: (commit_id, key_value_map)
     pub fn change_root(
@@ -79,7 +79,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     }
 }
 
-impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
+impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
         self.parent_of_root
     }
@@ -153,7 +153,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     }
 }
 
-impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
+impl<S: PendingKeyValueSchema> VersionedMap<S> {
     // None: pending_part not know
     // Some(None): pending_part know that this key has been deleted
     // Some(Some(value)): pending_part know this key's value
@@ -178,7 +178,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
 }
 
 // only one key, no need to invoke checkout_current
-impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
+impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn iter_historical_changes<'a>(
         &'a self,
         commit_id: &S::CommitId,
@@ -225,7 +225,7 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
     }
 }
 
-impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
+impl<S: PendingKeyValueSchema> VersionedMap<S> {
     fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
         let current_commit_id = self.current.read().as_ref().map(|c| c.commit_id);
         if let Some(current_commit_id) = current_commit_id {
@@ -299,9 +299,9 @@ mod tests {
     fn generate_random_tree(
         num_nodes: usize,
         rng: &mut StdRng,
-    ) -> (Tree<TestPendingConfig>, VersionedHashMap<TestPendingConfig>) {
+    ) -> (Tree<TestPendingConfig>, VersionedMap<TestPendingConfig>) {
         let mut forward_only_tree = Tree::new(0);
-        let mut versioned_hash_map = VersionedHashMap::new(None, 0);
+        let mut versioned_hash_map = VersionedMap::new(None, 0);
 
         for i in 1..=num_nodes as CommitId {
             let parent_commit_id = if i == 1 {
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn test_multiple_roots_err() {
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
-        let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None, 0);
+        let mut versioned_hash_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         forward_only_tree.add_root(0, BTreeMap::new()).unwrap();
         versioned_hash_map
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn test_commit_id_not_found_err() {
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
-        let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None, 0);
+        let mut versioned_hash_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         assert_eq!(
             forward_only_tree.add_non_root_node(1, 0, BTreeMap::new()),
@@ -410,7 +410,7 @@ mod tests {
     #[test]
     fn test_commit_id_already_exists_err() {
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
-        let mut versioned_hash_map = VersionedHashMap::<TestPendingConfig>::new(None, 0);
+        let mut versioned_hash_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         forward_only_tree.add_root(0, BTreeMap::new()).unwrap();
         versioned_hash_map
