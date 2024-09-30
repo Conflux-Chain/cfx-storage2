@@ -23,32 +23,43 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             current: RwLock::new(None),
         }
     }
-}
 
-impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    #[allow(clippy::type_complexity)]
-    // root..=new_root's parent: (commit_id, key_value_map)
-    pub fn change_root(
-        &mut self,
-        commit_id: S::CommitId,
-    ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
-        // to_commit: root..=new_root's parent
-        let (start_height_to_commit, to_commit) = self.tree.change_root(commit_id)?;
-
-        if let Some(parent_of_new_root) = to_commit.last() {
-            self.parent_of_root = Some(parent_of_new_root.0);
-            *self.current.write() = None;
-        }
-
-        Ok((start_height_to_commit, to_commit))
-    }
-}
-
-impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
         self.parent_of_root
     }
+}
 
+impl<S: PendingKeyValueSchema> VersionedMap<S> {
+    fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
+        let current_commit_id = self.current.read().as_ref().map(|c| *c.get_commit_id());
+        if let Some(current_commit_id) = current_commit_id {
+            let (rollbacks, applys) = self
+                .tree
+                .collect_rollback_and_apply_ops(current_commit_id, target_commit_id)?;
+            let mut current_option = self.current.write();
+            let current = current_option.as_mut().unwrap();
+            current.rollback(rollbacks);
+            current.apply(applys);
+            current.set_commit_id(target_commit_id);
+        } else {
+            let mut current = CurrentMap::<S>::new(target_commit_id);
+            let applys = self
+                .tree
+                .get_apply_map_from_root_included(target_commit_id)?;
+            current.apply(applys);
+            *self.current.write() = Some(current);
+        }
+
+        assert_eq!(
+            *self.current.read().as_ref().unwrap().get_commit_id(),
+            target_commit_id
+        );
+
+        Ok(())
+    }
+}
+
+impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn add_node(
         &mut self,
         updates: KeyValueMap<S>,
@@ -119,10 +130,50 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 }
 
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
+    #[allow(clippy::type_complexity)]
+    // root..=new_root's parent: (commit_id, key_value_map)
+    pub fn change_root(
+        &mut self,
+        commit_id: S::CommitId,
+    ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
+        // to_commit: root..=new_root's parent
+        let (start_height_to_commit, to_commit) = self.tree.change_root(commit_id)?;
+
+        if let Some(parent_of_new_root) = to_commit.last() {
+            self.parent_of_root = Some(parent_of_new_root.0);
+            *self.current.write() = None;
+        }
+
+        Ok((start_height_to_commit, to_commit))
+    }
+}
+
+// Helper methods in pending part to support
+// impl KeyValueStoreManager for VersionedStore
+impl<S: PendingKeyValueSchema> VersionedMap<S> {
+    pub fn iter_historical_changes<'a>(
+        &'a self,
+        commit_id: &S::CommitId,
+        key: &'a S::Key,
+    ) -> PendResult<impl 'a + Iterator<Item = (S::CommitId, &S::Key, Option<S::Value>)>, S> {
+        self.tree.iter_historical_changes(commit_id, key)
+    }
+
     // None: pending_part not know
     // Some(None): pending_part know that this key has been deleted
     // Some(Some(value)): pending_part know this key's value
-    pub fn query_frequent_commit_id(
+    pub fn get_versioned_key(
+        &self,
+        commit_id: &S::CommitId,
+        key: &S::Key,
+    ) -> PendResult<Option<Option<S::Value>>, S> {
+        self.tree.get_versioned_key(commit_id, key)
+    }
+
+    // alternative method of self.get_versioned_key(),
+    // but it invokes self.checkout_current(),
+    // thus is only suitable for frequent commit_id
+    pub fn get_versioned_key_with_checkout(
         &self,
         commit_id: S::CommitId,
         key: &S::Key,
@@ -139,25 +190,6 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             .get_map()
             .get(key)
             .map(|c| c.value.clone()))
-    }
-}
-
-// only one key, no need to invoke checkout_current
-impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    pub fn iter_historical_changes<'a>(
-        &'a self,
-        commit_id: &S::CommitId,
-        key: &'a S::Key,
-    ) -> PendResult<impl 'a + Iterator<Item = (S::CommitId, &S::Key, Option<S::Value>)>, S> {
-        self.tree.iter_historical_changes(commit_id, key)
-    }
-
-    pub fn get_versioned_key(
-        &self,
-        commit_id: &S::CommitId,
-        key: &S::Key,
-    ) -> PendResult<Option<Option<S::Value>>, S> {
-        self.tree.get_versioned_key(commit_id, key)
     }
 
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
@@ -187,36 +219,6 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             })
             .collect();
         Ok(map)
-    }
-}
-
-impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
-        let current_commit_id = self.current.read().as_ref().map(|c| *c.get_commit_id());
-        if let Some(current_commit_id) = current_commit_id {
-            let (rollbacks, applys) = self
-                .tree
-                .collect_rollback_and_apply_ops(current_commit_id, target_commit_id)?;
-            let mut current_option = self.current.write();
-            let current = current_option.as_mut().unwrap();
-            current.rollback(rollbacks);
-            current.apply(applys);
-            current.set_commit_id(target_commit_id);
-        } else {
-            let mut current = CurrentMap::<S>::new(target_commit_id);
-            let applys = self
-                .tree
-                .get_apply_map_from_root_included(target_commit_id)?;
-            current.apply(applys);
-            *self.current.write() = Some(current);
-        }
-
-        assert_eq!(
-            *self.current.read().as_ref().unwrap().get_commit_id(),
-            target_commit_id
-        );
-
-        Ok(())
     }
 }
 
@@ -307,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query() {
+    fn test_get_versioned_key() {
         let num_nodes = 100;
 
         let seed: [u8; 32] = [
@@ -325,7 +327,7 @@ mod tests {
                     .get_versioned_key(&commit_id, &key)
                     .unwrap();
                 let result = versioned_hash_map
-                    .query_frequent_commit_id(commit_id, &key)
+                    .get_versioned_key_with_checkout(commit_id, &key)
                     .unwrap();
                 let apply_map = forward_only_tree
                     .get_apply_map_from_root_included(commit_id)

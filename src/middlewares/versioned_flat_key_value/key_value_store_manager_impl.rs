@@ -90,8 +90,8 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, Com
     }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        // let pending_res = self.pending_part.query_frequent_commit_id(commit, key); // this will checkout_current
-        let pending_res = self.pending_part.get_versioned_key(commit, key); // this does not checkout_current
+        // let pending_res = self.pending_part.get_versioned_key_with_checkout(commit, key); // this will checkout_current
+        let pending_res = self.pending_part.get_versioned_key(commit, key);
         let history_commit = match pending_res {
             Ok(Some(value)) => {
                 return Ok(value);

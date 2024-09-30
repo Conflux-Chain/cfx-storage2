@@ -16,7 +16,6 @@ pub struct TreeNode<S: PendingKeyValueSchema> {
 
     // todo: test lazy height
     // height will not be changed even when root is changed
-    // height is only used for lca in Tree.collect_rollback_and_apply_ops()
     height: usize,
 
     commit_id: S::CommitId,
