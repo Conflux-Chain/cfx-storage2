@@ -46,6 +46,7 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
     history_min_key: RwLock<Option<T::Key>>,
 }
 
+// private helper methods
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     fn get_history_number_by_commit_id(&self, commit: CommitID) -> Result<HistoryNumber> {
         if let Some(value) = self.commit_id_table.get(&commit)? {
@@ -55,16 +56,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         }
     }
 
-    pub fn add_to_pending_part(
-        &mut self,
-        parent_commit: Option<CommitID>,
-        commit: CommitID,
-        updates: BTreeMap<T::Key, Option<T::Value>>,
-    ) -> Result<()> {
-        Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
-    }
-
-    pub fn get_historical_part(
+    fn get_historical_part(
         &self,
         query_version_number: HistoryNumber,
         key: &T::Key,
@@ -92,7 +84,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             .get_versioned_key(&found_version_number, key)
     }
 
-    pub fn find_larger_key(&self, key: &T::Key) -> Result<Option<T::Key>> {
+    fn find_larger_historical_key(&self, key: &T::Key) -> Result<Option<T::Key>> {
         // todo: here correct?
         let range_query_key = HistoryIndexKey(key.clone(), MIN_HISTORY_NUMBER_MINUS_ONE);
 
@@ -115,8 +107,18 @@ fn need_update_min_key<K: Ord>(original_min: Option<&K>, challenge_min: &K) -> b
     }
 }
 
+// callable methods
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
-    fn confirmed_pending_to_history(
+    pub fn add_to_pending_part(
+        &mut self,
+        parent_commit: Option<CommitID>,
+        commit: CommitID,
+        updates: BTreeMap<T::Key, Option<T::Value>>,
+    ) -> Result<()> {
+        Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
+    }
+
+    pub fn confirmed_pending_to_history(
         &mut self,
         new_root_commit_id: CommitID,
         write_schema: &impl WriteSchemaTrait,

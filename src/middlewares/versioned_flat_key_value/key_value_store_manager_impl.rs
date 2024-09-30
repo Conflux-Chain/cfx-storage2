@@ -177,7 +177,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             if let Some(value) = value {
                 map.insert(key.clone(), value);
             }
-            key_opt = self.find_larger_key(&key)?;
+            key_opt = self.find_larger_historical_key(&key)?;
         }
         Ok(map)
     }
