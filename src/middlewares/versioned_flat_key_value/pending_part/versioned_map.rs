@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use super::{
-    commit_tree::Tree,
     current_map::CurrentMap,
     pending_schema::{KeyValueMap, PendingKeyValueSchema, RecoverRecord, Result as PendResult},
+    tree::Tree,
     PendingError,
 };
 
@@ -31,7 +31,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
-        let current_commit_id = self.current.read().as_ref().map(|c| *c.get_commit_id());
+        let current_commit_id = self.current.read().as_ref().map(|c| c.get_commit_id());
         if let Some(current_commit_id) = current_commit_id {
             let (rollbacks, applys) = self
                 .tree
@@ -51,7 +51,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
 
         assert_eq!(
-            *self.current.read().as_ref().unwrap().get_commit_id(),
+            self.current.read().as_ref().unwrap().get_commit_id(),
             target_commit_id
         );
 
@@ -194,7 +194,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
         self.tree.discard(commit_id)?;
-        let current_commit_id = self.current.read().as_ref().map(|c| *c.get_commit_id());
+        let current_commit_id = self.current.read().as_ref().map(|c| c.get_commit_id());
         if let Some(current_commit_id) = current_commit_id {
             if !self.tree.contains_commit_id(&current_commit_id) {
                 *self.current.write() = None;

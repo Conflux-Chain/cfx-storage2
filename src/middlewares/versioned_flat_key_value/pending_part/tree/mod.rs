@@ -1,29 +1,17 @@
+mod node;
+
+pub type SlabIndex = usize;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use slab::Slab;
 
+use self::node::TreeNode;
+
 use super::pending_schema::{
-    ApplyMap, ApplyRecord, KeyValueMap, PendingKeyValueSchema, RecoverMap, RecoverRecord,
-    Result as PendResult,
+    ApplyMap, ApplyRecord, KeyValueMap, PendingKeyValueSchema, RecoverMap, Result as PendResult,
 };
 use super::PendingError;
-
-type SlabIndex = usize;
-
-pub struct TreeNode<S: PendingKeyValueSchema> {
-    parent: Option<SlabIndex>,
-    children: BTreeSet<SlabIndex>,
-
-    // todo: test lazy height
-    // height will not be changed even when root is changed
-    height: usize,
-
-    commit_id: S::CommitId,
-    // before current node, the old value of this key is modified by which commit_id,
-    // if none, this key is absent before current node
-    // here must use CommitID instead of SlabIndex (which may be reused, see slab doc)
-    modifications: RecoverMap<S>,
-}
 
 pub struct Tree<S: PendingKeyValueSchema> {
     height_of_root: usize,
@@ -70,7 +58,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 
     fn get_parent_node(&self, node: &TreeNode<S>) -> Option<&TreeNode<S>> {
-        node.parent
+        node.get_parent()
             .map(|p_slab_index| self.get_node_by_slab_index(p_slab_index))
     }
 
@@ -80,7 +68,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         key: &S::Key,
     ) -> PendResult<Option<Option<S::Value>>, S> {
         let node = self.get_node_by_commit_id(commit_id)?;
-        Ok(node.modifications.get(key).map(|v| v.value.clone()))
+        Ok(node.get_modified_value(key))
     }
 }
 
@@ -121,17 +109,17 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
 
         // new node
-        let node = TreeNode::new(
+        let node = TreeNode::new_non_root(
             commit_id,
             parent_slab_index,
-            self.get_node_by_slab_index(parent_slab_index).height + 1,
+            self.get_node_by_slab_index(parent_slab_index).get_height() + 1,
             modifications,
         );
 
         // add node to tree
         let slab_index = self.nodes.insert(node);
         self.index_map.insert(commit_id, slab_index);
-        self.nodes[parent_slab_index].children.insert(slab_index);
+        self.nodes[parent_slab_index].insert_child(slab_index);
 
         Ok(())
     }
@@ -145,7 +133,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         while head < slab_indices.len() {
             let node = self.get_node_by_slab_index(slab_indices[head]);
 
-            for &child_index in &node.children {
+            for &child_index in node.get_children() {
                 slab_indices.push(child_index);
             }
 
@@ -159,9 +147,9 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     fn find_path(&self, target_slab_index: SlabIndex) -> Vec<(S::CommitId, KeyValueMap<S>)> {
         let mut target_node = self.get_node_by_slab_index(target_slab_index);
         let mut path = VecDeque::new();
-        while let Some(parent_slab_index) = target_node.parent {
+        while let Some(parent_slab_index) = target_node.get_parent() {
             target_node = self.get_node_by_slab_index(parent_slab_index);
-            path.push_front((target_node.commit_id, target_node.get_updates()));
+            path.push_front((target_node.get_commit_id(), target_node.get_updates()));
         }
         path.into()
     }
@@ -179,7 +167,10 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
         // early return if new_root == root
         if to_commit.is_empty() {
-            return Ok((self.nodes[slab_index].height - to_commit.len(), to_commit));
+            return Ok((
+                self.nodes[slab_index].get_height() - to_commit.len(),
+                to_commit,
+            ));
         }
 
         // subtree of new_root
@@ -194,14 +185,18 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             }
         }
         for idx in to_remove {
-            self.index_map.remove(&self.nodes.remove(idx).commit_id);
+            self.index_map
+                .remove(&self.nodes.remove(idx).get_commit_id());
         }
 
         // set new_root's parent as None
-        self.nodes[slab_index].parent = None;
+        self.nodes[slab_index].set_parent(None);
 
         // (height of new_root's parent, root..=new_root's parent)
-        Ok((self.nodes[slab_index].height - to_commit.len(), to_commit))
+        Ok((
+            self.nodes[slab_index].get_height() - to_commit.len(),
+            to_commit,
+        ))
     }
 }
 
@@ -214,8 +209,8 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
         let mut path = Vec::new();
         while let Some(node) = node_option {
-            if let Some(RecoverRecord { value, .. }) = node.modifications.get(key) {
-                path.push((node.commit_id, key, value.clone()));
+            if let Some(value) = node.get_modified_value(key) {
+                path.push((node.get_commit_id(), key, value));
             }
             node_option = self.get_parent_node(node);
         }
@@ -229,8 +224,8 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     ) -> PendResult<Option<Option<S::Value>>, S> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
         while let Some(node) = node_option {
-            if let Some(RecoverRecord { value, .. }) = node.modifications.get(key) {
-                return Ok(Some(value.clone()));
+            if let Some(value) = node.get_modified_value(key) {
+                return Ok(Some(value));
             }
             node_option = self.get_parent_node(node);
         }
@@ -241,13 +236,14 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
         let node = self.get_node_by_slab_index(slab_index);
-        if let Some(parent_of_discard) = node.parent {
+        if let Some(parent_of_discard) = node.get_parent() {
             let to_remove = self.bfs_subtree(slab_index);
             for idx in to_remove {
-                self.index_map.remove(&self.nodes.remove(idx).commit_id);
+                self.index_map
+                    .remove(&self.nodes.remove(idx).get_commit_id());
             }
             let parent_node = self.get_mut_node_by_slab_index(parent_of_discard);
-            parent_node.children.remove(&slab_index);
+            parent_node.remove_child(&slab_index);
             Ok(())
         } else {
             Err(PendingError::RootShouldNotBeDiscarded)
@@ -263,7 +259,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut commits_rev = BTreeMap::new();
         target_node.export_commit_data(&mut commits_rev);
-        while let Some(parent_slab_index) = target_node.parent {
+        while let Some(parent_slab_index) = target_node.get_parent() {
             target_node = self.get_node_by_slab_index(parent_slab_index);
             target_node.export_commit_data(&mut commits_rev);
         }
@@ -281,15 +277,15 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut rollbacks = BTreeMap::new();
         let mut commits_rev = BTreeMap::new();
-        while current_node.height > target_node.height {
+        while current_node.get_height() > target_node.get_height() {
             current_node.export_rollback_data(&mut rollbacks);
             current_node = self.get_parent_node(current_node).unwrap();
         }
-        while target_node.height > current_node.height {
+        while target_node.get_height() > current_node.get_height() {
             target_node.export_commit_data(&mut commits_rev);
             target_node = self.get_parent_node(target_node).unwrap();
         }
-        while current_node.commit_id != target_node.commit_id {
+        while current_node.get_commit_id() != target_node.get_commit_id() {
             current_node.export_rollback_data(&mut rollbacks);
             current_node = self.get_parent_node(current_node).unwrap();
             target_node.export_commit_data(&mut commits_rev);
@@ -327,57 +323,5 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         // they contain current and target (if they are not lca), respectively,
         // but they do not contain lca
         Ok((rollbacks_with_value, commits_rev))
-    }
-}
-
-impl<S: PendingKeyValueSchema> TreeNode<S> {
-    fn new_root(commit_id: S::CommitId, modifications: RecoverMap<S>, height: usize) -> Self {
-        Self {
-            height,
-            commit_id,
-            parent: None,
-            children: BTreeSet::new(),
-            modifications,
-        }
-    }
-
-    fn new(
-        commit_id: S::CommitId,
-        parent: SlabIndex,
-        height: usize,
-        modifications: RecoverMap<S>,
-    ) -> Self {
-        Self {
-            height,
-            commit_id,
-            parent: Some(parent),
-            children: BTreeSet::new(),
-            modifications,
-        }
-    }
-
-    fn get_updates(&self) -> KeyValueMap<S> {
-        self.modifications
-            .iter()
-            .map(|(k, RecoverRecord { value, .. })| (k.clone(), value.clone()))
-            .collect()
-    }
-
-    fn export_rollback_data(&self, rollbacks: &mut BTreeMap<S::Key, Option<S::CommitId>>) {
-        for (key, RecoverRecord { last_commit_id, .. }) in self.modifications.iter() {
-            rollbacks.insert(key.clone(), *last_commit_id);
-        }
-    }
-
-    fn export_commit_data(&self, commits_rev: &mut ApplyMap<S>) {
-        let commit_id = self.commit_id;
-        for (key, RecoverRecord { value, .. }) in self.modifications.iter() {
-            commits_rev
-                .entry(key.clone())
-                .or_insert_with(|| ApplyRecord {
-                    commit_id,
-                    value: value.clone(),
-                });
-        }
     }
 }

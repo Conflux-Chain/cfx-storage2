@@ -19,8 +19,8 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
         &self.map
     }
 
-    pub fn get_commit_id(&self) -> &S::CommitId {
-        &self.commit_id
+    pub fn get_commit_id(&self) -> S::CommitId {
+        self.commit_id
     }
 
     pub fn set_commit_id(&mut self, commit_id: S::CommitId) {
