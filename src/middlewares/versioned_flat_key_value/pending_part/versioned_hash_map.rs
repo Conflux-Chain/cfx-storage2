@@ -84,10 +84,6 @@ impl<S: PendingKeyValueSchema> VersionedHashMap<S> {
         self.parent_of_root
     }
 
-    pub fn get_height_of_root(&self) -> usize {
-        self.tree.get_height_of_root()
-    }
-
     pub fn add_node(
         &mut self,
         updates: KeyValueMap<S>,

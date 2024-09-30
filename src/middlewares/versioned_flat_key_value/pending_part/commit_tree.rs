@@ -41,10 +41,6 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
     }
 
-    pub(super) fn get_height_of_root(&self) -> usize {
-        self.height_of_root
-    }
-
     pub(super) fn contains_commit_id(&self, commit_id: &S::CommitId) -> bool {
         self.index_map.contains_key(commit_id)
     }
