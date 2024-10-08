@@ -18,7 +18,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         if self.has_root() {
             return Err(PendingError::MultipleRootsNotAllowed);
         }
-        // PendingError::CommitIdAlreadyExists(_) cannot happend because no root indicates no node
+        // PendingError::CommitIdAlreadyExists(_) cannot happend because no root <=> no node
 
         // new root
         let root = TreeNode::new_root(commit_id, modifications, self.height_of_root);
@@ -45,7 +45,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
 
         // new node
-        let node = TreeNode::new_non_root(
+        let node = TreeNode::new_non_root_node(
             commit_id,
             parent_slab_index,
             self.get_node_by_slab_index(parent_slab_index).get_height() + 1,

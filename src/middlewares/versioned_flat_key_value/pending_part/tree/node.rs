@@ -32,7 +32,7 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         }
     }
 
-    pub fn new_non_root(
+    pub fn new_non_root_node(
         commit_id: S::CommitId,
         parent: SlabIndex,
         height: usize,
@@ -51,8 +51,8 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         self.parent
     }
 
-    pub fn set_parent(&mut self, new_parent: Option<SlabIndex>) {
-        self.parent = new_parent;
+    pub fn set_as_root(&mut self) {
+        self.parent = None;
     }
 
     pub fn get_children(&self) -> &BTreeSet<SlabIndex> {

@@ -55,7 +55,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
 
         // set new_root's parent as None
-        self.nodes[slab_index].set_parent(None);
+        self.nodes[slab_index].set_as_root();
 
         // (height of new_root's parent, root..=new_root's parent)
         Ok((
