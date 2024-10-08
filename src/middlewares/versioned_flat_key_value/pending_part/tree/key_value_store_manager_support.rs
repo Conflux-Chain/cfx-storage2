@@ -7,8 +7,8 @@ use crate::middlewares::{
 
 use super::Tree;
 
-// Internal Tree methods supporting
-// helper methods in VersionedMap for
+// Internal Tree methods
+// supporting helper methods in VersionedMap for
 // implementing `KeyValueStoreManager` for `VersionedStore`.
 impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn iter_historical_changes<'a>(

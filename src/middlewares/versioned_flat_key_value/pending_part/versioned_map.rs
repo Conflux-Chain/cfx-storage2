@@ -29,6 +29,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 }
 
+// checkout
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
         let current_commit_id = self.current.read().as_ref().map(|c| c.get_commit_id());
@@ -59,6 +60,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 }
 
+// add_node
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn add_node(
         &mut self,
@@ -129,6 +131,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 }
 
+// change_root
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     #[allow(clippy::type_complexity)]
     // root..=new_root's parent: (commit_id, key_value_map)
