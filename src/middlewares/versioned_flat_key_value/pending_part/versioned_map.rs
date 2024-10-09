@@ -36,8 +36,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 // checkout
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
-        let current_commit_id = self.get_current_commit_id();
-        if let Some(current_commit_id) = current_commit_id {
+        if let Some(current_commit_id) = self.get_current_commit_id() {
             let (rollbacks, applys) = self
                 .tree
                 .collect_rollback_and_apply_ops(current_commit_id, target_commit_id)?;
@@ -74,7 +73,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         } else if let Some(parent_commit_id) = parent_commit_id {
             self.add_non_root_node(updates, commit_id, parent_commit_id)
         } else {
-            Err(PendingError::NonRootNodeHasNoParentError)
+            Err(PendingError::NonRootNodeShouldHaveParent)
         }
     }
 
@@ -135,16 +134,18 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 // change_root
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     #[allow(clippy::type_complexity)]
-    // root..=new_root's parent: (commit_id, key_value_map)
+    // old_root..=new_root's parent: (commit_id, key_value_map)
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
     ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
-        // to_commit: root..=new_root's parent
+        // to_commit: old_root..=new_root's parent
         let (start_height_to_commit, to_commit) = self.tree.change_root(commit_id)?;
 
         if let Some(parent_of_new_root) = to_commit.last() {
             self.parent_of_root = Some(parent_of_new_root.0);
+            // clear current is necessary
+            // because apply_commit_id in current.map may be removed from pending part
             *self.current.write() = None;
         }
 
@@ -198,8 +199,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
         self.tree.discard(commit_id)?;
-        let current_commit_id = self.get_current_commit_id();
-        if let Some(current_commit_id) = current_commit_id {
+        if let Some(current_commit_id) = self.get_current_commit_id() {
             if !self.tree.contains_commit_id(&current_commit_id) {
                 *self.current.write() = None;
             }
