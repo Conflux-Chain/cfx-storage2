@@ -13,11 +13,12 @@ use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 use pending_part::VersionedMap;
 
-use super::commit_id_schema::HistoryNumberSchema;
+use super::commit_id_schema::{HistoryNumberSchema, MIN_HISTORY_NUMBER_MINUS_ONE};
 use super::ChangeKey;
 use super::CommitIDSchema;
 use crate::backends::{TableReader, WriteSchemaTrait};
 use crate::errors::Result;
+use crate::middlewares::commit_id_schema::height_to_history_number;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
 use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
@@ -34,8 +35,6 @@ impl HistoryIndices {
         offset
     }
 }
-
-const MIN_HISTORY_NUMBER_MINUS_ONE: HistoryNumber = 0;
 
 pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
     pending_part: &'db mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
@@ -132,10 +131,11 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         for (delta_height, (confirmed_commit_id, updates)) in
             confirmed_ids_maps.into_iter().enumerate()
         {
-            let height = (start_height + delta_height) as u64;
-            let history_number = height + 1;
+            let height = start_height + delta_height;
+            let history_number = height_to_history_number(height);
 
             assert!(self.commit_id_table.get(&confirmed_commit_id)?.is_none());
+            assert!(self.history_number_table.get(&history_number)?.is_none());
 
             let commit_id_table_op = (
                 Cow::Owned(confirmed_commit_id),
