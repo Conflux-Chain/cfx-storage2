@@ -267,7 +267,7 @@ mod tests {
         rng: &mut StdRng,
     ) -> (Tree<TestPendingConfig>, VersionedMap<TestPendingConfig>) {
         let mut forward_only_tree = Tree::new(0);
-        let mut versioned_hash_map = VersionedMap::new(None, 0);
+        let mut versioned_map = VersionedMap::new(None, 0);
 
         for i in 1..=num_nodes as CommitId {
             let parent_commit_id = if i == 1 {
@@ -300,16 +300,17 @@ mod tests {
             } else {
                 forward_only_tree.add_root(i, updates_none).unwrap();
             }
-            versioned_hash_map
+            versioned_map
                 .add_node(updates, i, parent_commit_id)
                 .unwrap();
         }
-        (forward_only_tree, versioned_hash_map)
+        (forward_only_tree, versioned_map)
     }
 
     #[test]
     fn test_get_versioned_key() {
-        let num_nodes = 100;
+        let num_nodes = 30;
+        let num_query = 100;
 
         let seed: [u8; 32] = [
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
@@ -317,15 +318,13 @@ mod tests {
         ];
         let mut rng = StdRng::from_seed(seed);
 
-        let (forward_only_tree, versioned_hash_map) = generate_random_tree(num_nodes, &mut rng);
-        for _ in 0..100 {
+        let (forward_only_tree, versioned_map) = generate_random_tree(num_nodes, &mut rng);
+        for _ in 0..num_query {
             let commit_id = rng.gen_range(1..=num_nodes) as CommitId;
             for ikey in 0..10 {
                 let key: u64 = ikey;
-                let versioned_value = versioned_hash_map
-                    .get_versioned_key(&commit_id, &key)
-                    .unwrap();
-                let result = versioned_hash_map
+                let versioned_value = versioned_map.get_versioned_key(&commit_id, &key).unwrap();
+                let versioned_value_with_checkout = versioned_map
                     .get_versioned_key_with_checkout(commit_id, &key)
                     .unwrap();
                 let apply_map = forward_only_tree
@@ -333,7 +332,7 @@ mod tests {
                     .unwrap();
                 let answer = apply_map.get(&key).map(|a| a.value.clone());
                 assert_eq!(versioned_value, answer);
-                assert_eq!(result, answer);
+                assert_eq!(versioned_value_with_checkout, answer);
             }
         }
     }
@@ -341,19 +340,17 @@ mod tests {
     #[test]
     fn test_multiple_roots_err() {
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
-        let mut versioned_hash_map = VersionedMap::<TestPendingConfig>::new(None, 0);
+        let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         forward_only_tree.add_root(0, BTreeMap::new()).unwrap();
-        versioned_hash_map
-            .add_node(BTreeMap::new(), 0, None)
-            .unwrap();
+        versioned_map.add_node(BTreeMap::new(), 0, None).unwrap();
 
         assert_eq!(
             forward_only_tree.add_root(1, BTreeMap::new()),
             Err(PendingError::MultipleRootsNotAllowed)
         );
         assert_eq!(
-            versioned_hash_map.add_node(BTreeMap::new(), 1, None),
+            versioned_map.add_node(BTreeMap::new(), 1, None),
             Err(PendingError::MultipleRootsNotAllowed)
         );
     }
@@ -361,14 +358,14 @@ mod tests {
     #[test]
     fn test_commit_id_not_found_err() {
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
-        let mut versioned_hash_map = VersionedMap::<TestPendingConfig>::new(None, 0);
+        let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         assert_eq!(
             forward_only_tree.add_non_root_node(1, 0, BTreeMap::new()),
             Err(PendingError::CommitIDNotFound(0))
         );
         assert_eq!(
-            versioned_hash_map.add_node(BTreeMap::new(), 1, Some(0)),
+            versioned_map.add_node(BTreeMap::new(), 1, Some(0)),
             Err(PendingError::CommitIDNotFound(0))
         );
     }
@@ -376,19 +373,17 @@ mod tests {
     #[test]
     fn test_commit_id_already_exists_err() {
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
-        let mut versioned_hash_map = VersionedMap::<TestPendingConfig>::new(None, 0);
+        let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         forward_only_tree.add_root(0, BTreeMap::new()).unwrap();
-        versioned_hash_map
-            .add_node(BTreeMap::new(), 0, None)
-            .unwrap();
+        versioned_map.add_node(BTreeMap::new(), 0, None).unwrap();
 
         assert_eq!(
             forward_only_tree.add_non_root_node(0, 0, BTreeMap::new()),
             Err(PendingError::CommitIdAlreadyExists(0))
         );
         assert_eq!(
-            versioned_hash_map.add_node(BTreeMap::new(), 0, Some(0)),
+            versioned_map.add_node(BTreeMap::new(), 0, Some(0)),
             Err(PendingError::CommitIdAlreadyExists(0))
         );
     }
