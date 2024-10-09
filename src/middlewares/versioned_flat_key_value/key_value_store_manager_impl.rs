@@ -47,7 +47,22 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, Com
     fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
         let pending_res = self.pending_part.get_versioned_store(*commit);
         match pending_res {
-            Ok(pending_map) => Ok(OneStore::from_map(pending_map)),
+            Ok(pending_map) => {
+                let mut history_res =
+                    if let Some(history_commit) = self.pending_part.get_parent_of_root() {
+                        self.get_versioned_store_history_part(&history_commit)?
+                    } else {
+                        BTreeMap::new()
+                    };
+                for (k, v) in pending_map.into_iter() {
+                    if let Some(value) = v {
+                        history_res.insert(k, value);
+                    } else {
+                        history_res.remove(&k);
+                    }
+                }
+                Ok(OneStore::from_map(history_res))
+            }
             Err(PendingError::CommitIDNotFound(target_commit_id)) => {
                 assert_eq!(target_commit_id, *commit);
                 Ok(OneStore::from_map(
