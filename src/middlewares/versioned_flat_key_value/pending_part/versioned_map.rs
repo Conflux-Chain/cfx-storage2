@@ -47,18 +47,15 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             current.apply(applys);
             current.set_commit_id(target_commit_id);
         } else {
-            let mut current = CurrentMap::<S>::new(target_commit_id);
             let applys = self
                 .tree
                 .get_apply_map_from_root_included(target_commit_id)?;
+            let mut current = CurrentMap::<S>::new(target_commit_id);
             current.apply(applys);
             *self.current.write() = Some(current);
         }
 
-        assert_eq!(
-            self.current.read().as_ref().unwrap().get_commit_id(),
-            target_commit_id
-        );
+        assert_eq!(self.get_current_commit_id().unwrap(), target_commit_id);
 
         Ok(())
     }
