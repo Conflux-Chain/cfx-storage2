@@ -27,12 +27,16 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
         self.parent_of_root
     }
+
+    fn get_current_commit_id(&self) -> Option<S::CommitId> {
+        self.current.read().as_ref().map(|c| c.get_commit_id())
+    }
 }
 
 // checkout
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
-        let current_commit_id = self.current.read().as_ref().map(|c| c.get_commit_id());
+        let current_commit_id = self.get_current_commit_id();
         if let Some(current_commit_id) = current_commit_id {
             let (rollbacks, applys) = self
                 .tree
@@ -197,7 +201,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
         self.tree.discard(commit_id)?;
-        let current_commit_id = self.current.read().as_ref().map(|c| c.get_commit_id());
+        let current_commit_id = self.get_current_commit_id();
         if let Some(current_commit_id) = current_commit_id {
             if !self.tree.contains_commit_id(&current_commit_id) {
                 *self.current.write() = None;
