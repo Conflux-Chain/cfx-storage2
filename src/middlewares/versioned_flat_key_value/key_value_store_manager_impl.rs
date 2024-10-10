@@ -154,6 +154,9 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
                     .change_history_table
                     .get_versioned_key(&found_version_number, key)?;
                 let found_commit_id = self.history_number_table.get(&found_version_number)?;
+                if found_commit_id.is_none() {
+                    return Err(StorageError::VersionNotFound);
+                }
                 num_items += 1;
             }
         }
@@ -166,6 +169,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
                 let (k_with_history_number, indices) =
                     item.expect("previous for + take() should truncate before err");
                 let HistoryIndexKey(k, history_number) = k_with_history_number.as_ref();
+                assert_eq!(k, key);
                 let found_version_number = indices.as_ref().last(*history_number);
                 let found_value = self
                     .change_history_table
