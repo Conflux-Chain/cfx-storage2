@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 use super::serde::{Decode, Encode, EncodeSubKey};
 use super::table_name::TableName;
@@ -13,7 +14,7 @@ pub type TableItem<'a, T> = (
     Cow<'a, <T as TableSchema>::Value>,
 );
 pub type TableIter<'a, 'b, T> = Box<dyn 'a + Iterator<Item = DecResult<TableItem<'b, T>>>>;
-pub type TableReader<'a, T> = Box<dyn 'a + TableRead<T>>;
+pub type TableReader<'a, T> = Arc<dyn 'a + TableRead<T>>;
 
 #[auto_impl(&, Arc)]
 pub trait TableRead<T: TableSchema> {

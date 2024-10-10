@@ -30,10 +30,11 @@ where
     fn commit(
         &self,
         commit: C,
-        bulk: impl Iterator<Item = (K, V)>,
+        bulk: impl Iterator<Item = (K, Option<V>)>,
         write_schema: &impl WriteSchemaTrait,
     ) -> Result<()> {
-        let table_op = bulk.map(|(k, v)| (Cow::Owned(ChangeKey(commit, k)), Some(Cow::Owned(v))));
+        let table_op =
+            bulk.map(|(k, v)| (Cow::Owned(ChangeKey(commit, k)), v.map(|x| Cow::Owned(x))));
         write_schema.write_batch::<T>(table_op);
         Ok(())
     }

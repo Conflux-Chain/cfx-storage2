@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::middlewares::{CommitID, PendingError};
+
 #[derive(Error, Debug)]
 pub enum StorageError {
     #[error("unknown version")]
@@ -13,11 +15,14 @@ pub enum StorageError {
 
     #[error("decode error {0:?}")]
     DecodeError(#[from] DecodeError),
+
+    #[error("pending error {0:?}")]
+    PendingError(#[from] PendingError<CommitID>),
 }
 
 pub type Result<T> = ::std::result::Result<T, StorageError>;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Copy)]
 pub enum DecodeError {
     #[error("incorrect input length")]
     IncorrectLength,
