@@ -6,7 +6,6 @@ mod table_schema;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use parking_lot::RwLock;
 pub use pending_part::PendingError;
 
 use self::pending_part::pending_schema::PendingKeyValueConfig;
@@ -42,7 +41,7 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
     commit_id_table: TableReader<'db, CommitIDSchema>,
     history_number_table: TableReader<'db, HistoryNumberSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
-    history_min_key: RwLock<Option<T::Key>>,
+    history_min_key: Option<T::Key>,
 }
 
 // private helper methods
@@ -126,8 +125,6 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         let (start_height, confirmed_ids_maps) =
             self.pending_part.change_root(new_root_commit_id)?;
 
-        let mut confirmed_min_key = None;
-
         for (delta_height, (confirmed_commit_id, updates)) in
             confirmed_ids_maps.into_iter().enumerate()
         {
@@ -158,22 +155,13 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
 
             if let Some(this_min_k) = updates.keys().min().cloned() {
-                let update_min_k = need_update_min_key(confirmed_min_key.as_ref(), &this_min_k);
-                if update_min_k {
-                    confirmed_min_key = Some(this_min_k);
+                if need_update_min_key(self.history_min_key.as_ref(), &this_min_k) {
+                    self.history_min_key = Some(this_min_k);
                 }
             }
 
             self.change_history_table
                 .commit(history_number, updates.into_iter(), write_schema)?;
-        }
-
-        if let Some(confirmed_min_k) = confirmed_min_key {
-            let previous_min_key = self.history_min_key.read().clone();
-            let update_min_k = need_update_min_key(previous_min_key.as_ref(), &confirmed_min_k);
-            if update_min_k {
-                *self.history_min_key.write() = Some(confirmed_min_k);
-            }
         }
 
         Ok(())
