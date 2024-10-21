@@ -2,6 +2,8 @@ mod key_value_store_manager_impl;
 mod pending_part;
 mod serde;
 mod table_schema;
+#[cfg(test)]
+mod tests;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -113,6 +115,10 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         commit: CommitID,
         updates: BTreeMap<T::Key, Option<T::Value>>,
     ) -> Result<()> {
+        if self.commit_id_table.get(&commit)?.is_some() {
+            return Err(StorageError::CommitIdAlreadyExistsInHistory);
+        }
+
         Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
     }
 

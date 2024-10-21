@@ -9,6 +9,7 @@ use crate::{
 
 use super::{table_schema::VersionedKeyValueSchema, HistoryIndexKey, PendingError, VersionedStore};
 
+#[cfg_attr(test, derive(PartialEq, Debug))]
 pub struct OneStore<K: Ord, V: Clone, C> {
     map: BTreeMap<K, V>,
     _marker: PhantomData<C>,
@@ -20,6 +21,21 @@ impl<K: Ord, V: Clone, C> OneStore<K, V, C> {
             map,
             _marker: PhantomData,
         }
+    }
+}
+
+#[cfg(test)]
+impl<K: Ord + Clone, V: Clone, C> OneStore<K, V, C> {
+    pub fn from_mock_map(map: &BTreeMap<K, (Option<V>, bool)>) -> Self {
+        let inner_map = map
+            .iter()
+            .filter_map(|(k, (opt_v, _))| opt_v.as_ref().map(|v| (k.clone(), v.clone())))
+            .collect();
+        Self::from_map(inner_map)
+    }
+
+    pub fn get_keys(&self) -> Vec<K> {
+        self.map.keys().cloned().into_iter().collect()
     }
 }
 
