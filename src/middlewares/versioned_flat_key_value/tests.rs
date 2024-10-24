@@ -478,7 +478,7 @@ enum CommitIDType {
     Novel,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 enum ParentCommitType {
     Pending,
     ParentOfPendingRoot,
@@ -646,20 +646,27 @@ fn gen_key(rng: &mut ChaChaRng, existing_keys: Vec<u64>) -> (KeyType, u64) {
 fn gen_parent_commit(
     rng: &mut ChaChaRng,
     mock_versioned_store: &MockVersionedStore<TestSchema>,
+    pending_only: bool,
 ) -> (ParentCommitType, Option<CommitID>) {
-    let mut parent_types = vec![
-        ParentCommitType::ParentOfPendingRoot,
-        ParentCommitType::Novel,
-    ];
-    if mock_versioned_store.get_parent_of_root().is_some() {
-        parent_types.push(ParentCommitType::NoneButInvalid)
-    }
-    if !mock_versioned_store.pending.tree.is_empty() {
-        parent_types.push(ParentCommitType::Pending)
-    }
-    if mock_versioned_store.history.len() > 1 {
-        parent_types.push(ParentCommitType::HistoryButInvalid)
-    }
+    let parent_types = if pending_only {
+        assert!(!mock_versioned_store.pending.tree.is_empty());
+        vec![ParentCommitType::Pending]
+    } else {
+        let mut parent_types = vec![
+            ParentCommitType::ParentOfPendingRoot,
+            ParentCommitType::Novel,
+        ];
+        if mock_versioned_store.get_parent_of_root().is_some() {
+            parent_types.push(ParentCommitType::NoneButInvalid)
+        }
+        if !mock_versioned_store.pending.tree.is_empty() {
+            parent_types.push(ParentCommitType::Pending)
+        }
+        if mock_versioned_store.history.len() > 1 {
+            parent_types.push(ParentCommitType::HistoryButInvalid)
+        }
+        parent_types
+    };
     let parent_type = select_vec_element(rng, &parent_types);
     let selected_range = match parent_type {
         ParentCommitType::Pending => mock_versioned_store.get_pending(),
@@ -678,16 +685,79 @@ fn gen_parent_commit(
     (parent_type, Some(select_vec_element(rng, &selected_range)))
 }
 
-fn test_versioned_store(num_history: usize, num_operations: usize) {
+fn get_previous_keys(
+    parent_commit: Option<CommitID>,
+    mock_versioned_store: &MockVersionedStore<TestSchema>,
+) -> BTreeSet<u64> {
+    if let Some(parent_cid) = parent_commit {
+        mock_versioned_store
+            .get_keys_on_path(&parent_cid)
+            .into_iter()
+            .collect()
+    } else {
+        Default::default()
+    }
+}
+
+fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: usize) {
     let mut rng = get_rng_for_test();
     let num_gen_new_keys = 10;
     let num_gen_previous_keys = 10;
+
+    // init history part
     let mut mock_versioned_store = gen_init(
         num_history,
         &mut rng,
         num_gen_new_keys,
         num_gen_previous_keys,
     );
+
+    // init pending part
+    if num_pending > 0 {
+        // add root
+        let previous_cids = mock_versioned_store.get_history().into_iter().collect();
+        let pending_root = gen_novel_commit_id(&mut rng, &previous_cids);
+        let mut previous_keys = get_previous_keys(
+            mock_versioned_store.pending.parent_of_root,
+            &mock_versioned_store,
+        );
+        let updates = gen_updates(
+            &mut rng,
+            &mut previous_keys,
+            num_gen_new_keys,
+            num_gen_previous_keys,
+        );
+        mock_versioned_store
+            .add_to_pending_part(
+                mock_versioned_store.pending.parent_of_root,
+                pending_root,
+                updates,
+            )
+            .unwrap();
+
+        // add non_root nodes
+        for _ in 0..num_pending - 1 {
+            let previous_cids = mock_versioned_store.get_commit_ids().into_iter().collect();
+            let commit_id = gen_novel_commit_id(&mut rng, &previous_cids);
+            let (parent_commit_type, parent_commit) =
+                gen_parent_commit(&mut rng, &mock_versioned_store, true);
+            assert_eq!(parent_commit_type, ParentCommitType::Pending);
+            assert!(parent_commit.is_some());
+            let mut previous_keys = get_previous_keys(parent_commit, &mock_versioned_store);
+            let updates = gen_updates(
+                &mut rng,
+                &mut previous_keys,
+                num_gen_new_keys,
+                num_gen_previous_keys,
+            );
+            mock_versioned_store
+                .add_to_pending_part(parent_commit, commit_id, updates)
+                .unwrap();
+        }
+    }
+
+    mock_versioned_store.check_consistency();
+
     let operations = vec![
         Operation::GetVersionedStore,
         Operation::IterHisoricalChanges,
@@ -778,15 +848,8 @@ fn test_versioned_store(num_history: usize, num_operations: usize) {
             Operation::AddToPendingPart => {
                 let has_root_before_add = !mock_versioned_store.pending.tree.is_empty();
                 let (parent_commit_type, parent_commit) =
-                    gen_parent_commit(&mut rng, &mock_versioned_store);
-                let mut previous_keys = if let Some(parent_cid) = parent_commit {
-                    mock_versioned_store
-                        .get_keys_on_path(&parent_cid)
-                        .into_iter()
-                        .collect()
-                } else {
-                    Default::default()
-                };
+                    gen_parent_commit(&mut rng, &mock_versioned_store, false);
+                let mut previous_keys = get_previous_keys(parent_commit, &mock_versioned_store);
                 let updates = gen_updates(
                     &mut rng,
                     &mut previous_keys,
@@ -880,11 +943,6 @@ fn test_versioned_store(num_history: usize, num_operations: usize) {
 }
 
 #[test]
-fn test_no_init_history() {
-    test_versioned_store(0, 100);
-}
-
-#[test]
-fn test_init_history() {
-    test_versioned_store(5, 1000);
+fn tests_versioned_store() {
+    test_versioned_store(20, 100, 1000);
 }
