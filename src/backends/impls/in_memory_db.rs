@@ -33,7 +33,8 @@ impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
     fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
         let range = self.inner.0.range((self.col, key.encode().into_owned())..);
         let iter = range
-            .filter(|((col, _), _)| *col == self.col)
+            //.filter(|((col, _), _)| *col == self.col)
+            .take_while(move |((col, _), _)| *col == self.col)
             .map(|((_, k), v)| Ok((<T::Key>::decode(k)?, <T::Value>::decode(v)?)));
         Ok(Box::new(iter))
     }

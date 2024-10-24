@@ -25,17 +25,16 @@ where
     fn get_versioned_store(&self, commit: &C) -> Result<Self::Store>;
 
     /// Start from the given commit, and iter changes backforward
+    #[allow(clippy::type_complexity)]
     fn iter_historical_changes<'a>(
         &'a self,
         commit_id: &C,
-        key: &K,
-    ) -> Result<impl 'a + Iterator<Item = (&C, &K, &V)>>;
+        key: &'a K,
+    ) -> Result<Box<dyn 'a + Iterator<Item = (C, &K, Option<V>)>>>;
 
-    fn discard(self, commit: C) -> Result<()>;
+    fn discard(&mut self, commit: C) -> Result<()>;
 
-    fn get_versioned_key(&self, commit: &C, key: &K) -> Result<Option<V>> {
-        self.get_versioned_store(commit)?.get(key)
-    }
+    fn get_versioned_key(&self, commit: &C, key: &K) -> Result<Option<V>>;
 }
 
 pub trait KeyValueStoreBulksTrait<K, V, C> {
@@ -43,7 +42,7 @@ pub trait KeyValueStoreBulksTrait<K, V, C> {
     fn commit(
         &self,
         commit: C,
-        bulk: impl Iterator<Item = (K, V)>,
+        bulk: impl Iterator<Item = (K, Option<V>)>,
         write_schema: &impl WriteSchemaTrait,
     ) -> Result<()>;
 

@@ -11,3 +11,10 @@ kvdb = "0.13"
 parking_lot = "0.12"
 
 ethereum-types = "0.12"
+
+slab = "0.4.9"
+
+[dev-dependencies]
+rand = "0.8.0"
+rand_distr = "0.4.0"
+rand_chacha = "0.2.1"

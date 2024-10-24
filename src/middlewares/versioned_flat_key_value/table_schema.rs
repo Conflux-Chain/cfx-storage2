@@ -1,3 +1,5 @@
+use std::hash::Hash;
+
 use crate::backends::{TableKey, TableName, TableSchema, TableValue, VersionedKVName};
 
 use super::{HistoryChangeKey, HistoryIndexKey, HistoryIndices};
@@ -8,7 +10,7 @@ where
     HistoryIndexKey<Self::Key>: TableKey,
 {
     const NAME: VersionedKVName;
-    type Key: TableKey + ToOwned<Owned = Self::Key> + Clone;
+    type Key: TableKey + ToOwned<Owned = Self::Key> + Clone + Hash;
     type Value: TableValue + Clone;
 }
 

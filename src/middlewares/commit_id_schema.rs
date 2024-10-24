@@ -20,3 +20,24 @@ impl TableSchema for CommitIDSchema {
     type Key = CommitID;
     type Value = HistoryNumber;
 }
+
+#[derive(Clone, Copy)]
+pub struct HistoryNumberSchema;
+
+impl TableSchema for HistoryNumberSchema {
+    const NAME: TableName = TableName::HistoryNumber;
+    type Key = HistoryNumber;
+    type Value = CommitID;
+}
+
+pub const MIN_HISTORY_NUMBER_MINUS_ONE: HistoryNumber = 0;
+
+/// Converts a `height` to a `history_number`.
+pub fn height_to_history_number(height: usize) -> HistoryNumber {
+    height as u64 + 1
+}
+
+/// Converts a `history_number` back to a `height`.
+pub fn history_number_to_height(history_number: HistoryNumber) -> usize {
+    history_number as usize - 1
+}
