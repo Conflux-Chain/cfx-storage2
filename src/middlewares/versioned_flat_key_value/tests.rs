@@ -1,8 +1,10 @@
 use ethereum_types::H256;
 
-use super::{key_value_store_manager_impl::OneStore, table_schema::VersionedKeyValueSchema};
+use super::{
+    key_value_store_manager_impl::OneStore, table_schema::VersionedKeyValueSchema, VersionedStore,
+};
 use crate::{
-    backends::VersionedKVName,
+    backends::{VersionedKVName, WriteSchemaTrait},
     errors::Result,
     middlewares::{CommitID, PendingError},
     traits::{KeyValueStore, KeyValueStoreManager},
@@ -696,6 +698,103 @@ fn get_previous_keys(
             .collect()
     } else {
         Default::default()
+    }
+}
+
+struct VersionedStoreProxy<'a, T: VersionedKeyValueSchema> {
+    mock_store: &'a mut MockVersionedStore<T>,
+    real_store: &'a mut VersionedStore<'a, T>,
+}
+
+impl<'a, T: VersionedKeyValueSchema> VersionedStoreProxy<'a, T>
+where
+    T::Value: PartialEq,
+{
+    fn new(
+        mock_store: &'a mut MockVersionedStore<T>,
+        real_store: &'a mut VersionedStore<'a, T>,
+    ) -> Self {
+        Self {
+            mock_store,
+            real_store,
+        }
+    }
+
+    fn get_versioned_store(
+        &self,
+        commit: &CommitID,
+    ) -> Result<OneStore<T::Key, T::Value, CommitID>> {
+        let mock_res = self.mock_store.get_versioned_store(commit);
+        let real_res = self.real_store.get_versioned_store(commit);
+        assert_eq!(mock_res, real_res);
+        mock_res
+    }
+
+    fn iter_historical_changes<'b>(
+        &'b self,
+        commit_id: &CommitID,
+        key: &'b T::Key,
+    ) -> Result<Vec<(CommitID, &T::Key, Option<T::Value>)>> {
+        let mock_res = self.mock_store.iter_historical_changes(commit_id, key);
+        let real_res = self.real_store.iter_historical_changes(commit_id, key);
+        match (mock_res, real_res) {
+            (Err(mock_err), Err(real_err)) => {
+                assert_eq!(mock_err, real_err);
+                Err(mock_err)
+            }
+            (Ok(mock_ok), Ok(real_ok)) => {
+                let mock_ok = mock_ok.collect();
+                let real_ok: Vec<_> = real_ok.collect();
+                assert_eq!(mock_ok, real_ok);
+                Ok(mock_ok)
+            }
+            _ => panic!(),
+        }
+    }
+
+    fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
+        let mock_res = self.mock_store.get_versioned_key(commit, key);
+        let real_res = self.real_store.get_versioned_key(commit, key);
+        assert_eq!(mock_res, real_res);
+        mock_res
+    }
+
+    fn discard(&mut self, commit: CommitID) -> Result<()> {
+        let mock_res = self.mock_store.discard(commit);
+        let real_res = self.real_store.discard(commit);
+        assert_eq!(mock_res, real_res);
+        mock_res
+    }
+
+    fn add_to_pending_part(
+        &mut self,
+        parent_commit: Option<CommitID>,
+        commit: CommitID,
+        updates: BTreeMap<T::Key, Option<T::Value>>,
+    ) -> Result<()> {
+        let mock_res = self
+            .mock_store
+            .add_to_pending_part(parent_commit, commit, updates.clone());
+        let real_res = self
+            .real_store
+            .add_to_pending_part(parent_commit, commit, updates);
+        assert_eq!(mock_res, real_res);
+        mock_res
+    }
+
+    pub fn confirmed_pending_to_history(
+        &mut self,
+        new_root_commit_id: CommitID,
+        write_schema: &impl WriteSchemaTrait,
+    ) -> Result<()> {
+        let mock_res = self
+            .mock_store
+            .confirmed_pending_to_history(new_root_commit_id);
+        let real_res = self
+            .real_store
+            .confirmed_pending_to_history(new_root_commit_id, write_schema);
+        assert_eq!(mock_res, real_res);
+        mock_res
     }
 }
 
