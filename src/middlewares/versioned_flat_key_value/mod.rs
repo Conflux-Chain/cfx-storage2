@@ -20,7 +20,7 @@ use super::ChangeKey;
 use super::CommitIDSchema;
 use crate::backends::{DatabaseTrait, InMemoryDatabase, TableRead, TableReader, WriteSchemaTrait};
 use crate::errors::Result;
-use crate::middlewares::commit_id_schema::height_to_history_number;
+use crate::middlewares::commit_id_schema::{height_to_history_number, history_number_to_height};
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
 use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
@@ -155,15 +155,78 @@ fn need_update_min_key<K: Ord>(original_min: Option<&K>, challenge_min: &K) -> b
 // callable methods
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     pub fn check_consistency(&self) -> Result<()> {
-        todo!()
+        if self.check_consistency_inner().is_err() {
+            Err(StorageError::ConsistencyCheckFailure)
+        } else {
+            Ok(())
+        }
+    }
+    fn check_consistency_inner(&self) -> Result<()> {
+        if let Some(parent) = self.pending_part.get_parent_of_root() {
+            let parent_history_number =
+                if let Some(parent_history_number) = self.commit_id_table.get(&parent)? {
+                    parent_history_number.into_owned()
+                } else {
+                    return Err(StorageError::ConsistencyCheckFailure);
+                };
+
+            let mut last_history_number = parent_history_number;
+            for history_number_cid in self.history_number_table.iter(&parent_history_number)? {
+                let (history_number, commit_id) = history_number_cid?;
+                let history_number = history_number.into_owned();
+                let commit_id = commit_id.into_owned();
+
+                if history_number + 1 != last_history_number {
+                    return Err(StorageError::ConsistencyCheckFailure);
+                }
+
+                let check_history_number =
+                    if let Some(check_history_number) = self.commit_id_table.get(&commit_id)? {
+                        check_history_number.into_owned()
+                    } else {
+                        return Err(StorageError::ConsistencyCheckFailure);
+                    };
+                if history_number != check_history_number {
+                    return Err(StorageError::ConsistencyCheckFailure);
+                };
+
+                last_history_number = history_number;
+            }
+
+            if last_history_number != 1 {
+                return Err(StorageError::ConsistencyCheckFailure);
+            };
+
+            if self.commit_id_table.len() != self.history_number_table.len() {
+                return Err(StorageError::ConsistencyCheckFailure);
+            }
+
+            if !self
+                .pending_part
+                .check_consistency(history_number_to_height(parent_history_number + 1))
+            {
+                return Err(StorageError::ConsistencyCheckFailure);
+            }
+
+            // todo: history_index_table, change_table, min_key
+        } else if !self.commit_id_table.is_empty()
+            || !self.history_number_table.is_empty()
+            || !self.history_index_table.is_empty()
+            || !self.change_history_table.is_empty()
+            || self.history_min_key.is_some()
+        {
+            return Err(StorageError::ConsistencyCheckFailure);
+        }
+
+        Ok(())
     }
 
     pub fn new<D: DatabaseTrait>(
         db: &'db D,
         pending_part: &'db mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
         to_confirm_start_height: usize,
-        to_confirm_cids: &[CommitID],
-        to_confirm_updates: &[BTreeMap<T::Key, Option<T::Value>>],
+        to_confirm_cids: Vec<CommitID>,
+        to_confirm_updates: Vec<BTreeMap<T::Key, Option<T::Value>>>,
     ) -> Result<Self> {
         let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
         let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
@@ -188,15 +251,15 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         assert_eq!(to_confirm_cids.len(), to_confirm_updates.len());
         let write_schema = InMemoryDatabase::write_schema();
         for (delta_height, (confirmed_commit_id, updates)) in to_confirm_cids
-            .iter()
-            .zip(to_confirm_updates.iter())
+            .into_iter()
+            .zip(to_confirm_updates.into_iter())
             .enumerate()
         {
             let height = to_confirm_start_height + delta_height;
             versioned_store.confirm_one_to_history(
                 height,
-                *confirmed_commit_id,
-                updates.clone(),
+                confirmed_commit_id,
+                updates,
                 &write_schema,
             )?;
         }

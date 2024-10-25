@@ -34,6 +34,10 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
     fn min_key(&self) -> Result<Option<Cow<T::Key>>> {
         todo!()
     }
+
+    fn len(&self) -> usize {
+        todo!()
+    }
 }
 
 impl DatabaseTrait for kvdb_rocksdb::Database {

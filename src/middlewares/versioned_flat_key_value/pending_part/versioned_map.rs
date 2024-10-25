@@ -24,6 +24,15 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
     }
 
+    pub fn check_consistency(&self, height_of_root: usize) -> bool {
+        if self.tree.check_consistency(height_of_root) {
+            // todo: check current
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
         self.parent_of_root
     }

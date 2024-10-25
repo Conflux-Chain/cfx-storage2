@@ -5,7 +5,7 @@ use super::{
     table_schema::VersionedKeyValueSchema, VersionedStore,
 };
 use crate::{
-    backends::{InMemoryDatabase, VersionedKVName, WriteSchemaTrait},
+    backends::{DatabaseTrait, InMemoryDatabase, VersionedKVName, WriteSchemaTrait},
     errors::Result,
     middlewares::{versioned_flat_key_value::pending_part::VersionedMap, CommitID, PendingError},
     traits::{KeyValueStore, KeyValueStoreManager},
@@ -155,6 +155,7 @@ fn update_last_store_to_store<T: VersionedKeyValueSchema>(
     store
 }
 
+#[derive(Clone)]
 pub struct UniqueVec<T> {
     items: Vec<T>,
     set: HashSet<T>,
@@ -187,6 +188,10 @@ impl<T: Eq + std::hash::Hash + Clone> UniqueVec<T> {
 
     pub fn len(&self) -> usize {
         self.items.len()
+    }
+
+    pub fn to_vec(self) -> Vec<T> {
+        self.items
     }
 }
 
@@ -594,16 +599,6 @@ fn gen_init(
     (history_cids, history_updates, empty_db, pending_part)
 }
 
-fn gen_novel_commit_id(rng: &mut ChaChaRng, previous: &BTreeSet<CommitID>) -> CommitID {
-    for _ in 0..1 << 4 {
-        let novel = H256::random();
-        if !previous.contains(&novel) {
-            return novel;
-        }
-    }
-    panic!()
-}
-
 fn gen_novel_u64(rng: &mut ChaChaRng, previous: &BTreeSet<u64>) -> u64 {
     for _ in 0..1 << 4 {
         let novel = rng.next_u64();
@@ -612,33 +607,6 @@ fn gen_novel_u64(rng: &mut ChaChaRng, previous: &BTreeSet<u64>) -> u64 {
         }
     }
     panic!()
-}
-
-fn gen_commit_id(
-    rng: &mut ChaChaRng,
-    mock_versioned_store: &MockVersionedStore<TestSchema>,
-) -> (CommitIDType, CommitID) {
-    let mut commit_id_types = vec![CommitIDType::Novel];
-    if !mock_versioned_store.history.is_empty() {
-        commit_id_types.push(CommitIDType::History);
-    }
-    if !mock_versioned_store.pending.tree.is_empty() {
-        commit_id_types.push(CommitIDType::PendingRoot);
-        if mock_versioned_store.pending.tree.len() > 1 {
-            commit_id_types.push(CommitIDType::PendingNonRoot);
-        }
-    }
-    let commit_id_type = select_vec_element(rng, &commit_id_types);
-    let selected_range = match commit_id_type {
-        CommitIDType::History => mock_versioned_store.get_history(),
-        CommitIDType::PendingRoot => mock_versioned_store.get_pending_root(),
-        CommitIDType::PendingNonRoot => mock_versioned_store.get_pending_non_root(),
-        CommitIDType::Novel => {
-            let previous = mock_versioned_store.get_commit_ids();
-            return (commit_id_type, gen_novel_commit_id(rng, &previous));
-        }
-    };
-    (commit_id_type, select_vec_element(rng, &selected_range))
 }
 
 fn gen_key(rng: &mut ChaChaRng, existing_keys: Vec<u64>) -> (KeyType, u64) {
@@ -657,74 +625,19 @@ fn gen_key(rng: &mut ChaChaRng, existing_keys: Vec<u64>) -> (KeyType, u64) {
     }
 }
 
-fn gen_parent_commit(
-    rng: &mut ChaChaRng,
-    mock_versioned_store: &MockVersionedStore<TestSchema>,
-    pending_only: bool,
-) -> (ParentCommitType, Option<CommitID>) {
-    let parent_types = if pending_only {
-        assert!(!mock_versioned_store.pending.tree.is_empty());
-        vec![ParentCommitType::Pending]
-    } else {
-        let mut parent_types = vec![
-            ParentCommitType::ParentOfPendingRoot,
-            ParentCommitType::Novel,
-        ];
-        if mock_versioned_store.get_parent_of_root().is_some() {
-            parent_types.push(ParentCommitType::NoneButInvalid)
-        }
-        if !mock_versioned_store.pending.tree.is_empty() {
-            parent_types.push(ParentCommitType::Pending)
-        }
-        if mock_versioned_store.history.len() > 1 {
-            parent_types.push(ParentCommitType::HistoryButInvalid)
-        }
-        parent_types
-    };
-    let parent_type = select_vec_element(rng, &parent_types);
-    let selected_range = match parent_type {
-        ParentCommitType::Pending => mock_versioned_store.get_pending(),
-        ParentCommitType::ParentOfPendingRoot => {
-            return (parent_type, mock_versioned_store.get_parent_of_root())
-        }
-        ParentCommitType::NoneButInvalid => return (parent_type, None),
-        ParentCommitType::HistoryButInvalid => {
-            mock_versioned_store.get_history_but_parent_of_root()
-        }
-        ParentCommitType::Novel => {
-            let previous = mock_versioned_store.get_commit_ids();
-            return (parent_type, Some(gen_novel_commit_id(rng, &previous)));
-        }
-    };
-    (parent_type, Some(select_vec_element(rng, &selected_range)))
-}
-
-fn get_previous_keys(
-    parent_commit: Option<CommitID>,
-    mock_versioned_store: &MockVersionedStore<TestSchema>,
-) -> BTreeSet<u64> {
-    if let Some(parent_cid) = parent_commit {
-        mock_versioned_store
-            .get_keys_on_path(&parent_cid)
-            .into_iter()
-            .collect()
-    } else {
-        Default::default()
-    }
-}
-
-struct VersionedStoreProxy<'a, T: VersionedKeyValueSchema> {
+struct VersionedStoreProxy<'a, 'b, 'db, T: VersionedKeyValueSchema> {
     mock_store: &'a mut MockVersionedStore<T>,
-    real_store: &'a mut VersionedStore<'a, T>,
+    real_store: &'b mut VersionedStore<'db, T>,
 }
 
-impl<'a, T: VersionedKeyValueSchema> VersionedStoreProxy<'a, T>
+impl<'a, 'b, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
+    VersionedStoreProxy<'a, 'b, 'db, T>
 where
     T::Value: PartialEq,
 {
     fn new(
         mock_store: &'a mut MockVersionedStore<T>,
-        real_store: &'a mut VersionedStore<'a, T>,
+        real_store: &'b mut VersionedStore<'db, T>,
     ) -> Self {
         Self {
             mock_store,
@@ -732,81 +645,357 @@ where
         }
     }
 
-    fn get_versioned_store(
-        &self,
-        commit: &CommitID,
-    ) -> Result<OneStore<T::Key, T::Value, CommitID>> {
-        let mock_res = self.mock_store.get_versioned_store(commit);
-        let real_res = self.real_store.get_versioned_store(commit);
-        assert_eq!(mock_res, real_res);
-        mock_res
+    fn gen_novel_commit_id(&self, rng: &mut ChaChaRng) -> CommitID {
+        let previous = self.mock_store.get_commit_ids();
+        for _ in 0..1 << 4 {
+            let novel = H256::random();
+            if !previous.contains(&novel) {
+                return novel;
+            }
+        }
+        panic!()
     }
 
-    fn iter_historical_changes<'b>(
-        &'b self,
-        commit_id: &CommitID,
-        key: &'b T::Key,
-    ) -> Result<Vec<(CommitID, &T::Key, Option<T::Value>)>> {
-        let mock_res = self.mock_store.iter_historical_changes(commit_id, key);
-        let real_res = self.real_store.iter_historical_changes(commit_id, key);
-        match (mock_res, real_res) {
-            (Err(mock_err), Err(real_err)) => {
-                assert_eq!(mock_err, real_err);
-                Err(mock_err)
+    fn gen_commit_id(&self, rng: &mut ChaChaRng) -> (CommitIDType, CommitID) {
+        let mut commit_id_types = vec![CommitIDType::Novel];
+        if !self.mock_store.history.is_empty() {
+            commit_id_types.push(CommitIDType::History);
+        }
+        if !self.mock_store.pending.tree.is_empty() {
+            commit_id_types.push(CommitIDType::PendingRoot);
+            if self.mock_store.pending.tree.len() > 1 {
+                commit_id_types.push(CommitIDType::PendingNonRoot);
             }
-            (Ok(mock_ok), Ok(real_ok)) => {
-                let mock_ok = mock_ok.collect();
-                let real_ok: Vec<_> = real_ok.collect();
-                assert_eq!(mock_ok, real_ok);
-                Ok(mock_ok)
+        }
+        let commit_id_type = select_vec_element(rng, &commit_id_types);
+        let selected_range = match commit_id_type {
+            CommitIDType::History => self.mock_store.get_history(),
+            CommitIDType::PendingRoot => self.mock_store.get_pending_root(),
+            CommitIDType::PendingNonRoot => self.mock_store.get_pending_non_root(),
+            CommitIDType::Novel => {
+                return (commit_id_type, self.gen_novel_commit_id(rng));
             }
-            _ => panic!(),
+        };
+        (commit_id_type, select_vec_element(rng, &selected_range))
+    }
+
+    fn gen_parent_commit(
+        &self,
+        rng: &mut ChaChaRng,
+        pending_only: bool,
+    ) -> (ParentCommitType, Option<CommitID>) {
+        let parent_types = if pending_only {
+            assert!(!self.mock_store.pending.tree.is_empty());
+            vec![ParentCommitType::Pending]
+        } else {
+            let mut parent_types = vec![
+                ParentCommitType::ParentOfPendingRoot,
+                ParentCommitType::Novel,
+            ];
+            if self.mock_store.get_parent_of_root().is_some() {
+                parent_types.push(ParentCommitType::NoneButInvalid)
+            }
+            if !self.mock_store.pending.tree.is_empty() {
+                parent_types.push(ParentCommitType::Pending)
+            }
+            if self.mock_store.history.len() > 1 {
+                parent_types.push(ParentCommitType::HistoryButInvalid)
+            }
+            parent_types
+        };
+        let parent_type = select_vec_element(rng, &parent_types);
+        let selected_range = match parent_type {
+            ParentCommitType::Pending => self.mock_store.get_pending(),
+            ParentCommitType::ParentOfPendingRoot => {
+                return (parent_type, self.mock_store.get_parent_of_root())
+            }
+            ParentCommitType::NoneButInvalid => return (parent_type, None),
+            ParentCommitType::HistoryButInvalid => self.mock_store.get_history_but_parent_of_root(),
+            ParentCommitType::Novel => {
+                return (parent_type, Some(self.gen_novel_commit_id(rng)));
+            }
+        };
+        (parent_type, Some(select_vec_element(rng, &selected_range)))
+    }
+
+    fn get_previous_keys(&self, parent_commit: Option<CommitID>) -> BTreeSet<u64> {
+        if let Some(parent_cid) = parent_commit {
+            self.mock_store
+                .get_keys_on_path(&parent_cid)
+                .into_iter()
+                .collect()
+        } else {
+            Default::default()
         }
     }
 
-    fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        let mock_res = self.mock_store.get_versioned_key(commit, key);
-        let real_res = self.real_store.get_versioned_key(commit, key);
+    fn init_pending_part(
+        &mut self,
+        num_pending: usize,
+        rng: &mut ChaChaRng,
+        num_gen_new_keys: usize,
+        num_gen_previous_keys: usize,
+    ) {
+        if num_pending > 0 {
+            // gen root
+            let pending_root = self.gen_novel_commit_id(rng);
+            let mut previous_keys = self.get_previous_keys(self.mock_store.pending.parent_of_root);
+            let updates = gen_updates(
+                rng,
+                &mut previous_keys,
+                num_gen_new_keys,
+                num_gen_previous_keys,
+            );
+
+            // add root
+            let parent_of_root = self.mock_store.pending.parent_of_root;
+            self.mock_store
+                .add_to_pending_part(parent_of_root, pending_root, updates.clone())
+                .unwrap();
+            self.real_store
+                .add_to_pending_part(parent_of_root, pending_root, updates)
+                .unwrap();
+
+            // add non_root nodes
+            for _ in 0..num_pending - 1 {
+                let commit_id = self.gen_novel_commit_id(rng);
+                let (parent_commit_type, parent_commit) = self.gen_parent_commit(rng, true);
+                assert_eq!(parent_commit_type, ParentCommitType::Pending);
+                assert!(parent_commit.is_some());
+                let mut previous_keys = self.get_previous_keys(parent_commit);
+                let updates = gen_updates(
+                    rng,
+                    &mut previous_keys,
+                    num_gen_new_keys,
+                    num_gen_previous_keys,
+                );
+
+                self.mock_store
+                    .add_to_pending_part(parent_commit, commit_id, updates.clone())
+                    .unwrap();
+                self.real_store
+                    .add_to_pending_part(parent_commit, commit_id, updates)
+                    .unwrap();
+            }
+        }
+
+        self.mock_store.check_consistency();
+        self.real_store.check_consistency().unwrap();
+    }
+}
+
+impl<'a, 'b, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
+    VersionedStoreProxy<'a, 'b, 'db, T>
+{
+    fn get_versioned_store(&self, commit_id_type: CommitIDType, commit: &CommitID) -> bool {
+        let mock_res = self.mock_store.get_versioned_store(commit);
+        let real_res = self.real_store.get_versioned_store(commit);
+
         assert_eq!(mock_res, real_res);
-        mock_res
+
+        match commit_id_type {
+            CommitIDType::Novel => {
+                assert_eq!(mock_res, Err(StorageError::CommitIDNotFound))
+            }
+            _ => assert!(mock_res.is_ok()),
+        };
+
+        real_res.is_ok()
     }
 
-    fn discard(&mut self, commit: CommitID) -> Result<()> {
+    fn iter_historical_changes(
+        &self,
+        rng: &mut ChaChaRng,
+        commit_id_type: CommitIDType,
+        commit_id: &CommitID,
+    ) -> bool {
+        let keys_on_path = self.mock_store.get_keys_on_path(&commit_id);
+        let (key_type, key) = gen_key(rng, keys_on_path);
+
+        let mock_res = self.mock_store.iter_historical_changes(commit_id, &key);
+        let real_res = self.real_store.iter_historical_changes(commit_id, &key);
+
+        let res_is_ok = match (mock_res, real_res) {
+            (Err(mock_err), Err(real_err)) => {
+                assert_eq!(mock_err, real_err);
+
+                assert_eq!(commit_id_type, CommitIDType::Novel);
+                assert_eq!(mock_err, StorageError::CommitIDNotFound);
+
+                false
+            }
+            (Ok(mock_ok), Ok(real_ok)) => {
+                let mock_ok: Vec<_> = mock_ok.collect();
+                let real_ok: Vec<_> = real_ok.collect();
+                assert_eq!(mock_ok, real_ok);
+
+                assert_ne!(commit_id_type, CommitIDType::Novel);
+                match key_type {
+                    KeyType::Exist => assert!(mock_ok.len() > 0),
+                    KeyType::Novel => assert!(mock_ok.len() == 0),
+                }
+
+                true
+            }
+            _ => panic!(),
+        };
+
+        res_is_ok
+    }
+
+    fn get_versioned_key(
+        &self,
+        rng: &mut ChaChaRng,
+        commit_id_type: CommitIDType,
+        commit: &CommitID,
+    ) -> bool {
+        let mock_one_store = self.mock_store.get_versioned_store(commit);
+        let mock_keys = if let Ok(ref mock_store) = mock_one_store {
+            mock_store.get_keys()
+        } else {
+            Default::default()
+        };
+        let (key_type, key) = gen_key(rng, mock_keys);
+
+        let mock_res = self.mock_store.get_versioned_key(commit, &key);
+        let real_res = self.real_store.get_versioned_key(commit, &key);
+
+        assert_eq!(mock_res, real_res);
+
+        match (commit_id_type, key_type) {
+            (CommitIDType::Novel, _) => {
+                assert_eq!(mock_res, Err(StorageError::CommitIDNotFound))
+            }
+            (_, KeyType::Exist) => assert_eq!(
+                mock_res.unwrap().unwrap(),
+                mock_one_store.unwrap().get(&key).unwrap().unwrap()
+            ),
+            (_, KeyType::Novel) => {
+                assert!(mock_res.unwrap().is_none());
+                assert!(mock_one_store.unwrap().get(&key).unwrap().is_none());
+            }
+        };
+
+        real_res.is_ok()
+    }
+
+    fn discard(&mut self, commit_id_type: CommitIDType, commit: CommitID) -> bool {
         let mock_res = self.mock_store.discard(commit);
         let real_res = self.real_store.discard(commit);
+
         assert_eq!(mock_res, real_res);
-        mock_res
+
+        match commit_id_type {
+            CommitIDType::PendingNonRoot => assert!(mock_res.is_ok()),
+            CommitIDType::PendingRoot => assert_eq!(
+                mock_res,
+                Err(StorageError::PendingError(
+                    PendingError::RootShouldNotBeDiscarded
+                ))
+            ),
+            _ => assert_eq!(
+                mock_res,
+                Err(StorageError::PendingError(PendingError::CommitIDNotFound(
+                    commit
+                )))
+            ),
+        };
+
+        real_res.is_ok()
     }
 
     fn add_to_pending_part(
         &mut self,
-        parent_commit: Option<CommitID>,
+        rng: &mut ChaChaRng,
+        commit_id_type: CommitIDType,
         commit: CommitID,
-        updates: BTreeMap<T::Key, Option<T::Value>>,
-    ) -> Result<()> {
+        num_gen_new_keys: usize,
+        num_gen_previous_keys: usize,
+    ) -> bool {
+        let has_root_before_add = !self.mock_store.pending.tree.is_empty();
+        let (parent_commit_type, parent_commit) = self.gen_parent_commit(rng, false);
+        let mut previous_keys = self.get_previous_keys(parent_commit);
+        let updates = gen_updates(
+            rng,
+            &mut previous_keys,
+            num_gen_new_keys,
+            num_gen_previous_keys,
+        );
+
         let mock_res = self
             .mock_store
             .add_to_pending_part(parent_commit, commit, updates.clone());
         let real_res = self
             .real_store
             .add_to_pending_part(parent_commit, commit, updates);
+
         assert_eq!(mock_res, real_res);
-        mock_res
+
+        match (parent_commit_type, commit_id_type.clone()) {
+            (_, CommitIDType::History) => assert_eq!(
+                mock_res.unwrap_err(),
+                StorageError::CommitIdAlreadyExistsInHistory
+            ),
+            (ParentCommitType::NoneButInvalid, _) => assert_eq!(
+                mock_res.unwrap_err(),
+                StorageError::PendingError(PendingError::NonRootNodeShouldHaveParent)
+            ),
+            (ParentCommitType::ParentOfPendingRoot, _) => {
+                if has_root_before_add {
+                    assert_eq!(
+                        mock_res.unwrap_err(),
+                        StorageError::PendingError(PendingError::MultipleRootsNotAllowed)
+                    );
+                } else {
+                    assert_eq!(commit_id_type, CommitIDType::Novel);
+                    assert!(mock_res.is_ok());
+                }
+            }
+            (ParentCommitType::HistoryButInvalid, _) | (ParentCommitType::Novel, _) => {
+                assert_eq!(
+                    mock_res.unwrap_err(),
+                    StorageError::PendingError(PendingError::CommitIDNotFound(
+                        parent_commit.unwrap()
+                    ))
+                )
+            }
+            (ParentCommitType::Pending, CommitIDType::PendingRoot)
+            | (ParentCommitType::Pending, CommitIDType::PendingNonRoot) => assert_eq!(
+                mock_res.unwrap_err(),
+                StorageError::PendingError(PendingError::CommitIdAlreadyExists(commit))
+            ),
+            (ParentCommitType::Pending, CommitIDType::Novel) => assert!(mock_res.is_ok()),
+        };
+
+        real_res.is_ok()
     }
 
     pub fn confirmed_pending_to_history(
         &mut self,
+        commit_id_type: CommitIDType,
         new_root_commit_id: CommitID,
         write_schema: &impl WriteSchemaTrait,
-    ) -> Result<()> {
+    ) -> bool {
         let mock_res = self
             .mock_store
             .confirmed_pending_to_history(new_root_commit_id);
         let real_res = self
             .real_store
             .confirmed_pending_to_history(new_root_commit_id, write_schema);
+
         assert_eq!(mock_res, real_res);
-        mock_res
+
+        match commit_id_type {
+            CommitIDType::PendingRoot | CommitIDType::PendingNonRoot => {
+                assert!(mock_res.is_ok());
+            }
+            _ => assert_eq!(
+                mock_res.unwrap_err(),
+                StorageError::PendingError(PendingError::CommitIDNotFound(new_root_commit_id))
+            ),
+        };
+
+        real_res.is_ok()
     }
 }
 
@@ -822,61 +1011,19 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
         num_gen_new_keys,
         num_gen_previous_keys,
     );
-    let real_versioned_store = VersionedStore::new(
+
+    let mut mock_versioned_store =
+        MockVersionedStore::build(history_cids.clone(), history_updates.clone());
+    let mut real_versioned_store = VersionedStore::new(
         &empty_db,
         &mut pending_part,
         0,
-        history_cids.items(),
-        &history_updates,
+        history_cids.to_vec(),
+        history_updates,
     )
     .unwrap();
-    let mut mock_versioned_store = MockVersionedStore::build(history_cids, history_updates);
-
-    // init pending part
-    if num_pending > 0 {
-        // add root
-        let previous_cids = mock_versioned_store.get_history().into_iter().collect();
-        let pending_root = gen_novel_commit_id(&mut rng, &previous_cids);
-        let mut previous_keys = get_previous_keys(
-            mock_versioned_store.pending.parent_of_root,
-            &mock_versioned_store,
-        );
-        let updates = gen_updates(
-            &mut rng,
-            &mut previous_keys,
-            num_gen_new_keys,
-            num_gen_previous_keys,
-        );
-        mock_versioned_store
-            .add_to_pending_part(
-                mock_versioned_store.pending.parent_of_root,
-                pending_root,
-                updates,
-            )
-            .unwrap();
-
-        // add non_root nodes
-        for _ in 0..num_pending - 1 {
-            let previous_cids = mock_versioned_store.get_commit_ids().into_iter().collect();
-            let commit_id = gen_novel_commit_id(&mut rng, &previous_cids);
-            let (parent_commit_type, parent_commit) =
-                gen_parent_commit(&mut rng, &mock_versioned_store, true);
-            assert_eq!(parent_commit_type, ParentCommitType::Pending);
-            assert!(parent_commit.is_some());
-            let mut previous_keys = get_previous_keys(parent_commit, &mock_versioned_store);
-            let updates = gen_updates(
-                &mut rng,
-                &mut previous_keys,
-                num_gen_new_keys,
-                num_gen_previous_keys,
-            );
-            mock_versioned_store
-                .add_to_pending_part(parent_commit, commit_id, updates)
-                .unwrap();
-        }
-    }
-
-    mock_versioned_store.check_consistency();
+    let mut versioned_store_proxy =
+        VersionedStoreProxy::new(&mut mock_versioned_store, &mut real_versioned_store);
 
     let operations = vec![
         Operation::GetVersionedStore,
@@ -890,145 +1037,33 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
     let mut operations_analyses = HashMap::new();
     for _ in 0..num_operations {
         let operation = select_vec_element(&mut rng, &operations);
-        let (commit_id_type, commit_id) = gen_commit_id(&mut rng, &mock_versioned_store);
+        let (commit_id_type, commit_id) = versioned_store_proxy.gen_commit_id(&mut rng);
 
         let this_operation_is_ok = match operation {
             Operation::GetVersionedStore => {
-                let mock_res = mock_versioned_store.get_versioned_store(&commit_id);
-                match commit_id_type {
-                    CommitIDType::Novel => {
-                        assert_eq!(mock_res, Err(StorageError::CommitIDNotFound))
-                    }
-                    _ => assert!(mock_res.is_ok()),
-                };
-                mock_res.is_ok()
+                versioned_store_proxy.get_versioned_store(commit_id_type, &commit_id)
             }
             Operation::GetVersionedKey => {
-                let mock_store = mock_versioned_store.get_versioned_store(&commit_id);
-                let mock_keys = if let Ok(ref mock_store) = mock_store {
-                    mock_store.get_keys()
-                } else {
-                    Default::default()
-                };
-                let (key_type, key) = gen_key(&mut rng, mock_keys);
-                let mock_res = mock_versioned_store.get_versioned_key(&commit_id, &key);
-                let mock_res_is_ok = mock_res.is_ok();
-                match (commit_id_type, key_type) {
-                    (CommitIDType::Novel, _) => {
-                        assert_eq!(mock_res, Err(StorageError::CommitIDNotFound))
-                    }
-                    (_, KeyType::Exist) => assert_eq!(
-                        mock_res.unwrap().unwrap(),
-                        mock_store.unwrap().get(&key).unwrap().unwrap()
-                    ),
-                    (_, KeyType::Novel) => {
-                        assert!(mock_res.unwrap().is_none());
-                        assert!(mock_store.unwrap().get(&key).unwrap().is_none());
-                    }
-                };
-                mock_res_is_ok
+                versioned_store_proxy.get_versioned_key(&mut rng, commit_id_type, &commit_id)
             }
             Operation::IterHisoricalChanges => {
-                let keys_on_path = mock_versioned_store.get_keys_on_path(&commit_id);
-                let (key_type, key) = gen_key(&mut rng, keys_on_path);
-                let mock_res = mock_versioned_store.iter_historical_changes(&commit_id, &key);
-                let mock_res_is_ok = mock_res.is_ok();
-                match (commit_id_type, key_type) {
-                    (CommitIDType::Novel, _) => {
-                        if let Err(err) = mock_res {
-                            assert_eq!(err, StorageError::CommitIDNotFound)
-                        } else {
-                            panic!()
-                        }
-                    }
-                    (_, KeyType::Exist) => assert!(mock_res.unwrap().count() > 0),
-                    (_, KeyType::Novel) => assert_eq!(mock_res.unwrap().count(), 0),
-                };
-                mock_res_is_ok
+                versioned_store_proxy.iter_historical_changes(&mut rng, commit_id_type, &commit_id)
             }
-            Operation::Discard => {
-                let mock_res = mock_versioned_store.discard(commit_id);
-                match commit_id_type {
-                    CommitIDType::PendingNonRoot => assert!(mock_res.is_ok()),
-                    CommitIDType::PendingRoot => assert_eq!(
-                        mock_res,
-                        Err(StorageError::PendingError(
-                            PendingError::RootShouldNotBeDiscarded
-                        ))
-                    ),
-                    _ => assert_eq!(
-                        mock_res,
-                        Err(StorageError::PendingError(PendingError::CommitIDNotFound(
-                            commit_id
-                        )))
-                    ),
-                };
-                mock_res.is_ok()
-            }
-            Operation::AddToPendingPart => {
-                let has_root_before_add = !mock_versioned_store.pending.tree.is_empty();
-                let (parent_commit_type, parent_commit) =
-                    gen_parent_commit(&mut rng, &mock_versioned_store, false);
-                let mut previous_keys = get_previous_keys(parent_commit, &mock_versioned_store);
-                let updates = gen_updates(
-                    &mut rng,
-                    &mut previous_keys,
-                    num_gen_new_keys,
-                    num_gen_previous_keys,
-                );
-                let mock_res =
-                    mock_versioned_store.add_to_pending_part(parent_commit, commit_id, updates);
-                let mock_res_is_ok = mock_res.is_ok();
-                match (parent_commit_type, commit_id_type.clone()) {
-                    (_, CommitIDType::History) => assert_eq!(
-                        mock_res.unwrap_err(),
-                        StorageError::CommitIdAlreadyExistsInHistory
-                    ),
-                    (ParentCommitType::NoneButInvalid, _) => assert_eq!(
-                        mock_res.unwrap_err(),
-                        StorageError::PendingError(PendingError::NonRootNodeShouldHaveParent)
-                    ),
-                    (ParentCommitType::ParentOfPendingRoot, _) => {
-                        if has_root_before_add {
-                            assert_eq!(
-                                mock_res.unwrap_err(),
-                                StorageError::PendingError(PendingError::MultipleRootsNotAllowed)
-                            );
-                        } else {
-                            assert_eq!(commit_id_type, CommitIDType::Novel);
-                            assert!(mock_res.is_ok());
-                        }
-                    }
-                    (ParentCommitType::HistoryButInvalid, _) | (ParentCommitType::Novel, _) => {
-                        assert_eq!(
-                            mock_res.unwrap_err(),
-                            StorageError::PendingError(PendingError::CommitIDNotFound(
-                                parent_commit.unwrap()
-                            ))
-                        )
-                    }
-                    (ParentCommitType::Pending, CommitIDType::PendingRoot)
-                    | (ParentCommitType::Pending, CommitIDType::PendingNonRoot) => assert_eq!(
-                        mock_res.unwrap_err(),
-                        StorageError::PendingError(PendingError::CommitIdAlreadyExists(commit_id))
-                    ),
-                    (ParentCommitType::Pending, CommitIDType::Novel) => assert!(mock_res.is_ok()),
-                };
-                mock_res_is_ok
-            }
+            Operation::Discard => versioned_store_proxy.discard(commit_id_type, commit_id),
+            Operation::AddToPendingPart => versioned_store_proxy.add_to_pending_part(
+                &mut rng,
+                commit_id_type,
+                commit_id,
+                num_gen_new_keys,
+                num_gen_previous_keys,
+            ),
             Operation::ConfirmedPendingToHistory => {
-                let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
-                let mock_res_is_ok = mock_res.is_ok();
-                match commit_id_type {
-                    CommitIDType::PendingRoot | CommitIDType::PendingNonRoot => {
-                        assert!(mock_res.is_ok());
-                    }
-                    _ => assert_eq!(
-                        mock_res.unwrap_err(),
-                        StorageError::PendingError(PendingError::CommitIDNotFound(commit_id))
-                    ),
-                };
-                mock_res_is_ok
+                let write_schema = InMemoryDatabase::write_schema();
+                versioned_store_proxy.confirmed_pending_to_history(
+                    commit_id_type,
+                    commit_id,
+                    &write_schema,
+                )
             }
         };
         *operations_analyses
@@ -1064,5 +1099,5 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
 
 #[test]
 fn tests_versioned_store() {
-    test_versioned_store(20, 100, 1000);
+    test_versioned_store(2, 10, 100);
 }

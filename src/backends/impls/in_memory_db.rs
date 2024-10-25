@@ -52,6 +52,10 @@ impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
             _ => Ok(None),
         }
     }
+
+    fn len(&self) -> usize {
+        self.inner.0.len()
+    }
 }
 
 impl DatabaseTrait for InMemoryDatabase {

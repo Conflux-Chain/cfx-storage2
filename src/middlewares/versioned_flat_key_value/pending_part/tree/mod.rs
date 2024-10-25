@@ -31,6 +31,50 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
     }
 
+    pub fn check_consistency(&self, height_of_root: usize) -> bool {
+        if self.height_of_root != height_of_root {
+            return false;
+        };
+
+        if self.nodes.len() != self.index_map.len() {
+            return false;
+        };
+
+        for (commit_id, slab_index) in self.index_map.iter() {
+            let node = self.get_node_by_slab_index(*slab_index);
+
+            if node.get_commit_id() != *commit_id {
+                return false;
+            };
+
+            if node.get_height() == height_of_root {
+                if node.get_parent().is_some() {
+                    return false;
+                };
+            } else if let Some(parent) = self.get_parent_node(node) {
+                if node.get_height() != parent.get_height() + 1 {
+                    return false;
+                }
+                if !parent.get_children().contains(slab_index) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+
+            for child in node.get_children() {
+                let child_node = self.get_node_by_slab_index(*child);
+                if child_node.get_parent() != Some(*slab_index) {
+                    return false;
+                };
+            }
+        }
+
+        // todo: modifications
+
+        true
+    }
+
     pub(super) fn contains_commit_id(&self, commit_id: &S::CommitId) -> bool {
         self.index_map.contains_key(commit_id)
     }

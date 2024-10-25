@@ -55,4 +55,10 @@ pub trait KeyValueStoreBulksTrait<K, V, C> {
         changes: impl Iterator<Item = (C, K, Option<V>)>,
         write_schema: &impl WriteSchemaTrait,
     ) -> Result<()>;
+
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }

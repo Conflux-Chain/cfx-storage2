@@ -54,6 +54,10 @@ where
         write_schema.write_batch::<T>(table_op);
         Ok(())
     }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 impl<C, K> Encode for ChangeKey<C, K>
