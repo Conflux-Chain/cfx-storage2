@@ -21,6 +21,8 @@ pub trait TableRead<T: TableSchema> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>>;
 
     fn iter<'a>(&'a self, key: &T::Key) -> Result<TableIter<'a, '_, T>>;
+
+    fn min_key(&self) -> Result<Option<Cow<T::Key>>>;
 }
 
 combine_traits!(TableKey: 'static + EncodeSubKey + Decode + ToOwned + Ord + Eq + Send + Sync + Debug);

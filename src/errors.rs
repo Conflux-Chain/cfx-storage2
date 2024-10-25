@@ -13,6 +13,9 @@ pub enum StorageError {
     #[error("commit id already in the historical part but try to add to pending")]
     CommitIdAlreadyExistsInHistory,
 
+    #[error("backend db fails consistency check")]
+    ConsistencyCheckFailure,
+
     #[error("io error {0:?}")]
     IoError(#[from] std::io::Error),
 

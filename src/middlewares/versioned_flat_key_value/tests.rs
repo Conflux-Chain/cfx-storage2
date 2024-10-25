@@ -1,12 +1,13 @@
 use ethereum_types::H256;
 
 use super::{
-    key_value_store_manager_impl::OneStore, table_schema::VersionedKeyValueSchema, VersionedStore,
+    key_value_store_manager_impl::OneStore, pending_part::pending_schema::PendingKeyValueConfig,
+    table_schema::VersionedKeyValueSchema, VersionedStore,
 };
 use crate::{
-    backends::{VersionedKVName, WriteSchemaTrait},
+    backends::{InMemoryDatabase, VersionedKVName, WriteSchemaTrait},
     errors::Result,
-    middlewares::{CommitID, PendingError},
+    middlewares::{versioned_flat_key_value::pending_part::VersionedMap, CommitID, PendingError},
     traits::{KeyValueStore, KeyValueStoreManager},
     StorageError,
 };
@@ -192,13 +193,13 @@ impl<T: Eq + std::hash::Hash + Clone> UniqueVec<T> {
 impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
     pub fn build(
         history_cids: UniqueVec<CommitID>,
-        history_stores: Vec<BTreeMap<T::Key, Option<T::Value>>>,
+        history_updates: Vec<BTreeMap<T::Key, Option<T::Value>>>,
     ) -> Self {
-        assert_eq!(history_cids.len(), history_stores.len());
+        assert_eq!(history_cids.len(), history_updates.len());
         let mut history: HashMap<_, _> = Default::default();
         let mut last_store = Default::default();
         let mut last_commit_id = None;
-        for (commit_id, updates) in history_cids.items.iter().zip(history_stores.into_iter()) {
+        for (commit_id, updates) in history_cids.items.iter().zip(history_updates.into_iter()) {
             let store = update_last_store_to_store::<T>(&last_store, updates);
             history.insert(*commit_id, (last_commit_id, store.clone()));
             last_store = store;
@@ -555,7 +556,12 @@ fn gen_init(
     rng: &mut ChaChaRng,
     max_num_new_keys: usize,
     max_num_previous_keys: usize,
-) -> MockVersionedStore<TestSchema> {
+) -> (
+    UniqueVec<CommitID>,
+    Vec<BTreeMap<u64, Option<u64>>>,
+    InMemoryDatabase,
+    VersionedMap<PendingKeyValueConfig<TestSchema, CommitID>>,
+) {
     let mut history_cids = UniqueVec::new();
     for _ in 0..num_history << 4 {
         if history_cids.len() < num_history {
@@ -566,12 +572,12 @@ fn gen_init(
     }
     assert_eq!(history_cids.len(), num_history);
 
-    let mut history_stores = Vec::new();
+    let mut history_updates = Vec::new();
     let mut previous_keys = BTreeSet::new();
     for _ in 0..num_history {
         let num_new_keys = (rng.next_u32() as usize % max_num_new_keys) + 1;
         let num_previous_keys = (rng.next_u32() as usize % max_num_previous_keys) + 1;
-        history_stores.push(gen_updates(
+        history_updates.push(gen_updates(
             rng,
             &mut previous_keys,
             num_new_keys,
@@ -579,7 +585,13 @@ fn gen_init(
         ));
     }
 
-    MockVersionedStore::build(history_cids, history_stores)
+    let empty_db = InMemoryDatabase::empty();
+    let pending_part = VersionedMap::new(
+        history_cids.items().last().map(|last_cid| *last_cid),
+        history_cids.len(),
+    );
+
+    (history_cids, history_updates, empty_db, pending_part)
 }
 
 fn gen_novel_commit_id(rng: &mut ChaChaRng, previous: &BTreeSet<CommitID>) -> CommitID {
@@ -804,12 +816,21 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
     let num_gen_previous_keys = 10;
 
     // init history part
-    let mut mock_versioned_store = gen_init(
+    let (history_cids, history_updates, empty_db, mut pending_part) = gen_init(
         num_history,
         &mut rng,
         num_gen_new_keys,
         num_gen_previous_keys,
     );
+    let real_versioned_store = VersionedStore::new(
+        &empty_db,
+        &mut pending_part,
+        0,
+        history_cids.items(),
+        &history_updates,
+    )
+    .unwrap();
+    let mut mock_versioned_store = MockVersionedStore::build(history_cids, history_updates);
 
     // init pending part
     if num_pending > 0 {

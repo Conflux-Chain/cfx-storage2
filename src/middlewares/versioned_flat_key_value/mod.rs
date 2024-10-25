@@ -7,6 +7,7 @@ mod tests;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub use pending_part::PendingError;
 
@@ -17,7 +18,7 @@ use pending_part::VersionedMap;
 use super::commit_id_schema::{HistoryNumberSchema, MIN_HISTORY_NUMBER_MINUS_ONE};
 use super::ChangeKey;
 use super::CommitIDSchema;
-use crate::backends::{TableReader, WriteSchemaTrait};
+use crate::backends::{DatabaseTrait, InMemoryDatabase, TableRead, TableReader, WriteSchemaTrait};
 use crate::errors::Result;
 use crate::middlewares::commit_id_schema::height_to_history_number;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
@@ -97,6 +98,50 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             ),
         }
     }
+
+    fn confirm_one_to_history(
+        &mut self,
+        height: usize,
+        confirmed_commit_id: CommitID,
+        updates: BTreeMap<T::Key, Option<T::Value>>,
+        write_schema: &impl WriteSchemaTrait,
+    ) -> Result<()> {
+        let history_number = height_to_history_number(height);
+
+        assert!(self.commit_id_table.get(&confirmed_commit_id)?.is_none());
+        assert!(self.history_number_table.get(&history_number)?.is_none());
+
+        let commit_id_table_op = (
+            Cow::Owned(confirmed_commit_id),
+            Some(Cow::Owned(history_number)),
+        );
+        write_schema.write::<CommitIDSchema>(commit_id_table_op);
+
+        let history_number_table_op = (
+            Cow::Owned(history_number),
+            Some(Cow::Owned(confirmed_commit_id)),
+        );
+        write_schema.write::<HistoryNumberSchema>(history_number_table_op);
+
+        let history_indices_table_op = updates.keys().map(|key| {
+            (
+                Cow::Owned(HistoryIndexKey(key.clone(), history_number)),
+                Some(Cow::Owned(HistoryIndices)),
+            )
+        });
+        write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
+
+        if let Some(this_min_k) = updates.keys().min().cloned() {
+            if need_update_min_key(self.history_min_key.as_ref(), &this_min_k) {
+                self.history_min_key = Some(this_min_k);
+            }
+        }
+
+        self.change_history_table
+            .commit(history_number, updates.into_iter(), write_schema)?;
+
+        Ok(())
+    }
 }
 
 fn need_update_min_key<K: Ord>(original_min: Option<&K>, challenge_min: &K) -> bool {
@@ -109,6 +154,58 @@ fn need_update_min_key<K: Ord>(original_min: Option<&K>, challenge_min: &K) -> b
 
 // callable methods
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+    pub fn check_consistency(&self) -> Result<()> {
+        todo!()
+    }
+
+    pub fn new<D: DatabaseTrait>(
+        db: &'db D,
+        pending_part: &'db mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+        to_confirm_start_height: usize,
+        to_confirm_cids: &[CommitID],
+        to_confirm_updates: &[BTreeMap<T::Key, Option<T::Value>>],
+    ) -> Result<Self> {
+        let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
+        let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
+        let history_number_table = Arc::new(db.view::<HistoryNumberSchema>()?);
+        let change_history_table =
+            KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
+
+        // todo: here correct?
+        let history_min_key = history_index_table
+            .min_key()?
+            .map(|min_k| min_k.into_owned().0);
+
+        let mut versioned_store = VersionedStore {
+            pending_part,
+            history_index_table,
+            commit_id_table,
+            history_number_table,
+            change_history_table,
+            history_min_key,
+        };
+
+        assert_eq!(to_confirm_cids.len(), to_confirm_updates.len());
+        let write_schema = InMemoryDatabase::write_schema();
+        for (delta_height, (confirmed_commit_id, updates)) in to_confirm_cids
+            .iter()
+            .zip(to_confirm_updates.iter())
+            .enumerate()
+        {
+            let height = to_confirm_start_height + delta_height;
+            versioned_store.confirm_one_to_history(
+                height,
+                *confirmed_commit_id,
+                updates.clone(),
+                &write_schema,
+            )?;
+        }
+
+        versioned_store.check_consistency()?;
+
+        Ok(versioned_store)
+    }
+
     pub fn add_to_pending_part(
         &mut self,
         parent_commit: Option<CommitID>,
@@ -135,39 +232,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             confirmed_ids_maps.into_iter().enumerate()
         {
             let height = start_height + delta_height;
-            let history_number = height_to_history_number(height);
-
-            assert!(self.commit_id_table.get(&confirmed_commit_id)?.is_none());
-            assert!(self.history_number_table.get(&history_number)?.is_none());
-
-            let commit_id_table_op = (
-                Cow::Owned(confirmed_commit_id),
-                Some(Cow::Owned(history_number)),
-            );
-            write_schema.write::<CommitIDSchema>(commit_id_table_op);
-
-            let history_number_table_op = (
-                Cow::Owned(history_number),
-                Some(Cow::Owned(confirmed_commit_id)),
-            );
-            write_schema.write::<HistoryNumberSchema>(history_number_table_op);
-
-            let history_indices_table_op = updates.keys().map(|key| {
-                (
-                    Cow::Owned(HistoryIndexKey(key.clone(), history_number)),
-                    Some(Cow::Owned(HistoryIndices)),
-                )
-            });
-            write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
-
-            if let Some(this_min_k) = updates.keys().min().cloned() {
-                if need_update_min_key(self.history_min_key.as_ref(), &this_min_k) {
-                    self.history_min_key = Some(this_min_k);
-                }
-            }
-
-            self.change_history_table
-                .commit(history_number, updates.into_iter(), write_schema)?;
+            self.confirm_one_to_history(height, confirmed_commit_id, updates, write_schema)?;
         }
 
         Ok(())

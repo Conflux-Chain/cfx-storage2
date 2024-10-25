@@ -30,6 +30,10 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
             DecResult<(Cow<T::Key>, Cow<T::Value>)>,
         >()))
     }
+
+    fn min_key(&self) -> Result<Option<Cow<T::Key>>> {
+        todo!()
+    }
 }
 
 impl DatabaseTrait for kvdb_rocksdb::Database {
