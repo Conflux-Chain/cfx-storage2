@@ -25,16 +25,16 @@ where
     fn commit(self, commit: C, changes: impl Iterator<Item = (K, V)>);
 }
 
-pub trait KeyValueStoreManager<'s, K, V, C>
+pub trait KeyValueStoreManager<K, V, C>
 where
     K: 'static,
     V: 'static,
     C: 'static,
 {
     type Store: KeyValueStoreRead<K, V> + KeyValueStoreCommit<K, V, C>;
-    
+
     /// Get the key value store after the commit of given id
-    fn get_versioned_store(&'s self, commit: &C) -> Result<Self::Store>;
+    fn get_versioned_store(&self, commit: &C) -> Result<Self::Store>;
 
     /// Start from the given commit, and iter changes backforward
     #[allow(clippy::type_complexity)]

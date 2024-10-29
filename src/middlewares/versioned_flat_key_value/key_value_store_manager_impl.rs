@@ -1,34 +1,52 @@
 use std::{collections::BTreeMap, marker::PhantomData};
 
 use crate::{
-    errors::Result, middlewares::{CommitID, HistoryNumber}, traits::{KeyValueStoreBulksTrait, KeyValueStoreCommit, KeyValueStoreManager, KeyValueStoreRead}, StorageError
+    backends::TableReader,
+    errors::Result,
+    middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks},
+    traits::{
+        KeyValueStoreBulksTrait, KeyValueStoreCommit, KeyValueStoreManager, KeyValueStoreRead,
+    },
+    StorageError,
 };
 
-use super::{table_schema::VersionedKeyValueSchema, HistoryIndexKey, PendingError, VersionedStore};
+use super::{
+    table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema},
+    HistoryIndexKey, PendingError, VersionedStore,
+};
 
-pub struct OneStore<'a, 'db, K: Ord, V: Clone, C, T: VersionedKeyValueSchema> {
-    updates: BTreeMap<K, Option<V>>,
-    history_number: Option<HistoryNumber>,
-    history_db: &'a VersionedStore<'db, T>,
+pub struct OneStore<'db, C, T: VersionedKeyValueSchema> {
+    updates: Option<BTreeMap<T::Key, Option<T::Value>>>,
+    history: Option<OneStoreHistory<'db, T>>,
     _marker_c: PhantomData<C>,
 }
 
-impl<'a, 'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for OneStore<'a, 'db, T::Key, T::Value, C, T>
+pub struct OneStoreHistory<'db, T: VersionedKeyValueSchema> {
+    history_number: HistoryNumber,
+    history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
+    change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
+}
+
+impl<'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for OneStore<'db, C, T>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
-        if let Some(opt_v) = self.updates.get(key) {
-            return Ok(opt_v.clone());
+        if let Some(updates) = &self.updates {
+            if let Some(opt_v) = updates.get(key) {
+                return Ok(opt_v.clone());
+            }
         }
-        if let Some(history_number) = self.history_number {
-            return Ok(self.history_db.get_historical_part(history_number, &key)?)
+
+        if let Some(history) = &self.history {
+            todo!()
+        } else {
+            Ok(None)
         }
-        todo!()
     }
 }
 
-impl<'a, 'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreCommit<T::Key, T::Value, C>
-    for OneStore<'a, 'db, T::Key, T::Value, C, T>
+impl<'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreCommit<T::Key, T::Value, C>
+    for OneStore<'db, C, T>
 {
     fn commit(self, commit: C, changes: impl Iterator<Item = (T::Key, T::Value)>) {
         todo!()
@@ -36,36 +54,41 @@ impl<'a, 'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreCommit<T::Key
 }
 
 // Trait methods implementation
-impl<'s, 'db: 's, T: VersionedKeyValueSchema> KeyValueStoreManager<'s, T::Key, T::Value, CommitID>
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     for VersionedStore<'db, T>
 {
-    type Store = OneStore<'s, 'db, T::Key, T::Value, CommitID, T>;
-    fn get_versioned_store(&'s self, commit: &CommitID) -> Result<Self::Store> {
+    type Store = OneStore<'db, CommitID, T>;
+    fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
         let pending_res = self.pending_part.get_versioned_store(*commit);
         match pending_res {
             Ok(pending_map) => {
-                let mut history_res =
-                    if let Some(history_commit) = self.pending_part.get_parent_of_root() {
-                        self.get_versioned_store_history_part(&history_commit)?
-                    } else {
-                        BTreeMap::new()
-                    };
-                for (k, v) in pending_map.into_iter() {
-                    if let Some(value) = v {
-                        history_res.insert(k, value);
-                    } else {
-                        history_res.remove(&k);
-                    }
-                }
-                todo!();
-                // Ok(OneStore::from_map(history_res))
+                let history = if let Some(history_commit) = self.pending_part.get_parent_of_root() {
+                    Some(OneStoreHistory {
+                        history_number: self.get_history_number_by_commit_id(history_commit)?,
+                        history_index_table: self.history_index_table.clone(),
+                        change_history_table: self.change_history_table.clone(),
+                    })
+                } else {
+                    None
+                };
+                Ok(OneStore {
+                    updates: Some(pending_map),
+                    history,
+                    _marker_c: PhantomData,
+                })
             }
             Err(PendingError::CommitIDNotFound(target_commit_id)) => {
                 assert_eq!(target_commit_id, *commit);
-                todo!();
-                // Ok(OneStore::from_map(
-                //     self.get_versioned_store_history_part(commit)?,
-                // ))
+                let history = OneStoreHistory {
+                    history_number: self.get_history_number_by_commit_id(*commit)?,
+                    history_index_table: self.history_index_table.clone(),
+                    change_history_table: self.change_history_table.clone(),
+                };
+                Ok(OneStore {
+                    updates: None,
+                    history: Some(history),
+                    _marker_c: PhantomData,
+                })
             }
             Err(other_err) => Err(StorageError::PendingError(other_err)),
         }

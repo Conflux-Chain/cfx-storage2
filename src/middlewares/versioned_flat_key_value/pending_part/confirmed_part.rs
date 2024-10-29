@@ -1,3 +1,1 @@
-pub struct ConfirmedChain {
-    
-}
+pub struct ConfirmedChain {}

@@ -11,7 +11,10 @@ use crate::{
     traits::{KeyValueStoreCommit, KeyValueStoreManager, KeyValueStoreRead},
     StorageError,
 };
-use std::{collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque}, marker::PhantomData};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    marker::PhantomData,
+};
 
 use rand_chacha::{
     rand_core::{RngCore, SeedableRng},
@@ -30,7 +33,6 @@ pub struct MockOneStore<K: Ord, V: Clone, C> {
 }
 
 impl<K: Ord + Clone, V: Clone, C> MockOneStore<K, V, C> {
-    
     pub fn from_mock_map(map: &BTreeMap<K, (Option<V>, bool)>) -> Self {
         let inner_map = map
             .iter()
@@ -83,7 +85,7 @@ struct MockNode<T: VersionedKeyValueSchema> {
     store: MockStore<T>,
 }
 
-impl<T: VersionedKeyValueSchema> KeyValueStoreManager<'_, T::Key, T::Value, CommitID>
+impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     for MockVersionedStore<T>
 {
     type Store = MockOneStore<T::Key, T::Value, CommitID>;
