@@ -6,7 +6,7 @@ use crate::middlewares::versioned_flat_key_value::pending_part::pending_schema::
 
 use super::SlabIndex;
 
-pub struct TreeNode<S: PendingKeyValueSchema> {
+pub(super) struct TreeNode<S: PendingKeyValueSchema> {
     parent: Option<SlabIndex>,
     children: BTreeSet<SlabIndex>,
 
