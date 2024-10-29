@@ -131,12 +131,6 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         });
         write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
 
-        if let Some(this_min_k) = updates.keys().min().cloned() {
-            if need_update_min_key(self.history_min_key.as_ref(), &this_min_k) {
-                self.history_min_key = Some(this_min_k);
-            }
-        }
-
         self.change_history_table
             .commit(history_number, updates.into_iter(), write_schema)?;
 
