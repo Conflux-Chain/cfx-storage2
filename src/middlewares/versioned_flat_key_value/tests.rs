@@ -1005,7 +1005,7 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
     let num_gen_previous_keys = 10;
 
     // init history part
-    let (history_cids, history_updates, empty_db, mut pending_part) = gen_init(
+    let (history_cids, history_updates, mut empty_db, mut pending_part) = gen_init(
         num_history,
         &mut rng,
         num_gen_new_keys,
@@ -1014,14 +1014,21 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
 
     let mut mock_versioned_store =
         MockVersionedStore::build(history_cids.clone(), history_updates.clone());
-    let mut real_versioned_store = VersionedStore::new(
+
+    let write_schema = InMemoryDatabase::write_schema();
+
+    VersionedStore::help_new(
         &empty_db,
+        &write_schema,
         &mut pending_part,
         0,
         history_cids.to_vec(),
         history_updates,
     )
     .unwrap();
+    empty_db.commit(write_schema).unwrap();
+    let db = empty_db;
+    let mut real_versioned_store = VersionedStore::new(&db, &mut pending_part, true).unwrap();
     let mut versioned_store_proxy =
         VersionedStoreProxy::new(&mut mock_versioned_store, &mut real_versioned_store);
 

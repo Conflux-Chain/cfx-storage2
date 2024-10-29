@@ -18,7 +18,7 @@ use pending_part::VersionedMap;
 use super::commit_id_schema::{HistoryNumberSchema, MIN_HISTORY_NUMBER_MINUS_ONE};
 use super::ChangeKey;
 use super::CommitIDSchema;
-use crate::backends::{DatabaseTrait, InMemoryDatabase, TableRead, TableReader, WriteSchemaTrait};
+use crate::backends::{DatabaseTrait, TableRead, TableReader, WriteSchemaTrait};
 use crate::errors::Result;
 use crate::middlewares::commit_id_schema::{height_to_history_number, history_number_to_height};
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
@@ -221,35 +221,19 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         Ok(())
     }
 
-    pub fn new<D: DatabaseTrait>(
+    #[cfg(test)]
+    pub fn help_new<D: DatabaseTrait>(
         db: &'db D,
+        write_schema: &impl WriteSchemaTrait,
         pending_part: &'db mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
         to_confirm_start_height: usize,
         to_confirm_cids: Vec<CommitID>,
         to_confirm_updates: Vec<BTreeMap<T::Key, Option<T::Value>>>,
-    ) -> Result<Self> {
-        let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
-        let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
-        let history_number_table = Arc::new(db.view::<HistoryNumberSchema>()?);
-        let change_history_table =
-            KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
-
-        // todo: here correct?
-        let history_min_key = history_index_table
-            .min_key()?
-            .map(|min_k| min_k.into_owned().0);
-
-        let mut versioned_store = VersionedStore {
-            pending_part,
-            history_index_table,
-            commit_id_table,
-            history_number_table,
-            change_history_table,
-            history_min_key,
-        };
+    ) -> Result<()> {
+        let mut versioned_store = VersionedStore::new(db, pending_part, false)?;
 
         assert_eq!(to_confirm_cids.len(), to_confirm_updates.len());
-        let write_schema = InMemoryDatabase::write_schema();
+
         for (delta_height, (confirmed_commit_id, updates)) in to_confirm_cids
             .into_iter()
             .zip(to_confirm_updates.into_iter())
@@ -264,7 +248,40 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             )?;
         }
 
-        versioned_store.check_consistency()?;
+        Ok(())
+    }
+
+    pub fn new<D: DatabaseTrait>(
+        db: &'db D,
+        pending_part: &'db mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+        check_consistency: bool,
+    ) -> Result<Self> {
+        let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
+        let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
+        let history_number_table = Arc::new(db.view::<HistoryNumberSchema>()?);
+        let change_history_table =
+            KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
+
+        dbg!("1");
+        // todo: here correct?
+        let history_min_key = history_index_table
+            .min_key()?
+            .map(|min_k| min_k.into_owned().0);
+
+        dbg!("2");
+        let versioned_store = VersionedStore {
+            pending_part,
+            history_index_table,
+            commit_id_table,
+            history_number_table,
+            change_history_table,
+            history_min_key,
+        };
+
+        if check_consistency {
+            versioned_store.check_consistency()?;
+        }
+        dbg!("3");
 
         Ok(versioned_store)
     }

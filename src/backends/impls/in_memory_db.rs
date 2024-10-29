@@ -48,7 +48,10 @@ impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
             .next();
 
         match min_entry {
-            Some(((col, key), _)) if *col == self.col => Ok(Some(T::Key::decode(key)?)),
+            Some(((col, key), _)) if *col == self.col => {
+                dbg!(key);
+                Ok(Some(<T::Key>::decode(key)?))
+            }
             _ => Ok(None),
         }
     }
