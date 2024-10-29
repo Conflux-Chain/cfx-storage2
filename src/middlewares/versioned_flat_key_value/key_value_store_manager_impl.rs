@@ -11,8 +11,7 @@ use crate::{
 };
 
 use super::{
-    table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema},
-    HistoryIndexKey, PendingError, VersionedStore,
+    get_versioned_key, table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema}, HistoryIndexKey, PendingError, VersionedStore
 };
 
 pub struct OneStore<'db, C, T: VersionedKeyValueSchema> {
@@ -38,7 +37,7 @@ impl<'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::V
         }
 
         if let Some(history) = &self.history {
-            todo!()
+            get_versioned_key(history.history_number, key, &history.history_index_table, &history.change_history_table)
         } else {
             Ok(None)
         }
@@ -205,20 +204,20 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         Ok(history_iter)
     }
 
-    fn get_versioned_store_history_part(
-        &self,
-        commit_id: &CommitID,
-    ) -> Result<BTreeMap<T::Key, T::Value>> {
-        let query_number = self.get_history_number_by_commit_id(*commit_id)?;
-        let mut key_opt = todo!();
-        let mut map = BTreeMap::new();
-        while let Some(key) = key_opt {
-            let value = self.get_historical_part(query_number, &key)?;
-            if let Some(value) = value {
-                map.insert(key.clone(), value);
-            }
-            key_opt = self.find_larger_historical_key(&key)?;
-        }
-        Ok(map)
-    }
+    // fn get_versioned_store_history_part(
+    //     &self,
+    //     commit_id: &CommitID,
+    // ) -> Result<BTreeMap<T::Key, T::Value>> {
+    //     let query_number = self.get_history_number_by_commit_id(*commit_id)?;
+    //     let mut key_opt = todo!();
+    //     let mut map = BTreeMap::new();
+    //     while let Some(key) = key_opt {
+    //         let value = self.get_historical_part(query_number, &key)?;
+    //         if let Some(value) = value {
+    //             map.insert(key.clone(), value);
+    //         }
+    //         key_opt = self.find_larger_historical_key(&key)?;
+    //     }
+    //     Ok(map)
+    // }
 }

@@ -46,6 +46,35 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
+fn get_versioned_key<'db, T: VersionedKeyValueSchema>(
+    query_version_number: HistoryNumber,
+    key: &T::Key,
+    history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
+    change_history_table: &KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
+) -> Result<Option<T::Value>> {
+    let range_query_key = HistoryIndexKey(key.clone(), query_version_number);
+
+    let found_version_number = match history_index_table.iter(&range_query_key)?.next() {
+        None => {
+            return Ok(None);
+        }
+        Some(Err(e)) => {
+            return Err(e.into());
+        }
+        Some(Ok((k, _))) if &k.as_ref().0 != key => {
+            return Ok(None);
+        }
+        Some(Ok((k, indices))) => {
+            let HistoryIndexKey(_, history_number) = k.as_ref();
+            // let offset = target_history_number - history_number;
+            indices.as_ref().last(*history_number)
+        }
+    };
+
+    change_history_table
+        .get_versioned_key(&found_version_number, key)
+}
+
 // private helper methods
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     fn get_history_number_by_commit_id(&self, commit: CommitID) -> Result<HistoryNumber> {
@@ -61,42 +90,22 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         query_version_number: HistoryNumber,
         key: &T::Key,
     ) -> Result<Option<T::Value>> {
-        let range_query_key = HistoryIndexKey(key.clone(), query_version_number);
-
-        let found_version_number = match self.history_index_table.iter(&range_query_key)?.next() {
-            None => {
-                return Ok(None);
-            }
-            Some(Err(e)) => {
-                return Err(e.into());
-            }
-            Some(Ok((k, _))) if &k.as_ref().0 != key => {
-                return Ok(None);
-            }
-            Some(Ok((k, indices))) => {
-                let HistoryIndexKey(_, history_number) = k.as_ref();
-                // let offset = target_history_number - history_number;
-                indices.as_ref().last(*history_number)
-            }
-        };
-
-        self.change_history_table
-            .get_versioned_key(&found_version_number, key)
+        get_versioned_key(query_version_number, key, &self.history_index_table, &self.change_history_table)
     }
 
-    fn find_larger_historical_key(&self, key: &T::Key) -> Result<Option<T::Key>> {
-        // todo: here correct?
-        let range_query_key = HistoryIndexKey(key.clone(), MIN_HISTORY_NUMBER_MINUS_ONE);
+    // fn find_larger_historical_key(&self, key: &T::Key) -> Result<Option<T::Key>> {
+    //     // todo: here correct?
+    //     let range_query_key = HistoryIndexKey(key.clone(), MIN_HISTORY_NUMBER_MINUS_ONE);
 
-        match self.history_index_table.iter(&range_query_key)?.next() {
-            None => Ok(None),
-            Some(Err(e)) => Err(e.into()),
-            Some(Ok((k, _))) if &k.as_ref().0 > key => Ok(Some(k.as_ref().0.to_owned())),
-            _ => unreachable!(
-                "iter((key, MIN_HISTORY_NUMBER_MINUS_ONE)) should not result in k <= key"
-            ),
-        }
-    }
+    //     match self.history_index_table.iter(&range_query_key)?.next() {
+    //         None => Ok(None),
+    //         Some(Err(e)) => Err(e.into()),
+    //         Some(Ok((k, _))) if &k.as_ref().0 > key => Ok(Some(k.as_ref().0.to_owned())),
+    //         _ => unreachable!(
+    //             "iter((key, MIN_HISTORY_NUMBER_MINUS_ONE)) should not result in k <= key"
+    //         ),
+    //     }
+    // }
 
     fn confirm_one_to_history(
         &mut self,
