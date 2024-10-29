@@ -8,25 +8,65 @@ use crate::{
     backends::{DatabaseTrait, InMemoryDatabase, VersionedKVName, WriteSchemaTrait},
     errors::Result,
     middlewares::{versioned_flat_key_value::pending_part::VersionedMap, CommitID, PendingError},
-    traits::{KeyValueStore, KeyValueStoreManager},
+    traits::{KeyValueStoreCommit, KeyValueStoreManager, KeyValueStoreRead},
     StorageError,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::{collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque}, marker::PhantomData};
 
 use rand_chacha::{
     rand_core::{RngCore, SeedableRng},
     ChaChaRng,
 };
 
-type MockOneStore<T> = BTreeMap<
+type MockStore<T> = BTreeMap<
     <T as VersionedKeyValueSchema>::Key,
     (Option<<T as VersionedKeyValueSchema>::Value>, bool),
 >;
 
+#[cfg_attr(test, derive(PartialEq, Debug))]
+pub struct MockOneStore<K: Ord, V: Clone, C> {
+    map: BTreeMap<K, V>,
+    _marker: PhantomData<C>,
+}
+
+impl<K: Ord + Clone, V: Clone, C> MockOneStore<K, V, C> {
+    
+    pub fn from_mock_map(map: &BTreeMap<K, (Option<V>, bool)>) -> Self {
+        let inner_map = map
+            .iter()
+            .filter_map(|(k, (opt_v, _))| opt_v.as_ref().map(|v| (k.clone(), v.clone())))
+            .collect();
+        MockOneStore {
+            map: inner_map,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn get_keys(&self) -> Vec<K> {
+        self.map.keys().cloned().into_iter().collect()
+    }
+}
+
+impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStoreRead<K, V>
+    for MockOneStore<K, V, C>
+{
+    fn get(&self, key: &K) -> Result<Option<V>> {
+        Ok(self.map.get(key).cloned())
+    }
+}
+
+impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStoreCommit<K, V, C>
+    for MockOneStore<K, V, C>
+{
+    fn commit(self, commit: C, changes: impl Iterator<Item = (K, V)>) {
+        todo!()
+    }
+}
+
 #[derive(Debug)]
 struct MockVersionedStore<T: VersionedKeyValueSchema> {
     pending: MockTree<T>,
-    history: HashMap<CommitID, (Option<CommitID>, MockOneStore<T>)>,
+    history: HashMap<CommitID, (Option<CommitID>, MockStore<T>)>,
 }
 
 #[derive(Debug)]
@@ -40,20 +80,20 @@ struct MockNode<T: VersionedKeyValueSchema> {
     commit_id: CommitID,
     parent: Option<CommitID>,
     children: HashSet<CommitID>,
-    store: MockOneStore<T>,
+    store: MockStore<T>,
 }
 
 impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     for MockVersionedStore<T>
 {
-    type Store = OneStore<T::Key, T::Value, CommitID>;
+    type Store = MockOneStore<T::Key, T::Value, CommitID>;
 
     fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
         if let Some(pending_res) = self.pending.tree.get(commit) {
-            Ok(OneStore::from_mock_map(&pending_res.store))
+            Ok(MockOneStore::from_mock_map(&pending_res.store))
         } else {
             if let Some((_, history_res)) = self.history.get(commit) {
-                Ok(OneStore::from_mock_map(history_res))
+                Ok(MockOneStore::from_mock_map(history_res))
             } else {
                 Err(StorageError::CommitIDNotFound)
             }
@@ -142,9 +182,9 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
 }
 
 fn update_last_store_to_store<T: VersionedKeyValueSchema>(
-    last_store: &MockOneStore<T>,
+    last_store: &MockStore<T>,
     updates: BTreeMap<T::Key, Option<T::Value>>,
-) -> MockOneStore<T> {
+) -> MockStore<T> {
     let mut store: BTreeMap<_, _> = last_store
         .iter()
         .map(|(k, (opt_v, _))| (k.clone(), (opt_v.clone(), false)))
@@ -240,7 +280,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
 
     fn new_unchecked(
         parent_of_pending: Option<CommitID>,
-        history: HashMap<CommitID, (Option<CommitID>, MockOneStore<T>)>,
+        history: HashMap<CommitID, (Option<CommitID>, MockStore<T>)>,
     ) -> Self {
         let mock_versioned_store = Self {
             pending: MockTree {
@@ -791,7 +831,8 @@ impl<'a, 'b, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
         let mock_res = self.mock_store.get_versioned_store(commit);
         let real_res = self.real_store.get_versioned_store(commit);
 
-        assert_eq!(mock_res, real_res);
+        todo!();
+        // assert_eq!(mock_res, real_res);
 
         match commit_id_type {
             CommitIDType::Novel => {

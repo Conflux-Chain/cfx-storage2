@@ -47,10 +47,6 @@ impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
             .map(|((_, k), v)| Ok((<T::Key>::decode(k)?, <T::Value>::decode(v)?)));
         Ok(Box::new(iter))
     }
-
-    fn len(&self) -> usize {
-        self.inner.0.len()
-    }
 }
 
 impl DatabaseTrait for InMemoryDatabase {

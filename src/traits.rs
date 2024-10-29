@@ -1,15 +1,27 @@
 use crate::{backends::WriteSchemaTrait, errors::Result};
 
-pub trait KeyValueStore<K, V, C>
+pub trait KeyValueStoreRead<K, V>
+where
+    K: 'static,
+    V: 'static,
+{
+    fn get(&self, key: &K) -> Result<Option<V>>;
+}
+
+pub trait KeyValueStoreIterable<K, V>: KeyValueStoreRead<K, V>
+where
+    K: 'static,
+    V: 'static,
+{
+    fn iter<'a>(&'a self, key: &K) -> Result<impl 'a + Iterator<Item = (&K, &V)>>;
+}
+
+pub trait KeyValueStoreCommit<K, V, C>: KeyValueStoreRead<K, V>
 where
     K: 'static,
     V: 'static,
     C: 'static,
 {
-    fn get(&self, key: &K) -> Result<Option<V>>;
-
-    fn iter<'a>(&'a self, key: &K) -> Result<impl 'a + Iterator<Item = (&K, &V)>>;
-
     fn commit(self, commit: C, changes: impl Iterator<Item = (K, V)>);
 }
 
@@ -19,8 +31,8 @@ where
     V: 'static,
     C: 'static,
 {
-    type Store: KeyValueStore<K, V, C>;
-
+    type Store: KeyValueStoreRead<K, V> + KeyValueStoreCommit<K, V, C>;
+    
     /// Get the key value store after the commit of given id
     fn get_versioned_store(&self, commit: &C) -> Result<Self::Store>;
 
@@ -55,10 +67,4 @@ pub trait KeyValueStoreBulksTrait<K, V, C> {
         changes: impl Iterator<Item = (C, K, Option<V>)>,
         write_schema: &impl WriteSchemaTrait,
     ) -> Result<()>;
-
-    fn len(&self) -> usize;
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }

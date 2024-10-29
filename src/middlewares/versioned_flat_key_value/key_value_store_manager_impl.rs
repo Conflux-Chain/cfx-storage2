@@ -3,53 +3,29 @@ use std::{collections::BTreeMap, marker::PhantomData};
 use crate::{
     errors::Result,
     middlewares::CommitID,
-    traits::{KeyValueStore, KeyValueStoreBulksTrait, KeyValueStoreManager},
+    traits::{KeyValueStoreBulksTrait, KeyValueStoreCommit, KeyValueStoreManager, KeyValueStoreRead},
     StorageError,
 };
 
 use super::{table_schema::VersionedKeyValueSchema, HistoryIndexKey, PendingError, VersionedStore};
 
-#[cfg_attr(test, derive(PartialEq, Debug))]
 pub struct OneStore<K: Ord, V: Clone, C> {
-    map: BTreeMap<K, V>,
-    _marker: PhantomData<C>,
+    _marker_k: PhantomData<K>,
+    _marker_v: PhantomData<V>,
+    _marker_c: PhantomData<C>,
 }
 
-impl<K: Ord, V: Clone, C> OneStore<K, V, C> {
-    pub fn from_map(map: BTreeMap<K, V>) -> Self {
-        OneStore {
-            map,
-            _marker: PhantomData,
-        }
-    }
-}
-
-#[cfg(test)]
-impl<K: Ord + Clone, V: Clone, C> OneStore<K, V, C> {
-    pub fn from_mock_map(map: &BTreeMap<K, (Option<V>, bool)>) -> Self {
-        let inner_map = map
-            .iter()
-            .filter_map(|(k, (opt_v, _))| opt_v.as_ref().map(|v| (k.clone(), v.clone())))
-            .collect();
-        Self::from_map(inner_map)
-    }
-
-    pub fn get_keys(&self) -> Vec<K> {
-        self.map.keys().cloned().into_iter().collect()
-    }
-}
-
-impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStore<K, V, C>
+impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStoreRead<K, V>
     for OneStore<K, V, C>
 {
     fn get(&self, key: &K) -> Result<Option<V>> {
-        Ok(self.map.get(key).cloned())
+        todo!()
     }
+}
 
-    fn iter<'a>(&'a self, key: &K) -> Result<impl 'a + Iterator<Item = (&K, &V)>> {
-        Ok(self.map.range(key..))
-    }
-
+impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStoreCommit<K, V, C>
+    for OneStore<K, V, C>
+{
     fn commit(self, commit: C, changes: impl Iterator<Item = (K, V)>) {
         todo!()
     }
@@ -77,13 +53,15 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, Com
                         history_res.remove(&k);
                     }
                 }
-                Ok(OneStore::from_map(history_res))
+                todo!();
+                // Ok(OneStore::from_map(history_res))
             }
             Err(PendingError::CommitIDNotFound(target_commit_id)) => {
                 assert_eq!(target_commit_id, *commit);
-                Ok(OneStore::from_map(
-                    self.get_versioned_store_history_part(commit)?,
-                ))
+                todo!();
+                // Ok(OneStore::from_map(
+                //     self.get_versioned_store_history_part(commit)?,
+                // ))
             }
             Err(other_err) => Err(StorageError::PendingError(other_err)),
         }

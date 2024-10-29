@@ -182,9 +182,9 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
                 return Err(StorageError::ConsistencyCheckFailure);
             };
 
-            if self.commit_id_table.len() != self.history_number_table.len() {
-                return Err(StorageError::ConsistencyCheckFailure);
-            }
+            // if self.commit_id_table.len() != self.history_number_table.len() {
+            //     return Err(StorageError::ConsistencyCheckFailure);
+            // }
 
             if !self
                 .pending_part
@@ -194,12 +194,12 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             }
 
             // todo: history_index_table, change_table, min_key
-        } else if !self.commit_id_table.is_empty()
-            || !self.history_number_table.is_empty()
-            || !self.history_index_table.is_empty()
-            || !self.change_history_table.is_empty()
-        {
-            return Err(StorageError::ConsistencyCheckFailure);
+        // } else if !self.commit_id_table.is_empty()
+        //     || !self.history_number_table.is_empty()
+        //     || !self.history_index_table.is_empty()
+        //     || !self.change_history_table.is_empty()
+        // {
+        //     return Err(StorageError::ConsistencyCheckFailure);
         }
 
         Ok(())
