@@ -205,7 +205,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         commit_id: &CommitID,
     ) -> Result<BTreeMap<T::Key, T::Value>> {
         let query_number = self.get_history_number_by_commit_id(*commit_id)?;
-        let mut key_opt = self.history_min_key.clone();
+        let mut key_opt = todo!();
         let mut map = BTreeMap::new();
         while let Some(key) = key_opt {
             let value = self.get_historical_part(query_number, &key)?;

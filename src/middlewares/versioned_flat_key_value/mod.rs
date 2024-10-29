@@ -44,7 +44,6 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
     commit_id_table: TableReader<'db, CommitIDSchema>,
     history_number_table: TableReader<'db, HistoryNumberSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
-    history_min_key: Option<T::Key>,
 }
 
 // private helper methods
@@ -138,14 +137,6 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     }
 }
 
-fn need_update_min_key<K: Ord>(original_min: Option<&K>, challenge_min: &K) -> bool {
-    if let Some(original_min) = original_min {
-        original_min > challenge_min
-    } else {
-        true
-    }
-}
-
 // callable methods
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     pub fn check_consistency(&self) -> Result<()> {
@@ -207,7 +198,6 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             || !self.history_number_table.is_empty()
             || !self.history_index_table.is_empty()
             || !self.change_history_table.is_empty()
-            || self.history_min_key.is_some()
         {
             return Err(StorageError::ConsistencyCheckFailure);
         }
@@ -256,26 +246,17 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         let change_history_table =
             KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
 
-        dbg!("1");
-        // todo: here correct?
-        let history_min_key = history_index_table
-            .min_key()?
-            .map(|min_k| min_k.into_owned().0);
-
-        dbg!("2");
         let versioned_store = VersionedStore {
             pending_part,
             history_index_table,
             commit_id_table,
             history_number_table,
             change_history_table,
-            history_min_key,
         };
 
         if check_consistency {
             versioned_store.check_consistency()?;
         }
-        dbg!("3");
 
         Ok(versioned_store)
     }

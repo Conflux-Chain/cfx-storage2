@@ -39,21 +39,13 @@ impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
         Ok(Box::new(iter))
     }
 
-    fn min_key(&self) -> Result<Option<Cow<T::Key>>> {
-        let min_entry = self
-            .inner
-            .0
-            .range((self.col, Vec::new())..)
-            .take_while(|((col, _), _)| *col == self.col)
-            .next();
-
-        match min_entry {
-            Some(((col, key), _)) if *col == self.col => {
-                dbg!(key);
-                Ok(Some(<T::Key>::decode(key)?))
-            }
-            _ => Ok(None),
-        }
+    fn iter_from_start<'a>(&'a self) -> Result<TableIter<'a, '_, T>> {
+        let range = self.inner.0.range((self.col, Vec::new())..);
+        let iter = range
+            //.filter(|((col, _), _)| *col == self.col)
+            .take_while(move |((col, _), _)| *col == self.col)
+            .map(|((_, k), v)| Ok((<T::Key>::decode(k)?, <T::Value>::decode(v)?)));
+        Ok(Box::new(iter))
     }
 
     fn len(&self) -> usize {

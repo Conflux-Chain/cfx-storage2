@@ -31,8 +31,10 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
         >()))
     }
 
-    fn min_key(&self) -> Result<Option<Cow<T::Key>>> {
-        todo!()
+    fn iter_from_start<'a>(&'a self) -> Result<TableIter<'a, '_, T>> {
+        Ok(Box::new(crate::todo_iter::<
+            DecResult<(Cow<T::Key>, Cow<T::Value>)>,
+        >()))
     }
 
     fn len(&self) -> usize {

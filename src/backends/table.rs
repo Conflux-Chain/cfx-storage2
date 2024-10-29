@@ -22,7 +22,7 @@ pub trait TableRead<T: TableSchema> {
 
     fn iter<'a>(&'a self, key: &T::Key) -> Result<TableIter<'a, '_, T>>;
 
-    fn min_key(&self) -> Result<Option<Cow<T::Key>>>;
+    fn iter_from_start<'a>(&'a self) -> Result<TableIter<'a, '_, T>>;
 
     fn len(&self) -> usize;
 
