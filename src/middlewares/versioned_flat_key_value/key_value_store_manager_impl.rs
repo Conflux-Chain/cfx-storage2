@@ -1,42 +1,46 @@
 use std::{collections::BTreeMap, marker::PhantomData};
 
 use crate::{
-    errors::Result,
-    middlewares::CommitID,
-    traits::{KeyValueStoreBulksTrait, KeyValueStoreCommit, KeyValueStoreManager, KeyValueStoreRead},
-    StorageError,
+    errors::Result, middlewares::{CommitID, HistoryNumber}, traits::{KeyValueStoreBulksTrait, KeyValueStoreCommit, KeyValueStoreManager, KeyValueStoreRead}, StorageError
 };
 
 use super::{table_schema::VersionedKeyValueSchema, HistoryIndexKey, PendingError, VersionedStore};
 
-pub struct OneStore<K: Ord, V: Clone, C> {
-    _marker_k: PhantomData<K>,
-    _marker_v: PhantomData<V>,
+pub struct OneStore<'a, 'db, K: Ord, V: Clone, C, T: VersionedKeyValueSchema> {
+    updates: BTreeMap<K, Option<V>>,
+    history_number: Option<HistoryNumber>,
+    history_db: &'a VersionedStore<'db, T>,
     _marker_c: PhantomData<C>,
 }
 
-impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStoreRead<K, V>
-    for OneStore<K, V, C>
+impl<'a, 'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for OneStore<'a, 'db, T::Key, T::Value, C, T>
 {
-    fn get(&self, key: &K) -> Result<Option<V>> {
+    fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
+        if let Some(opt_v) = self.updates.get(key) {
+            return Ok(opt_v.clone());
+        }
+        if let Some(history_number) = self.history_number {
+            return Ok(self.history_db.get_historical_part(history_number, &key)?)
+        }
         todo!()
     }
 }
 
-impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStoreCommit<K, V, C>
-    for OneStore<K, V, C>
+impl<'a, 'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreCommit<T::Key, T::Value, C>
+    for OneStore<'a, 'db, T::Key, T::Value, C, T>
 {
-    fn commit(self, commit: C, changes: impl Iterator<Item = (K, V)>) {
+    fn commit(self, commit: C, changes: impl Iterator<Item = (T::Key, T::Value)>) {
         todo!()
     }
 }
 
 // Trait methods implementation
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
+impl<'s, 'db: 's, T: VersionedKeyValueSchema> KeyValueStoreManager<'s, T::Key, T::Value, CommitID>
     for VersionedStore<'db, T>
 {
-    type Store = OneStore<T::Key, T::Value, CommitID>;
-    fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
+    type Store = OneStore<'s, 'db, T::Key, T::Value, CommitID, T>;
+    fn get_versioned_store(&'s self, commit: &CommitID) -> Result<Self::Store> {
         let pending_res = self.pending_part.get_versioned_store(*commit);
         match pending_res {
             Ok(pending_map) => {

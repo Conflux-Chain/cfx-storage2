@@ -83,7 +83,7 @@ struct MockNode<T: VersionedKeyValueSchema> {
     store: MockStore<T>,
 }
 
-impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
+impl<T: VersionedKeyValueSchema> KeyValueStoreManager<'_, T::Key, T::Value, CommitID>
     for MockVersionedStore<T>
 {
     type Store = MockOneStore<T::Key, T::Value, CommitID>;
