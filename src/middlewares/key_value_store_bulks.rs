@@ -9,6 +9,9 @@ use crate::{
     traits::KeyValueStoreBulksTrait,
 };
 
+#[cfg(test)]
+use crate::backends::TableIter;
+
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ChangeKey<C: Copy, K: Clone>(C, K);
 
@@ -17,6 +20,11 @@ pub struct KeyValueStoreBulks<'db, T: TableSchema>(TableReader<'db, T>);
 impl<'db, T: TableSchema> KeyValueStoreBulks<'db, T> {
     pub(crate) fn new(db: TableReader<'db, T>) -> Self {
         Self(db)
+    }
+
+    #[cfg(test)]
+    pub fn iter_from_start(&self) -> Result<TableIter<T>> {
+        self.0.iter_from_start()
     }
 }
 

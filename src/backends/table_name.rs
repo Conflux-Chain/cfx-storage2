@@ -26,17 +26,11 @@ use VersionedKVName::*;
 
 impl From<TableName> for u32 {
     fn from(t: TableName) -> Self {
-        let mut id = 0u32;
-        let mut make_id = || {
-            let ans = id;
-            id += 1;
-            ans
-        };
         match t {
-            CommitID => make_id(),
-            HistoryNumber => make_id(),
-            HistoryChange(FlatKV) => make_id(),
-            HistoryIndex(FlatKV) => make_id(),
+            CommitID => 1,
+            HistoryNumber => 2,
+            HistoryChange(FlatKV) => 3,
+            HistoryIndex(FlatKV) => 4,
             #[cfg(test)]
             MockTable => u32::MAX,
         }
