@@ -41,8 +41,8 @@ impl HistoryIndices {
     }
 }
 
-pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
-    pending_part: &'db mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+pub struct VersionedStore<'cache, 'db, T: VersionedKeyValueSchema> {
+    pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     history_number_table: TableReader<'db, HistoryNumberSchema>,
@@ -78,7 +78,7 @@ fn get_versioned_key<'db, T: VersionedKeyValueSchema>(
 }
 
 // private helper methods
-impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
     fn get_history_number_by_commit_id(&self, commit: CommitID) -> Result<HistoryNumber> {
         if let Some(value) = self.commit_id_table.get(&commit)? {
             Ok(value.into_owned())
@@ -154,7 +154,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
 }
 
 // callable methods
-impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
     #[cfg(test)]
     pub fn check_consistency(&self) -> Result<()> {
         if self.check_consistency_inner().is_err() {
@@ -256,7 +256,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
 
     pub fn new<D: DatabaseTrait>(
         db: &'db D,
-        pending_part: &'db mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+        pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
     ) -> Result<Self> {
         let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
         let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);

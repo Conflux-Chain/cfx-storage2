@@ -674,20 +674,20 @@ fn gen_key(rng: &mut ChaChaRng, existing_keys: Vec<u64>) -> (KeyType, u64) {
     }
 }
 
-struct VersionedStoreProxy<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema> {
+struct VersionedStoreProxy<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema> {
     mock_store: &'a mut MockVersionedStore<T>,
-    real_store: &'b mut VersionedStore<'db, T>,
+    real_store: &'b mut VersionedStore<'cache, 'db, T>,
     all_keys: &'c mut BTreeSet<T::Key>,
 }
 
-impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
-    VersionedStoreProxy<'a, 'b, 'c, 'db, T>
+impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
+    VersionedStoreProxy<'a, 'b, 'c, 'cache, 'db, T>
 where
     T::Value: PartialEq,
 {
     fn new(
         mock_store: &'a mut MockVersionedStore<T>,
-        real_store: &'b mut VersionedStore<'db, T>,
+        real_store: &'b mut VersionedStore<'cache, 'db, T>,
         all_keys: &'c mut BTreeSet<T::Key>,
     ) -> Self {
         Self {
@@ -838,8 +838,8 @@ where
     }
 }
 
-impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
-    VersionedStoreProxy<'a, 'b, 'c, 'db, T>
+impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
+    VersionedStoreProxy<'a, 'b, 'c, 'cache, 'db, T>
 {
     fn get_versioned_store(
         &self,
@@ -853,7 +853,10 @@ impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
         match commit_id_type {
             CommitIDType::Novel => {
                 assert_eq!(mock_res, Err(StorageError::CommitIDNotFound));
-                assert_eq!(real_res.unwrap_err(), StorageError::CommitIDNotFound);
+                match real_res {
+                    Err(err) => assert_eq!(err, StorageError::CommitIDNotFound),
+                    _ => panic!("real is ok but mock is err"),
+                }
                 false
             }
             _ => {

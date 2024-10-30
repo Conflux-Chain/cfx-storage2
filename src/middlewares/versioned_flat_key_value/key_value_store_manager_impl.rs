@@ -1,8 +1,5 @@
 use std::{collections::BTreeMap, marker::PhantomData};
 
-#[cfg(test)]
-use std::fmt;
-
 use crate::{
     backends::TableReader,
     errors::Result,
@@ -23,16 +20,6 @@ pub struct OneStore<'db, C, T: VersionedKeyValueSchema> {
     updates: Option<BTreeMap<T::Key, Option<T::Value>>>,
     history: Option<OneStoreHistory<'db, T>>,
     _marker_c: PhantomData<C>,
-}
-
-#[cfg(test)]
-impl<'db, C, T: VersionedKeyValueSchema> fmt::Debug for OneStore<'db, C, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OneStore")
-            .field("updates.is_some", &self.updates.is_some())
-            .field("history.is_some", &self.history.is_some())
-            .finish()
-    }
 }
 
 pub struct OneStoreHistory<'db, T: VersionedKeyValueSchema> {
@@ -81,8 +68,8 @@ impl<'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreCommit<T::Key, T:
 }
 
 // Trait methods implementation
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
-    for VersionedStore<'db, T>
+impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
+    for VersionedStore<'cache, 'db, T>
 {
     type Store = OneStore<'db, CommitID, T>;
     fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
@@ -181,7 +168,7 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, Com
 }
 
 // Helper methods used in trait implementations
-impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
     fn iter_historical_changes_history_part<'a>(
         &'a self,
         commit_id: &CommitID,

@@ -31,6 +31,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
     }
 
+    #[cfg(test)]
     pub fn check_consistency(&self, height_of_root: usize) -> bool {
         if self.height_of_root != height_of_root {
             return false;

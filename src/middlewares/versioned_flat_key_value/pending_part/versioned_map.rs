@@ -24,6 +24,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
     }
 
+    #[cfg(test)]
     pub fn check_consistency(&self, height_of_root: usize) -> bool {
         if self.tree.check_consistency(height_of_root) {
             // todo: check current
