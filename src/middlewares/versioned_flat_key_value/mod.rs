@@ -15,15 +15,18 @@ use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 use pending_part::VersionedMap;
 
-use super::commit_id_schema::{HistoryNumberSchema, MIN_HISTORY_NUMBER_MINUS_ONE};
+use super::commit_id_schema::HistoryNumberSchema;
 use super::ChangeKey;
 use super::CommitIDSchema;
 use crate::backends::{DatabaseTrait, TableRead, TableReader, WriteSchemaTrait};
 use crate::errors::Result;
-use crate::middlewares::commit_id_schema::{height_to_history_number, history_number_to_height};
+use crate::middlewares::commit_id_schema::height_to_history_number;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
 use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
+
+#[cfg(test)]
+use crate::middlewares::commit_id_schema::history_number_to_height;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
@@ -71,8 +74,7 @@ fn get_versioned_key<'db, T: VersionedKeyValueSchema>(
         }
     };
 
-    change_history_table
-        .get_versioned_key(&found_version_number, key)
+    change_history_table.get_versioned_key(&found_version_number, key)
 }
 
 // private helper methods
@@ -90,7 +92,12 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         query_version_number: HistoryNumber,
         key: &T::Key,
     ) -> Result<Option<T::Value>> {
-        get_versioned_key(query_version_number, key, &self.history_index_table, &self.change_history_table)
+        get_versioned_key(
+            query_version_number,
+            key,
+            &self.history_index_table,
+            &self.change_history_table,
+        )
     }
 
     // fn find_larger_historical_key(&self, key: &T::Key) -> Result<Option<T::Key>> {
@@ -148,6 +155,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
 
 // callable methods
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+    #[cfg(test)]
     pub fn check_consistency(&self) -> Result<()> {
         if self.check_consistency_inner().is_err() {
             Err(StorageError::ConsistencyCheckFailure)
@@ -155,6 +163,8 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             Ok(())
         }
     }
+
+    #[cfg(test)]
     fn check_consistency_inner(&self) -> Result<()> {
         if let Some(parent) = self.pending_part.get_parent_of_root() {
             let parent_history_number =
@@ -223,7 +233,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         to_confirm_cids: Vec<CommitID>,
         to_confirm_updates: Vec<BTreeMap<T::Key, Option<T::Value>>>,
     ) -> Result<()> {
-        let mut versioned_store = VersionedStore::new(db, pending_part, false)?;
+        let mut versioned_store = VersionedStore::new(db, pending_part)?;
 
         assert_eq!(to_confirm_cids.len(), to_confirm_updates.len());
 
@@ -247,7 +257,6 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     pub fn new<D: DatabaseTrait>(
         db: &'db D,
         pending_part: &'db mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
-        check_consistency: bool,
     ) -> Result<Self> {
         let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
         let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
@@ -262,10 +271,6 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
             history_number_table,
             change_history_table,
         };
-
-        if check_consistency {
-            versioned_store.check_consistency()?;
-        }
 
         Ok(versioned_store)
     }

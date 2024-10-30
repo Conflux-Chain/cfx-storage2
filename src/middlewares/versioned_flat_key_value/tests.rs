@@ -1,8 +1,8 @@
 use ethereum_types::H256;
 
 use super::{
-    key_value_store_manager_impl::OneStore, pending_part::pending_schema::PendingKeyValueConfig,
-    table_schema::VersionedKeyValueSchema, VersionedStore,
+    pending_part::pending_schema::PendingKeyValueConfig, table_schema::VersionedKeyValueSchema,
+    VersionedStore,
 };
 use crate::{
     backends::{DatabaseTrait, InMemoryDatabase, VersionedKVName, WriteSchemaTrait},
@@ -26,7 +26,7 @@ type MockStore<T> = BTreeMap<
     (Option<<T as VersionedKeyValueSchema>::Value>, bool),
 >;
 
-#[cfg_attr(test, derive(PartialEq, Debug))]
+#[derive(PartialEq, Debug)]
 pub struct MockOneStore<K: Ord, V: Clone, C> {
     map: BTreeMap<K, V>,
     _marker: PhantomData<C>,
@@ -564,9 +564,10 @@ fn select_vec_element<T: Clone>(rng: &mut ChaChaRng, vec: &[T]) -> T {
 
 fn gen_updates(
     rng: &mut ChaChaRng,
-    previous_keys: &mut BTreeSet<u64>,
+    previous_keys: &BTreeSet<u64>,
     num_gen_new_keys: usize,
     num_gen_previous_keys: usize,
+    all_keys: &mut BTreeSet<u64>,
 ) -> BTreeMap<u64, Option<u64>> {
     // gen previous keys (i.e., replace), allow redundant keys and adopt the newest value for the same key
     let mut updates: BTreeMap<_, _> = if !previous_keys.is_empty() {
@@ -593,7 +594,10 @@ fn gen_updates(
         new_keys.insert(key);
         updates.insert(key, gen_opt_value(rng));
     }
-    previous_keys.append(&mut new_keys);
+
+    for key in updates.keys() {
+        all_keys.insert(key.clone());
+    }
 
     updates
 }
@@ -603,6 +607,7 @@ fn gen_init(
     rng: &mut ChaChaRng,
     max_num_new_keys: usize,
     max_num_previous_keys: usize,
+    all_keys: &mut BTreeSet<u64>,
 ) -> (
     UniqueVec<CommitID>,
     Vec<BTreeMap<u64, Option<u64>>>,
@@ -619,16 +624,18 @@ fn gen_init(
     }
     assert_eq!(history_cids.len(), num_history);
 
+    assert!(all_keys.is_empty());
     let mut history_updates = Vec::new();
-    let mut previous_keys = BTreeSet::new();
     for _ in 0..num_history {
         let num_new_keys = (rng.next_u32() as usize % max_num_new_keys) + 1;
         let num_previous_keys = (rng.next_u32() as usize % max_num_previous_keys) + 1;
+        let previous_keys = all_keys.clone();
         history_updates.push(gen_updates(
             rng,
-            &mut previous_keys,
+            &previous_keys,
             num_new_keys,
             num_previous_keys,
+            all_keys,
         ));
     }
 
@@ -667,23 +674,26 @@ fn gen_key(rng: &mut ChaChaRng, existing_keys: Vec<u64>) -> (KeyType, u64) {
     }
 }
 
-struct VersionedStoreProxy<'a, 'b, 'db, T: VersionedKeyValueSchema> {
+struct VersionedStoreProxy<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema> {
     mock_store: &'a mut MockVersionedStore<T>,
     real_store: &'b mut VersionedStore<'db, T>,
+    all_keys: &'c mut BTreeSet<T::Key>,
 }
 
-impl<'a, 'b, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
-    VersionedStoreProxy<'a, 'b, 'db, T>
+impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
+    VersionedStoreProxy<'a, 'b, 'c, 'db, T>
 where
     T::Value: PartialEq,
 {
     fn new(
         mock_store: &'a mut MockVersionedStore<T>,
         real_store: &'b mut VersionedStore<'db, T>,
+        all_keys: &'c mut BTreeSet<T::Key>,
     ) -> Self {
         Self {
             mock_store,
             real_store,
+            all_keys,
         }
     }
 
@@ -781,12 +791,13 @@ where
         if num_pending > 0 {
             // gen root
             let pending_root = self.gen_novel_commit_id(rng);
-            let mut previous_keys = self.get_previous_keys(self.mock_store.pending.parent_of_root);
+            let previous_keys = self.get_previous_keys(self.mock_store.pending.parent_of_root);
             let updates = gen_updates(
                 rng,
-                &mut previous_keys,
+                &previous_keys,
                 num_gen_new_keys,
                 num_gen_previous_keys,
+                self.all_keys,
             );
 
             // add root
@@ -804,12 +815,13 @@ where
                 let (parent_commit_type, parent_commit) = self.gen_parent_commit(rng, true);
                 assert_eq!(parent_commit_type, ParentCommitType::Pending);
                 assert!(parent_commit.is_some());
-                let mut previous_keys = self.get_previous_keys(parent_commit);
+                let previous_keys = self.get_previous_keys(parent_commit);
                 let updates = gen_updates(
                     rng,
-                    &mut previous_keys,
+                    &previous_keys,
                     num_gen_new_keys,
                     num_gen_previous_keys,
+                    self.all_keys,
                 );
 
                 self.mock_store
@@ -826,24 +838,36 @@ where
     }
 }
 
-impl<'a, 'b, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
-    VersionedStoreProxy<'a, 'b, 'db, T>
+impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
+    VersionedStoreProxy<'a, 'b, 'c, 'db, T>
 {
-    fn get_versioned_store(&self, commit_id_type: CommitIDType, commit: &CommitID) -> bool {
+    fn get_versioned_store(
+        &self,
+        rng: &mut ChaChaRng,
+        commit_id_type: CommitIDType,
+        commit: &CommitID,
+    ) -> bool {
         let mock_res = self.mock_store.get_versioned_store(commit);
         let real_res = self.real_store.get_versioned_store(commit);
 
-        todo!();
-        // assert_eq!(mock_res, real_res);
-
         match commit_id_type {
             CommitIDType::Novel => {
-                assert_eq!(mock_res, Err(StorageError::CommitIDNotFound))
+                assert_eq!(mock_res, Err(StorageError::CommitIDNotFound));
+                assert_eq!(real_res.unwrap_err(), StorageError::CommitIDNotFound);
+                false
             }
-            _ => assert!(mock_res.is_ok()),
-        };
-
-        real_res.is_ok()
+            _ => {
+                let mock_res = mock_res.unwrap();
+                let real_res = real_res.unwrap();
+                for key in self.all_keys.iter() {
+                    assert_eq!(mock_res.get(key), real_res.get(key));
+                }
+                for _ in 0..10 {
+                    let key = gen_novel_u64(rng, self.all_keys);
+                }
+                true
+            }
+        }
     }
 
     fn iter_historical_changes(
@@ -957,12 +981,13 @@ impl<'a, 'b, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
     ) -> bool {
         let has_root_before_add = !self.mock_store.pending.tree.is_empty();
         let (parent_commit_type, parent_commit) = self.gen_parent_commit(rng, false);
-        let mut previous_keys = self.get_previous_keys(parent_commit);
+        let previous_keys = self.get_previous_keys(parent_commit);
         let updates = gen_updates(
             rng,
-            &mut previous_keys,
+            &previous_keys,
             num_gen_new_keys,
             num_gen_previous_keys,
+            self.all_keys,
         );
 
         let mock_res = self
@@ -1047,19 +1072,21 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
     let num_gen_new_keys = 10;
     let num_gen_previous_keys = 10;
 
+    let mut all_keys = BTreeSet::new();
+
     // init history part
     let (history_cids, history_updates, mut empty_db, mut pending_part) = gen_init(
         num_history,
         &mut rng,
         num_gen_new_keys,
         num_gen_previous_keys,
+        &mut all_keys,
     );
 
     let mut mock_versioned_store =
         MockVersionedStore::build(history_cids.clone(), history_updates.clone());
 
     let write_schema = InMemoryDatabase::write_schema();
-
     VersionedStore::help_new(
         &empty_db,
         &write_schema,
@@ -1071,9 +1098,22 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
     .unwrap();
     empty_db.commit(write_schema).unwrap();
     let db = empty_db;
-    let mut real_versioned_store = VersionedStore::new(&db, &mut pending_part, true).unwrap();
-    let mut versioned_store_proxy =
-        VersionedStoreProxy::new(&mut mock_versioned_store, &mut real_versioned_store);
+    let mut real_versioned_store = VersionedStore::new(&db, &mut pending_part).unwrap();
+    real_versioned_store.check_consistency().unwrap();
+
+    let mut versioned_store_proxy = VersionedStoreProxy::new(
+        &mut mock_versioned_store,
+        &mut real_versioned_store,
+        &mut all_keys,
+    );
+
+    // init pending part
+    versioned_store_proxy.init_pending_part(
+        num_pending,
+        &mut rng,
+        num_gen_new_keys,
+        num_gen_previous_keys,
+    );
 
     let operations = vec![
         Operation::GetVersionedStore,
@@ -1091,7 +1131,7 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
 
         let this_operation_is_ok = match operation {
             Operation::GetVersionedStore => {
-                versioned_store_proxy.get_versioned_store(commit_id_type, &commit_id)
+                versioned_store_proxy.get_versioned_store(&mut rng, commit_id_type, &commit_id)
             }
             Operation::GetVersionedKey => {
                 versioned_store_proxy.get_versioned_key(&mut rng, commit_id_type, &commit_id)

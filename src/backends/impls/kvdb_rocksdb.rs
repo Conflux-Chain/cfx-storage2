@@ -31,7 +31,7 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
         >()))
     }
 
-    fn iter_from_start<'a>(&'a self) -> Result<TableIter<'a, '_, T>> {
+    fn iter_from_start(&self) -> Result<TableIter<T>> {
         Ok(Box::new(crate::todo_iter::<
             DecResult<(Cow<T::Key>, Cow<T::Value>)>,
         >()))

@@ -22,7 +22,7 @@ pub trait TableRead<T: TableSchema> {
 
     fn iter<'a>(&'a self, key: &T::Key) -> Result<TableIter<'a, '_, T>>;
 
-    fn iter_from_start<'a>(&'a self) -> Result<TableIter<'a, '_, T>>;
+    fn iter_from_start(&self) -> Result<TableIter<T>>;
 }
 
 combine_traits!(TableKey: 'static + EncodeSubKey + Decode + ToOwned + Ord + Eq + Send + Sync + Debug);

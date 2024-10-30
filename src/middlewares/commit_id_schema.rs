@@ -38,6 +38,7 @@ pub fn height_to_history_number(height: usize) -> HistoryNumber {
 }
 
 /// Converts a `history_number` back to a `height`.
+#[cfg(test)]
 pub fn history_number_to_height(history_number: HistoryNumber) -> usize {
     history_number as usize - 1
 }

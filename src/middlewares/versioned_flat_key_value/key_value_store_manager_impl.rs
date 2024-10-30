@@ -1,5 +1,8 @@
 use std::{collections::BTreeMap, marker::PhantomData};
 
+#[cfg(test)]
+use std::fmt;
+
 use crate::{
     backends::TableReader,
     errors::Result,
@@ -11,13 +14,25 @@ use crate::{
 };
 
 use super::{
-    get_versioned_key, table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema}, HistoryIndexKey, PendingError, VersionedStore
+    get_versioned_key,
+    table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema},
+    HistoryIndexKey, PendingError, VersionedStore,
 };
 
 pub struct OneStore<'db, C, T: VersionedKeyValueSchema> {
     updates: Option<BTreeMap<T::Key, Option<T::Value>>>,
     history: Option<OneStoreHistory<'db, T>>,
     _marker_c: PhantomData<C>,
+}
+
+#[cfg(test)]
+impl<'db, C, T: VersionedKeyValueSchema> fmt::Debug for OneStore<'db, C, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OneStore")
+            .field("updates.is_some", &self.updates.is_some())
+            .field("history.is_some", &self.history.is_some())
+            .finish()
+    }
 }
 
 pub struct OneStoreHistory<'db, T: VersionedKeyValueSchema> {
@@ -37,12 +52,25 @@ impl<'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::V
         }
 
         if let Some(history) = &self.history {
-            get_versioned_key(history.history_number, key, &history.history_index_table, &history.change_history_table)
+            get_versioned_key(
+                history.history_number,
+                key,
+                &history.history_index_table,
+                &history.change_history_table,
+            )
         } else {
             Ok(None)
         }
     }
 }
+
+// impl<'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreIterable<T::Key, T::Value>
+//     for OneStore<'db, C, T>
+// {
+//     fn iter<'a>(&'a self, key: &T::Key) -> Result<impl 'a + Iterator<Item = (&T::Key, &T::Value)>> {
+//         todo!()
+//     }
+// }
 
 impl<'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreCommit<T::Key, T::Value, C>
     for OneStore<'db, C, T>
