@@ -93,6 +93,8 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
             }
             Err(PendingError::CommitIDNotFound(target_commit_id)) => {
                 assert_eq!(target_commit_id, *commit);
+                dbg!(commit);
+                dbg!(self.commit_id_table.iter_from_start()?.collect::<Vec<_>>());
                 let history = OneStoreHistory {
                     history_number: self.get_history_number_by_commit_id(*commit)?,
                     history_index_table: self.history_index_table.clone(),

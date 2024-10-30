@@ -39,7 +39,7 @@ impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
         Ok(Box::new(iter))
     }
 
-    #[cfg(test)]
+    // #[cfg(test)]
     fn iter_from_start(&self) -> Result<TableIter<T>> {
         let range = self.inner.0.range((self.col, Vec::new())..);
         let iter = range

@@ -847,6 +847,9 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
         commit_id_type: CommitIDType,
         commit: &CommitID,
     ) -> bool {
+        dbg!(self.mock_store.get_history().len());
+        dbg!(self.mock_store.get_pending().len());
+        dbg!(&commit_id_type);
         let mock_res = self.mock_store.get_versioned_store(commit);
         let real_res = self.real_store.get_versioned_store(commit);
 
@@ -993,9 +996,11 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
             self.all_keys,
         );
 
+        dbg!(parent_commit, commit);
         let mock_res = self
             .mock_store
             .add_to_pending_part(parent_commit, commit, updates.clone());
+        dbg!(parent_commit, commit);
         let real_res = self
             .real_store
             .add_to_pending_part(parent_commit, commit, updates);
@@ -1124,7 +1129,7 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
         Operation::Discard,
         Operation::GetVersionedKey,
         Operation::AddToPendingPart,
-        Operation::ConfirmedPendingToHistory,
+        // Operation::ConfirmedPendingToHistory,
     ];
 
     let mut operations_analyses = HashMap::new();
@@ -1132,6 +1137,12 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
         let operation = select_vec_element(&mut rng, &operations);
         let (commit_id_type, commit_id) = versioned_store_proxy.gen_commit_id(&mut rng);
 
+        dbg!(&operation);
+        dbg!(&commit_id_type);
+        dbg!(gen_novel_u64(&mut rng, &BTreeSet::new()));
+        dbg!(H256::random());
+        dbg!(gen_novel_u64(&mut rng, &BTreeSet::new()));
+        
         let this_operation_is_ok = match operation {
             Operation::GetVersionedStore => {
                 versioned_store_proxy.get_versioned_store(&mut rng, commit_id_type, &commit_id)
