@@ -164,6 +164,13 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
                         .remove(&commit),
                     true
                 );
+                assert!(!self
+                    .pending
+                    .tree
+                    .get(&parent)
+                    .unwrap()
+                    .children
+                    .contains(&commit));
                 Ok(())
             } else {
                 self.pending.tree.insert(commit, node);
@@ -312,7 +319,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
     }
 
     pub fn get_pending_non_root(&self) -> Vec<CommitID> {
-        let pending_non_root: Vec<_> = self
+        let mut pending_non_root: Vec<_> = self
             .pending
             .tree
             .iter()
@@ -324,11 +331,14 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
         } else {
             assert_eq!(pending_non_root.len() + 1, self.pending.tree.len());
         }
+        pending_non_root.sort();
         pending_non_root
     }
 
     pub fn get_pending(&self) -> Vec<CommitID> {
-        self.pending.tree.keys().cloned().into_iter().collect()
+        let mut pending: Vec<_> = self.pending.tree.keys().cloned().into_iter().collect();
+        pending.sort();
+        pending
     }
 
     pub fn get_parent_of_root(&self) -> Option<CommitID> {
@@ -336,15 +346,19 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
     }
 
     pub fn get_history(&self) -> Vec<CommitID> {
-        self.history.keys().cloned().into_iter().collect()
+        let mut history: Vec<_> = self.history.keys().cloned().into_iter().collect();
+        history.sort();
+        history
     }
 
     pub fn get_history_but_parent_of_root(&self) -> Vec<CommitID> {
-        let mut history: BTreeSet<_> = self.history.keys().cloned().collect();
+        let mut history: HashSet<_> = self.history.keys().cloned().collect();
         if let Some(parent_of_root) = self.pending.parent_of_root {
             history.remove(&parent_of_root);
         }
-        history.into_iter().collect()
+        let mut history: Vec<_> = history.into_iter().collect();
+        history.sort();
+        history
     }
 
     pub fn get_commit_ids(&self) -> BTreeSet<CommitID> {
@@ -357,7 +371,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
     }
 
     fn get_keys_on_path(&self, commit: &CommitID) -> Vec<T::Key> {
-        if let Some(pending_res) = self.pending.tree.get(commit) {
+        let mut keys: Vec<_> = if let Some(pending_res) = self.pending.tree.get(commit) {
             pending_res.store.keys().cloned().into_iter().collect()
         } else {
             if let Some((_, history_res)) = self.history.get(commit) {
@@ -365,7 +379,9 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
             } else {
                 Vec::new()
             }
-        }
+        };
+        keys.sort();
+        keys
     }
 
     pub fn add_to_pending_part(
@@ -548,7 +564,7 @@ fn get_rng_for_test() -> ChaChaRng {
 }
 
 fn gen_opt_value(rng: &mut ChaChaRng) -> Option<u64> {
-    let value_is_none = (rng.next_u32() % 3) == 0;
+    let value_is_none = (rng.next_u64() % 3) == 0;
     if value_is_none {
         None
     } else {
@@ -559,7 +575,7 @@ fn gen_opt_value(rng: &mut ChaChaRng) -> Option<u64> {
 fn select_vec_element<T: Clone>(rng: &mut ChaChaRng, vec: &[T]) -> T {
     assert!(!vec.is_empty());
     let num_elements = vec.len();
-    vec[rng.next_u32() as usize % num_elements].clone()
+    vec[rng.next_u64() as usize % num_elements].clone()
 }
 
 fn gen_updates(
@@ -617,7 +633,7 @@ fn gen_init(
     let mut history_cids = UniqueVec::new();
     for _ in 0..num_history << 4 {
         if history_cids.len() < num_history {
-            history_cids.push(H256::random());
+            history_cids.push(gen_random_commit_id(rng));
         } else {
             break;
         }
@@ -627,8 +643,8 @@ fn gen_init(
     assert!(all_keys.is_empty());
     let mut history_updates = Vec::new();
     for _ in 0..num_history {
-        let num_new_keys = (rng.next_u32() as usize % max_num_new_keys) + 1;
-        let num_previous_keys = (rng.next_u32() as usize % max_num_previous_keys) + 1;
+        let num_new_keys = (rng.next_u64() as usize % max_num_new_keys) + 1;
+        let num_previous_keys = (rng.next_u64() as usize % max_num_previous_keys) + 1;
         let previous_keys = all_keys.clone();
         history_updates.push(gen_updates(
             rng,
@@ -656,6 +672,15 @@ fn gen_novel_u64(rng: &mut ChaChaRng, previous: &BTreeSet<u64>) -> u64 {
         }
     }
     panic!()
+}
+
+fn gen_random_commit_id(rng: &mut ChaChaRng) -> CommitID {
+    let mut bytes = [0u8; 32];
+    for i in 0..4 {
+        let num = rng.next_u64().to_ne_bytes();
+        bytes[i * 8..(i + 1) * 8].copy_from_slice(&num);
+    }
+    H256::from_slice(&bytes)
 }
 
 fn gen_key(rng: &mut ChaChaRng, existing_keys: Vec<u64>) -> (KeyType, u64) {
@@ -700,7 +725,7 @@ where
     fn gen_novel_commit_id(&self, rng: &mut ChaChaRng) -> CommitID {
         let previous = self.mock_store.get_commit_ids();
         for _ in 0..1 << 4 {
-            let novel = H256::random();
+            let novel = gen_random_commit_id(rng);
             if !previous.contains(&novel) {
                 return novel;
             }
@@ -847,9 +872,6 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
         commit_id_type: CommitIDType,
         commit: &CommitID,
     ) -> bool {
-        dbg!(self.mock_store.get_history().len());
-        dbg!(self.mock_store.get_pending().len());
-        dbg!(&commit_id_type);
         let mock_res = self.mock_store.get_versioned_store(commit);
         let real_res = self.real_store.get_versioned_store(commit);
 
@@ -974,6 +996,9 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
             ),
         };
 
+        self.mock_store.check_consistency();
+        self.real_store.check_consistency().unwrap();
+
         real_res.is_ok()
     }
 
@@ -996,11 +1021,9 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
             self.all_keys,
         );
 
-        dbg!(parent_commit, commit);
         let mock_res = self
             .mock_store
             .add_to_pending_part(parent_commit, commit, updates.clone());
-        dbg!(parent_commit, commit);
         let real_res = self
             .real_store
             .add_to_pending_part(parent_commit, commit, updates);
@@ -1137,12 +1160,6 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
         let operation = select_vec_element(&mut rng, &operations);
         let (commit_id_type, commit_id) = versioned_store_proxy.gen_commit_id(&mut rng);
 
-        dbg!(&operation);
-        dbg!(&commit_id_type);
-        dbg!(gen_novel_u64(&mut rng, &BTreeSet::new()));
-        dbg!(H256::random());
-        dbg!(gen_novel_u64(&mut rng, &BTreeSet::new()));
-        
         let this_operation_is_ok = match operation {
             Operation::GetVersionedStore => {
                 versioned_store_proxy.get_versioned_store(&mut rng, commit_id_type, &commit_id)
@@ -1175,7 +1192,7 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
             .or_insert(0) += 1;
     }
 
-    dbg!("operations_analyses");
+    println!("operations_analyses");
 
     print!("{:<20}", "");
     for op in &operations {
@@ -1203,5 +1220,5 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
 
 #[test]
 fn tests_versioned_store() {
-    test_versioned_store(2, 10, 100);
+    test_versioned_store(2, 10, 1000);
 }

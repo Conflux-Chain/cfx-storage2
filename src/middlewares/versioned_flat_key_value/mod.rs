@@ -80,13 +80,9 @@ fn get_versioned_key<'db, T: VersionedKeyValueSchema>(
 // private helper methods
 impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
     fn get_history_number_by_commit_id(&self, commit: CommitID) -> Result<HistoryNumber> {
-        dbg!(commit);
-        dbg!(self.commit_id_table.iter_from_start()?.collect::<Vec<_>>());
         if let Some(value) = self.commit_id_table.get(&commit)? {
-            dbg!("yes");
             Ok(value.into_owned())
         } else {
-            dbg!("no");
             Err(StorageError::CommitIDNotFound)
         }
     }
@@ -298,11 +294,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
         commit: CommitID,
         updates: BTreeMap<T::Key, Option<T::Value>>,
     ) -> Result<()> {
-        dbg!(commit);
-        dbg!(self.commit_id_table.iter_from_start()?.collect::<Vec<_>>());
-
         if self.commit_id_table.get(&commit)?.is_some() {
-            dbg!("exists");
             return Err(StorageError::CommitIdAlreadyExistsInHistory);
         }
 
