@@ -48,8 +48,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         if let Some(parent_of_discard) = node.get_parent() {
             let to_remove = self.bfs_subtree(slab_index);
             for idx in to_remove {
-                self.index_map
-                    .remove(&self.nodes.remove(idx).get_commit_id());
+                self.detach_node(idx);
             }
             let parent_node = self.get_mut_node_by_slab_index(parent_of_discard);
             parent_node.remove_child(&slab_index);

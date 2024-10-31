@@ -135,4 +135,9 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
         slab_indices
     }
+
+    fn detach_node(&mut self, idx: SlabIndex) {
+        self.index_map
+            .remove(&self.nodes.remove(idx).get_commit_id());
+    }
 }

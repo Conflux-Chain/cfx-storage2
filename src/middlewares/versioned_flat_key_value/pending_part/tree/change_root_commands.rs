@@ -48,8 +48,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             }
         }
         for idx in to_remove {
-            self.index_map
-                .remove(&self.nodes.remove(idx).get_commit_id());
+            self.detach_node(idx);
         }
 
         // set new_root as root
