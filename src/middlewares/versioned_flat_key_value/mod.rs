@@ -77,6 +77,76 @@ fn get_versioned_key<'db, T: VersionedKeyValueSchema>(
     change_history_table.get_versioned_key(&found_version_number, key)
 }
 
+#[allow(clippy::type_complexity)]
+fn confirm_series_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
+    db: &mut D,
+    to_confirm_start_height: usize,
+    to_confirm_ids_maps: Vec<(CommitID, BTreeMap<T::Key, Option<T::Value>>)>,
+) -> Result<()> {
+    let write_schema = D::write_schema();
+
+    {
+        let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
+        let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
+        let history_number_table = Arc::new(db.view::<HistoryNumberSchema>()?);
+        let change_history_table =
+            KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
+
+        for (delta_height, (confirmed_commit_id, updates)) in
+            to_confirm_ids_maps.into_iter().enumerate()
+        {
+            let height = to_confirm_start_height + delta_height;
+            let history_number = height_to_history_number(height);
+
+            if commit_id_table.get(&confirmed_commit_id)?.is_some()
+                || history_number_table.get(&history_number)?.is_some()
+            {
+                return Err(StorageError::ConsistencyCheckFailure);
+            }
+
+            let commit_id_table_op = (
+                Cow::Owned(confirmed_commit_id),
+                Some(Cow::Owned(history_number)),
+            );
+            write_schema.write::<CommitIDSchema>(commit_id_table_op);
+
+            let history_number_table_op = (
+                Cow::Owned(history_number),
+                Some(Cow::Owned(confirmed_commit_id)),
+            );
+            write_schema.write::<HistoryNumberSchema>(history_number_table_op);
+
+            let history_indices_table_op = updates.keys().map(|key| {
+                (
+                    Cow::Owned(HistoryIndexKey(key.clone(), history_number)),
+                    Some(Cow::Owned(HistoryIndices)),
+                )
+            });
+            write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
+
+            change_history_table.commit(history_number, updates.into_iter(), &write_schema)?;
+        }
+    }
+
+    db.commit(write_schema)?;
+
+    Ok(())
+}
+
+pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
+    db: &mut D,
+    pending_part: &mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+    new_root_commit_id: CommitID,
+) -> Result<()> {
+    // old root..=new root's parent
+    let (to_confirm_start_height, to_confirm_ids_maps) =
+        pending_part.change_root(new_root_commit_id)?;
+
+    confirm_series_to_history::<D, T>(db, to_confirm_start_height, to_confirm_ids_maps)?;
+
+    Ok(())
+}
+
 // private helper methods
 impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
     fn get_history_number_by_commit_id(&self, commit: CommitID) -> Result<HistoryNumber> {
@@ -113,44 +183,6 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
     //         ),
     //     }
     // }
-
-    fn confirm_one_to_history(
-        &mut self,
-        height: usize,
-        confirmed_commit_id: CommitID,
-        updates: BTreeMap<T::Key, Option<T::Value>>,
-        write_schema: &impl WriteSchemaTrait,
-    ) -> Result<()> {
-        let history_number = height_to_history_number(height);
-
-        assert!(self.commit_id_table.get(&confirmed_commit_id)?.is_none());
-        assert!(self.history_number_table.get(&history_number)?.is_none());
-
-        let commit_id_table_op = (
-            Cow::Owned(confirmed_commit_id),
-            Some(Cow::Owned(history_number)),
-        );
-        write_schema.write::<CommitIDSchema>(commit_id_table_op);
-
-        let history_number_table_op = (
-            Cow::Owned(history_number),
-            Some(Cow::Owned(confirmed_commit_id)),
-        );
-        write_schema.write::<HistoryNumberSchema>(history_number_table_op);
-
-        let history_indices_table_op = updates.keys().map(|key| {
-            (
-                Cow::Owned(HistoryIndexKey(key.clone(), history_number)),
-                Some(Cow::Owned(HistoryIndices)),
-            )
-        });
-        write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
-
-        self.change_history_table
-            .commit(history_number, updates.into_iter(), write_schema)?;
-
-        Ok(())
-    }
 }
 
 // callable methods
@@ -237,36 +269,6 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub fn help_new<D: DatabaseTrait>(
-        db: &'db D,
-        write_schema: &impl WriteSchemaTrait,
-        pending_part: &'db mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
-        to_confirm_start_height: usize,
-        to_confirm_cids: Vec<CommitID>,
-        to_confirm_updates: Vec<BTreeMap<T::Key, Option<T::Value>>>,
-    ) -> Result<()> {
-        let mut versioned_store = VersionedStore::new(db, pending_part)?;
-
-        assert_eq!(to_confirm_cids.len(), to_confirm_updates.len());
-
-        for (delta_height, (confirmed_commit_id, updates)) in to_confirm_cids
-            .into_iter()
-            .zip(to_confirm_updates.into_iter())
-            .enumerate()
-        {
-            let height = to_confirm_start_height + delta_height;
-            versioned_store.confirm_one_to_history(
-                height,
-                confirmed_commit_id,
-                updates,
-                &write_schema,
-            )?;
-        }
-
-        Ok(())
-    }
-
     pub fn new<D: DatabaseTrait>(
         db: &'db D,
         pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
@@ -299,24 +301,5 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
         }
 
         Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
-    }
-
-    pub fn confirmed_pending_to_history(
-        &mut self,
-        new_root_commit_id: CommitID,
-        write_schema: &impl WriteSchemaTrait,
-    ) -> Result<()> {
-        // old root..=new root's parent
-        let (start_height, confirmed_ids_maps) =
-            self.pending_part.change_root(new_root_commit_id)?;
-
-        for (delta_height, (confirmed_commit_id, updates)) in
-            confirmed_ids_maps.into_iter().enumerate()
-        {
-            let height = start_height + delta_height;
-            self.confirm_one_to_history(height, confirmed_commit_id, updates, write_schema)?;
-        }
-
-        Ok(())
     }
 }

@@ -5,9 +5,14 @@ use super::{
     VersionedStore,
 };
 use crate::{
-    backends::{DatabaseTrait, InMemoryDatabase, VersionedKVName, WriteSchemaTrait},
+    backends::{InMemoryDatabase, VersionedKVName},
     errors::Result,
-    middlewares::{versioned_flat_key_value::pending_part::VersionedMap, CommitID, PendingError},
+    middlewares::{
+        versioned_flat_key_value::{
+            confirm_series_to_history, confirmed_pending_to_history, pending_part::VersionedMap,
+        },
+        CommitID, PendingError,
+    },
     traits::{KeyValueStoreCommit, KeyValueStoreManager, KeyValueStoreRead},
     StorageError,
 };
@@ -655,11 +660,23 @@ fn gen_init(
         ));
     }
 
-    let empty_db = InMemoryDatabase::empty();
+    let mut empty_db = InMemoryDatabase::empty();
     let pending_part = VersionedMap::new(
         history_cids.items().last().map(|last_cid| *last_cid),
         history_cids.len(),
     );
+
+    confirm_series_to_history::<InMemoryDatabase, TestSchema>(
+        &mut empty_db,
+        0,
+        history_cids
+            .clone()
+            .to_vec()
+            .into_iter()
+            .zip(history_updates.clone().into_iter())
+            .collect(),
+    )
+    .unwrap();
 
     (history_cids, history_updates, empty_db, pending_part)
 }
@@ -1068,34 +1085,6 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
 
         real_res.is_ok()
     }
-
-    pub fn confirmed_pending_to_history(
-        &mut self,
-        commit_id_type: CommitIDType,
-        new_root_commit_id: CommitID,
-        write_schema: &impl WriteSchemaTrait,
-    ) -> bool {
-        let mock_res = self
-            .mock_store
-            .confirmed_pending_to_history(new_root_commit_id);
-        let real_res = self
-            .real_store
-            .confirmed_pending_to_history(new_root_commit_id, write_schema);
-
-        assert_eq!(mock_res, real_res);
-
-        match commit_id_type {
-            CommitIDType::PendingRoot | CommitIDType::PendingNonRoot => {
-                assert!(mock_res.is_ok());
-            }
-            _ => assert_eq!(
-                mock_res.unwrap_err(),
-                StorageError::PendingError(PendingError::CommitIDNotFound(new_root_commit_id))
-            ),
-        };
-
-        real_res.is_ok()
-    }
 }
 
 fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: usize) {
@@ -1106,7 +1095,7 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
     let mut all_keys = BTreeSet::new();
 
     // init history part
-    let (history_cids, history_updates, mut empty_db, mut pending_part) = gen_init(
+    let (history_cids, history_updates, mut db, mut pending_part) = gen_init(
         num_history,
         &mut rng,
         num_gen_new_keys,
@@ -1117,18 +1106,6 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
     let mut mock_versioned_store =
         MockVersionedStore::build(history_cids.clone(), history_updates.clone());
 
-    let write_schema = InMemoryDatabase::write_schema();
-    VersionedStore::help_new(
-        &empty_db,
-        &write_schema,
-        &mut pending_part,
-        0,
-        history_cids.to_vec(),
-        history_updates,
-    )
-    .unwrap();
-    empty_db.commit(write_schema).unwrap();
-    let db = empty_db;
     let mut real_versioned_store = VersionedStore::new(&db, &mut pending_part).unwrap();
     real_versioned_store.check_consistency().unwrap();
 
@@ -1152,7 +1129,7 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
         Operation::Discard,
         Operation::GetVersionedKey,
         Operation::AddToPendingPart,
-        // Operation::ConfirmedPendingToHistory,
+        Operation::ConfirmedPendingToHistory,
     ];
 
     let mut operations_analyses = HashMap::new();
@@ -1179,12 +1156,33 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
                 num_gen_previous_keys,
             ),
             Operation::ConfirmedPendingToHistory => {
-                let write_schema = InMemoryDatabase::write_schema();
-                versioned_store_proxy.confirmed_pending_to_history(
-                    commit_id_type,
-                    commit_id,
-                    &write_schema,
-                )
+                drop(versioned_store_proxy);
+
+                let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
+
+                drop(real_versioned_store);
+                let real_res = confirmed_pending_to_history(&mut db, &mut pending_part, commit_id);
+                real_versioned_store = VersionedStore::new(&db, &mut pending_part).unwrap();
+                real_versioned_store.check_consistency().unwrap();
+                versioned_store_proxy = VersionedStoreProxy::new(
+                    &mut mock_versioned_store,
+                    &mut real_versioned_store,
+                    &mut all_keys,
+                );
+
+                assert_eq!(mock_res, real_res);
+
+                match commit_id_type {
+                    CommitIDType::PendingRoot | CommitIDType::PendingNonRoot => {
+                        assert!(mock_res.is_ok());
+                    }
+                    _ => assert_eq!(
+                        mock_res.unwrap_err(),
+                        StorageError::PendingError(PendingError::CommitIDNotFound(commit_id))
+                    ),
+                };
+
+                real_res.is_ok()
             }
         };
         *operations_analyses
