@@ -1125,9 +1125,14 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
 
     let operations = vec![
         Operation::GetVersionedStore,
+        Operation::GetVersionedStore,
+        Operation::GetVersionedStore,
         Operation::IterHisoricalChanges,
         Operation::Discard,
         Operation::GetVersionedKey,
+        Operation::AddToPendingPart,
+        Operation::AddToPendingPart,
+        Operation::AddToPendingPart,
         Operation::AddToPendingPart,
         Operation::ConfirmedPendingToHistory,
     ];

@@ -1,14 +1,47 @@
 use std::collections::BTreeMap;
 
-use crate::middlewares::versioned_flat_key_value::pending_part::pending_schema::{
-    ApplyMap, ApplyRecord, PendingKeyValueSchema, Result as PendResult,
+use crate::middlewares::versioned_flat_key_value::pending_part::{
+    current_map::CurrentMap,
+    pending_schema::{ApplyMap, ApplyRecord, PendingKeyValueSchema, Result as PendResult},
 };
 
 use super::Tree;
 
 // methods to support VersionedMap::checkout_current()
 impl<S: PendingKeyValueSchema> Tree<S> {
-    pub fn get_apply_map_from_root_included(
+    pub fn checkout_current(
+        &self,
+        target_commit_id: S::CommitId,
+        curr: &mut Option<CurrentMap<S>>,
+    ) -> PendResult<(), S> {
+        if let Some(current_commit_id) = curr.as_ref().map(|c| c.get_commit_id()) {
+            let (rollbacks, applys) =
+                self.collect_rollback_and_apply_ops(current_commit_id, target_commit_id)?;
+            let current = curr.as_mut().unwrap();
+            current.rollback(rollbacks);
+            current.apply(applys);
+            current.set_commit_id(target_commit_id);
+        } else {
+            let applys = self.get_apply_map_from_root_included(target_commit_id)?;
+            let mut current = CurrentMap::<S>::new(target_commit_id);
+            current.apply(applys);
+            *curr = Some(current);
+        }
+
+        assert_eq!(curr.as_ref().unwrap().get_commit_id(), target_commit_id);
+
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn get_apply_map_from_root_included_for_test(
+        &self,
+        target_commit_id: S::CommitId,
+    ) -> PendResult<ApplyMap<S>, S> {
+        self.get_apply_map_from_root_included(target_commit_id)
+    }
+
+    fn get_apply_map_from_root_included(
         &self,
         target_commit_id: S::CommitId,
     ) -> PendResult<ApplyMap<S>, S> {
@@ -24,7 +57,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
     // correctness based on single root
     #[allow(clippy::type_complexity)]
-    pub fn collect_rollback_and_apply_ops(
+    fn collect_rollback_and_apply_ops(
         &self,
         current_commit_id: S::CommitId,
         target_commit_id: S::CommitId,

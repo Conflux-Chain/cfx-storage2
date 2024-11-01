@@ -46,27 +46,9 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 // checkout
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
-        if let Some(current_commit_id) = self.get_current_commit_id() {
-            let (rollbacks, applys) = self
-                .tree
-                .collect_rollback_and_apply_ops(current_commit_id, target_commit_id)?;
-            let mut current_option = self.current.write();
-            let current = current_option.as_mut().unwrap();
-            current.rollback(rollbacks);
-            current.apply(applys);
-            current.set_commit_id(target_commit_id);
-        } else {
-            let applys = self
-                .tree
-                .get_apply_map_from_root_included(target_commit_id)?;
-            let mut current = CurrentMap::<S>::new(target_commit_id);
-            current.apply(applys);
-            *self.current.write() = Some(current);
-        }
-
-        assert_eq!(self.get_current_commit_id().unwrap(), target_commit_id);
-
-        Ok(())
+        let mut current_option = self.current.write();
+        self.tree
+            .checkout_current(target_commit_id, &mut current_option)
     }
 }
 
@@ -88,10 +70,6 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 
     fn add_root(&mut self, updates: KeyValueMap<S>, commit_id: S::CommitId) -> PendResult<(), S> {
-        if self.current.read().is_some() {
-            return Err(PendingError::MultipleRootsNotAllowed);
-        }
-
         // add root to tree
         let modifications = updates
             .into_iter()
@@ -218,6 +196,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 
     pub fn get_versioned_store(&self, commit_id: S::CommitId) -> PendResult<KeyValueMap<S>, S> {
+        // let query node to be self.current
         self.checkout_current(commit_id)?;
         let current_read = self.current.read();
         let map: BTreeMap<_, _> = current_read
@@ -338,7 +317,7 @@ mod tests {
                     .get_versioned_key_with_checkout(commit_id, &key)
                     .unwrap();
                 let apply_map = forward_only_tree
-                    .get_apply_map_from_root_included(commit_id)
+                    .get_apply_map_from_root_included_for_test(commit_id)
                     .unwrap();
                 let answer = apply_map.get(&key).map(|a| a.value.clone());
                 assert_eq!(versioned_value, answer);
