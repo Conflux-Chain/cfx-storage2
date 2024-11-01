@@ -35,10 +35,6 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
         self.tree.get_parent_of_root()
     }
-
-    fn get_current_commit_id(&self) -> Option<S::CommitId> {
-        self.current.read().as_ref().map(|c| c.get_commit_id())
-    }
 }
 
 // add_node
@@ -175,13 +171,16 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             .map(|c| c.value.clone()))
     }
 
-    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
-        self.tree.discard(commit_id)?;
-        if let Some(current_commit_id) = self.get_current_commit_id() {
+    fn remove_discarded_current(&self, current: &mut Option<CurrentMap<S>>) {
+        if let Some(current_commit_id) = current.as_ref().map(|c| c.get_commit_id()) {
             if !self.tree.contains_commit_id(&current_commit_id) {
-                *self.current.write() = None;
+                *current = None;
             }
         }
+    }
+    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
+        self.tree.discard(commit_id)?;
+        self.remove_discarded_current(&mut self.current.write());
         Ok(())
     }
 

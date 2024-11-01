@@ -12,23 +12,23 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn checkout_current(
         &self,
         target_commit_id: S::CommitId,
-        curr: &mut Option<CurrentMap<S>>,
+        current: &mut Option<CurrentMap<S>>,
     ) -> PendResult<(), S> {
-        if let Some(current_commit_id) = curr.as_ref().map(|c| c.get_commit_id()) {
+        if let Some(current_commit_id) = current.as_ref().map(|c| c.get_commit_id()) {
             let (rollbacks, applys) =
                 self.collect_rollback_and_apply_ops(current_commit_id, target_commit_id)?;
-            let current = curr.as_mut().unwrap();
-            current.rollback(rollbacks);
-            current.apply(applys);
-            current.set_commit_id(target_commit_id);
+            let current_mut = current.as_mut().unwrap();
+            current_mut.rollback(rollbacks);
+            current_mut.apply(applys);
+            current_mut.set_commit_id(target_commit_id);
         } else {
             let applys = self.get_apply_map_from_root_included(target_commit_id)?;
-            let mut current = CurrentMap::<S>::new(target_commit_id);
-            current.apply(applys);
-            *curr = Some(current);
+            let mut new_current = CurrentMap::<S>::new(target_commit_id);
+            new_current.apply(applys);
+            *current = Some(new_current);
         }
 
-        assert_eq!(curr.as_ref().unwrap().get_commit_id(), target_commit_id);
+        assert_eq!(current.as_ref().unwrap().get_commit_id(), target_commit_id);
 
         Ok(())
     }
