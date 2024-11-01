@@ -10,7 +10,6 @@ use super::{
 use parking_lot::RwLock;
 
 pub struct VersionedMap<S: PendingKeyValueSchema> {
-    parent_of_root: Option<S::CommitId>,
     tree: Tree<S>,
     current: RwLock<Option<CurrentMap<S>>>,
 }
@@ -18,8 +17,7 @@ pub struct VersionedMap<S: PendingKeyValueSchema> {
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: usize) -> Self {
         VersionedMap {
-            parent_of_root,
-            tree: Tree::new(height_of_root),
+            tree: Tree::new(parent_of_root, height_of_root),
             current: RwLock::new(None),
         }
     }
@@ -35,7 +33,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
-        self.parent_of_root
+        self.tree.get_parent_of_root()
     }
 
     fn get_current_commit_id(&self) -> Option<S::CommitId> {
@@ -131,7 +129,6 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         let (start_height_to_commit, to_commit) = self.tree.change_root(commit_id)?;
 
         if let Some(parent_of_new_root) = to_commit.last() {
-            self.parent_of_root = Some(parent_of_new_root.0);
             // clear current is necessary
             // because apply_commit_id in current.map may be removed from pending part
             *self.current.write() = None;
@@ -255,7 +252,7 @@ mod tests {
         num_nodes: usize,
         rng: &mut StdRng,
     ) -> (Tree<TestPendingConfig>, VersionedMap<TestPendingConfig>) {
-        let mut forward_only_tree = Tree::new(0);
+        let mut forward_only_tree = Tree::new(None, 0);
         let mut versioned_map = VersionedMap::new(None, 0);
 
         for i in 1..=num_nodes as CommitId {
@@ -328,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_multiple_roots_err() {
-        let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
+        let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
         let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         forward_only_tree.add_root(0, BTreeMap::new()).unwrap();
@@ -346,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_commit_id_not_found_err() {
-        let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
+        let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
         let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         assert_eq!(
@@ -361,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_commit_id_already_exists_err() {
-        let mut forward_only_tree = Tree::<TestPendingConfig>::new(0);
+        let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
         let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         forward_only_tree.add_root(0, BTreeMap::new()).unwrap();

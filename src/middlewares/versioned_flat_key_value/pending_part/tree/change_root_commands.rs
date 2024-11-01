@@ -52,9 +52,12 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
 
         // set new_root as root
-        let new_root = self.get_mut_node_by_slab_index(slab_index);
-        new_root.set_as_root();
-        self.height_of_root = new_root.get_height();
+        if let Some(parent_of_new_root) = to_commit.last() {
+            let new_root = self.get_mut_node_by_slab_index(slab_index);
+            new_root.set_as_root();
+            self.height_of_root = new_root.get_height();
+            self.parent_of_root = Some(parent_of_new_root.0);
+        }
 
         // (height of old_root, old_root..=new_root's parent)
         Ok((self.height_of_root - to_commit.len(), to_commit))

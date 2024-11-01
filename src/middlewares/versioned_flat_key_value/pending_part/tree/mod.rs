@@ -16,6 +16,7 @@ use super::pending_schema::{PendingKeyValueSchema, Result as PendResult};
 use super::PendingError;
 
 pub struct Tree<S: PendingKeyValueSchema> {
+    parent_of_root: Option<S::CommitId>,
     height_of_root: usize,
     nodes: Slab<TreeNode<S>>,
     index_map: HashMap<S::CommitId, SlabIndex>,
@@ -23,8 +24,9 @@ pub struct Tree<S: PendingKeyValueSchema> {
 
 // basic methods
 impl<S: PendingKeyValueSchema> Tree<S> {
-    pub fn new(height_of_root: usize) -> Self {
+    pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: usize) -> Self {
         Tree {
+            parent_of_root,
             height_of_root,
             nodes: Slab::new(),
             index_map: HashMap::new(),
@@ -74,6 +76,10 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         // todo: modifications
 
         true
+    }
+
+    pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
+        self.parent_of_root
     }
 
     pub(super) fn contains_commit_id(&self, commit_id: &S::CommitId) -> bool {
