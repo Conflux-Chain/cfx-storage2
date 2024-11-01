@@ -13,13 +13,10 @@ use crate::{
         },
         CommitID, PendingError,
     },
-    traits::{KeyValueStoreCommit, KeyValueStoreManager, KeyValueStoreRead},
+    traits::{KeyValueStoreManager, KeyValueStoreRead},
     StorageError,
 };
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
-    marker::PhantomData,
-};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use rand_chacha::{
     rand_core::{RngCore, SeedableRng},
@@ -32,21 +29,17 @@ type MockStore<T> = BTreeMap<
 >;
 
 #[derive(PartialEq, Debug)]
-pub struct MockOneStore<K: Ord, V: Clone, C> {
+pub struct MockOneStore<K: Ord, V: Clone> {
     map: BTreeMap<K, V>,
-    _marker: PhantomData<C>,
 }
 
-impl<K: Ord + Clone, V: Clone, C> MockOneStore<K, V, C> {
+impl<K: Ord + Clone, V: Clone> MockOneStore<K, V> {
     pub fn from_mock_map(map: &BTreeMap<K, (Option<V>, bool)>) -> Self {
         let inner_map = map
             .iter()
             .filter_map(|(k, (opt_v, _))| opt_v.as_ref().map(|v| (k.clone(), v.clone())))
             .collect();
-        MockOneStore {
-            map: inner_map,
-            _marker: PhantomData,
-        }
+        MockOneStore { map: inner_map }
     }
 
     pub fn get_keys(&self) -> Vec<K> {
@@ -54,19 +47,9 @@ impl<K: Ord + Clone, V: Clone, C> MockOneStore<K, V, C> {
     }
 }
 
-impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStoreRead<K, V>
-    for MockOneStore<K, V, C>
-{
+impl<K: 'static + Ord, V: 'static + Clone> KeyValueStoreRead<K, V> for MockOneStore<K, V> {
     fn get(&self, key: &K) -> Result<Option<V>> {
         Ok(self.map.get(key).cloned())
-    }
-}
-
-impl<K: 'static + Ord, V: 'static + Clone, C: 'static> KeyValueStoreCommit<K, V, C>
-    for MockOneStore<K, V, C>
-{
-    fn commit(self, commit: C, changes: impl Iterator<Item = (K, V)>) {
-        todo!()
     }
 }
 
@@ -93,7 +76,7 @@ struct MockNode<T: VersionedKeyValueSchema> {
 impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     for MockVersionedStore<T>
 {
-    type Store = MockOneStore<T::Key, T::Value, CommitID>;
+    type Store = MockOneStore<T::Key, T::Value>;
 
     fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
         if let Some(pending_res) = self.pending.tree.get(commit) {

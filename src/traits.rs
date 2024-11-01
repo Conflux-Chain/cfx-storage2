@@ -16,22 +16,13 @@ where
     fn iter<'a>(&'a self, key: &K) -> Result<impl 'a + Iterator<Item = (&K, &V)>>;
 }
 
-pub trait KeyValueStoreCommit<K, V, C>: KeyValueStoreRead<K, V>
-where
-    K: 'static,
-    V: 'static,
-    C: 'static,
-{
-    fn commit(self, commit: C, changes: impl Iterator<Item = (K, V)>);
-}
-
 pub trait KeyValueStoreManager<K, V, C>
 where
     K: 'static,
     V: 'static,
     C: 'static,
 {
-    type Store: KeyValueStoreRead<K, V> + KeyValueStoreCommit<K, V, C>;
+    type Store: KeyValueStoreRead<K, V>;
 
     /// Get the key value store after the commit of given id
     fn get_versioned_store(&self, commit: &C) -> Result<Self::Store>;

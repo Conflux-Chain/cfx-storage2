@@ -82,7 +82,6 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
         // check rollbacks' old_commit_id because TreeNodes are deleted
         // in a lazy way with respect to TreeNodes.modifications
-        // todo: test this lazy method
         for (_, old_commit_id_option) in rollbacks.iter_mut() {
             if let Some(ref old_commit_id) = old_commit_id_option {
                 if !self.contains_commit_id(old_commit_id) {

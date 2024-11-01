@@ -1,12 +1,10 @@
-use std::{collections::BTreeMap, marker::PhantomData};
+use std::collections::BTreeMap;
 
 use crate::{
     backends::TableReader,
     errors::Result,
     middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks},
-    traits::{
-        KeyValueStoreBulksTrait, KeyValueStoreCommit, KeyValueStoreManager, KeyValueStoreRead,
-    },
+    traits::{KeyValueStoreBulksTrait, KeyValueStoreManager, KeyValueStoreRead},
     StorageError,
 };
 
@@ -16,10 +14,9 @@ use super::{
     HistoryIndexKey, PendingError, VersionedStore,
 };
 
-pub struct OneStore<'db, C, T: VersionedKeyValueSchema> {
+pub struct OneStore<'db, T: VersionedKeyValueSchema> {
     updates: Option<BTreeMap<T::Key, Option<T::Value>>>,
     history: Option<OneStoreHistory<'db, T>>,
-    _marker_c: PhantomData<C>,
 }
 
 pub struct OneStoreHistory<'db, T: VersionedKeyValueSchema> {
@@ -28,9 +25,7 @@ pub struct OneStoreHistory<'db, T: VersionedKeyValueSchema> {
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for OneStore<'db, C, T>
-{
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value> for OneStore<'db, T> {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         if let Some(updates) = &self.updates {
             if let Some(opt_v) = updates.get(key) {
@@ -59,19 +54,11 @@ impl<'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::V
 //     }
 // }
 
-impl<'db, C: 'static, T: VersionedKeyValueSchema> KeyValueStoreCommit<T::Key, T::Value, C>
-    for OneStore<'db, C, T>
-{
-    fn commit(self, commit: C, changes: impl Iterator<Item = (T::Key, T::Value)>) {
-        todo!()
-    }
-}
-
 // Trait methods implementation
 impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     for VersionedStore<'cache, 'db, T>
 {
-    type Store = OneStore<'db, CommitID, T>;
+    type Store = OneStore<'db, T>;
     fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
         let pending_res = self.pending_part.get_versioned_store(*commit);
         match pending_res {
@@ -88,7 +75,6 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
                 Ok(OneStore {
                     updates: Some(pending_map),
                     history,
-                    _marker_c: PhantomData,
                 })
             }
             Err(PendingError::CommitIDNotFound(target_commit_id)) => {
@@ -101,7 +87,6 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
                 Ok(OneStore {
                     updates: None,
                     history: Some(history),
-                    _marker_c: PhantomData,
                 })
             }
             Err(other_err) => Err(StorageError::PendingError(other_err)),

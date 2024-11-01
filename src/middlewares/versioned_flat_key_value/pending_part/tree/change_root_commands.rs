@@ -19,7 +19,6 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         path.into()
     }
 
-    // todo: test
     #[allow(clippy::type_complexity)]
     pub fn change_root(
         &mut self,

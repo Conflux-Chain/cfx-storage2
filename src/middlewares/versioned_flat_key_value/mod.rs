@@ -249,7 +249,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
             {
                 return Err(StorageError::ConsistencyCheckFailure);
             }
-            // todo: history_index_table, change_table, min_key
+            // todo: history_index_table, change_table
         } else if self.commit_id_table.iter_from_start()?.next().is_some()
             || self
                 .history_number_table
