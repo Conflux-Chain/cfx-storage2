@@ -41,15 +41,6 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 }
 
-// checkout
-impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    fn checkout_current(&self, target_commit_id: S::CommitId) -> PendResult<(), S> {
-        let mut current_option = self.current.write();
-        self.tree
-            .checkout_current(target_commit_id, &mut current_option)
-    }
-}
-
 // add_node
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn add_node(
@@ -94,7 +85,8 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     ) -> PendResult<(), S> {
         // let parent to be self.current
         // this step is necessary for computing modifications' last_commit_id
-        self.checkout_current(parent_commit_id)?;
+        self.tree
+            .checkout_current(parent_commit_id, &mut self.current.write())?;
 
         // add node to tree
         let current_read = self.current.read();
@@ -169,7 +161,8 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         key: &S::Key,
     ) -> PendResult<Option<Option<S::Value>>, S> {
         // let query node to be self.current
-        self.checkout_current(commit_id)?;
+        self.tree
+            .checkout_current(commit_id, &mut self.current.write())?;
 
         // query
         Ok(self
@@ -194,7 +187,8 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     pub fn get_versioned_store(&self, commit_id: S::CommitId) -> PendResult<KeyValueMap<S>, S> {
         // let query node to be self.current
-        self.checkout_current(commit_id)?;
+        self.tree
+            .checkout_current(commit_id, &mut self.current.write())?;
         let current_read = self.current.read();
         let map: BTreeMap<_, _> = current_read
             .as_ref()
