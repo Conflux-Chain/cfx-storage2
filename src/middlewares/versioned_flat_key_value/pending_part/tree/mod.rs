@@ -1,7 +1,7 @@
-mod add_node_commands;
-mod change_root_commands;
-mod checkout_commands;
-mod key_value_store_manager_commands;
+mod add_node;
+mod change_root;
+mod checkout;
+mod commands;
 mod node;
 
 pub type SlabIndex = usize;
