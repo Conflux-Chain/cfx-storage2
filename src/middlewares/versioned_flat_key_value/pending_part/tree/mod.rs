@@ -116,7 +116,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             .map(|p_slab_index| self.get_node_by_slab_index(p_slab_index))
     }
 
-    fn get_by_commit_id(
+    fn get_modification_by_commit_id(
         &self,
         commit_id: S::CommitId,
         key: &S::Key,

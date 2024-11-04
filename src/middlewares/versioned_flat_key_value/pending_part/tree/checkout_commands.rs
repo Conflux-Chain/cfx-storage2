@@ -95,7 +95,10 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             .map(|(k, old_cid_opt)| match old_cid_opt {
                 None => (k, None),
                 Some(rollback_cid) => {
-                    let rollback_value = self.get_by_commit_id(rollback_cid, &k).unwrap().unwrap();
+                    let rollback_value = self
+                        .get_modification_by_commit_id(rollback_cid, &k)
+                        .unwrap()
+                        .unwrap();
                     (
                         k,
                         Some(ApplyRecord::<S> {
