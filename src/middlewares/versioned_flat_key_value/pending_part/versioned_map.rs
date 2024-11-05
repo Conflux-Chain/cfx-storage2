@@ -112,13 +112,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         &mut self,
         commit_id: S::CommitId,
     ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
+        let mut guard = self.current.write();
         // to_commit: old_root..=new_root's parent
         let (start_height_to_commit, to_commit) = self.tree.change_root(commit_id)?;
 
         if let Some(parent_of_new_root) = to_commit.last() {
             // clear current is necessary
             // because apply_commit_id in current.map may be removed from pending part
-            *self.current.write() = None;
+            *guard = None;
         }
 
         Ok((start_height_to_commit, to_commit))
@@ -171,8 +172,9 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
     }
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
+        let mut guard = self.current.write();
         self.tree.discard(commit_id)?;
-        self.remove_discarded_current(&mut self.current.write());
+        self.remove_discarded_current(&mut guard);
         Ok(())
     }
 
