@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::traits::{IsCompleted, NeedNext};
+use crate::types::ValueEntry;
 
 use super::{
     current_map::CurrentMap,
@@ -43,10 +44,13 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn add_node(
         &mut self,
-        updates: KeyValueMap<S>,
+        updates: impl IntoIterator<Item = (S::Key, Option<S::Value>)>,
         commit_id: S::CommitId,
         parent_commit_id: Option<S::CommitId>,
     ) -> PendResult<(), S> {
+        let updates = updates
+            .into_iter()
+            .map(|(key, value)| (key, ValueEntry::from_option(value)));
         if self.get_parent_of_root() == parent_commit_id {
             self.add_root(updates, commit_id)
         } else if let Some(parent_commit_id) = parent_commit_id {
@@ -56,20 +60,22 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
     }
 
-    fn add_root(&mut self, updates: KeyValueMap<S>, commit_id: S::CommitId) -> PendResult<(), S> {
-        // add root to tree
-        let modifications = updates
-            .into_iter()
-            .map(|(key, value)| {
-                (
-                    key,
-                    RecoverRecord::<S> {
-                        value,
-                        last_commit_id: None,
-                    },
-                )
-            })
-            .collect();
+    fn add_root(
+        &mut self,
+        updates: impl Iterator<Item = (S::Key, ValueEntry<S::Value>)>,
+        commit_id: S::CommitId,
+    ) -> PendResult<(), S> {
+        let enact_update = |(key, value)| {
+            (
+                key,
+                RecoverRecord::<S> {
+                    value,
+                    last_commit_id: None,
+                },
+            )
+        };
+
+        let modifications = updates.map(enact_update).collect();
         self.tree.add_root(commit_id, modifications)?;
 
         Ok(())
@@ -77,7 +83,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     fn add_non_root_node(
         &mut self,
-        updates: KeyValueMap<S>,
+        updates: impl Iterator<Item = (S::Key, ValueEntry<S::Value>)>,
         commit_id: S::CommitId,
         parent_commit_id: S::CommitId,
     ) -> PendResult<(), S> {
@@ -89,7 +95,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         // add node to tree
         let current = guard.as_ref().unwrap();
         let mut modifications = BTreeMap::new();
-        for (key, value) in updates.into_iter() {
+        for (key, value) in updates {
             let last_commit_id = current.get(&key).map(|s| s.commit_id);
             modifications.insert(
                 key,
@@ -114,14 +120,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         &mut self,
         commit_id: S::CommitId,
     ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
-        let mut guard = self.current.write();
         // to_commit: old_root..=new_root's parent
         let (start_height_to_commit, to_commit) = self.tree.change_root(commit_id)?;
 
         if let Some(parent_of_new_root) = to_commit.last() {
             // clear current is necessary
             // because apply_commit_id in current.map may be removed from pending part
-            *guard = None;
+            // TODO: consider modify on current instead of removing it.
+            *self.current.get_mut() = None;
         }
 
         Ok((start_height_to_commit, to_commit))
@@ -148,7 +154,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         &self,
         commit_id: &S::CommitId,
         key: &S::Key,
-    ) -> PendResult<Option<Option<S::Value>>, S> {
+    ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
         self.tree.get_versioned_key(commit_id, key)
     }
 
@@ -159,7 +165,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         &self,
         commit_id: S::CommitId,
         key: &S::Key,
-    ) -> PendResult<Option<Option<S::Value>>, S> {
+    ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
         // let query node to be self.current
         let mut guard = self.current.write();
         self.tree.checkout_current(commit_id, &mut guard)?;
@@ -260,7 +266,7 @@ mod tests {
                     (
                         *key,
                         RecoverRecord {
-                            value: *value,
+                            value: ValueEntry::from_option(*value),
                             last_commit_id: None,
                         },
                     )

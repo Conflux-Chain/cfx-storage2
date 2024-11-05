@@ -14,6 +14,7 @@ use self::node::TreeNode;
 
 use super::pending_schema::{PendingKeyValueSchema, Result as PendResult};
 use super::PendingError;
+use crate::types::ValueEntry;
 
 pub struct Tree<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
@@ -98,7 +99,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self.nodes[slab_index]
     }
 
-    fn get_mut_node_by_slab_index(&mut self, slab_index: SlabIndex) -> &mut TreeNode<S> {
+    fn get_node_mut_by_slab_index(&mut self, slab_index: SlabIndex) -> &mut TreeNode<S> {
         &mut self.nodes[slab_index]
     }
 
@@ -120,7 +121,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         commit_id: S::CommitId,
         key: &S::Key,
-    ) -> PendResult<Option<Option<S::Value>>, S> {
+    ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
         let node = self.get_node_by_commit_id(commit_id)?;
         Ok(node.get_modified_value(key))
     }

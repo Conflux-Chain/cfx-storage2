@@ -45,10 +45,11 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
 
         // new node
+        let parent_height = self.get_node_by_slab_index(parent_slab_index).get_height();
         let node = TreeNode::new_non_root_node(
             commit_id,
             parent_slab_index,
-            self.get_node_by_slab_index(parent_slab_index).get_height() + 1,
+            parent_height + 1,
             modifications,
         );
 

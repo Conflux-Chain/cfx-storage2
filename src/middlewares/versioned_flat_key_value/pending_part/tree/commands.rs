@@ -6,6 +6,7 @@ use crate::{
         PendingError,
     },
     traits::{IsCompleted, NeedNext},
+    types::ValueEntry,
 };
 
 use super::Tree;
@@ -22,8 +23,10 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     ) -> PendResult<IsCompleted, S> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
         while let Some(node) = node_option {
+            // TODO: faster historical changes iteration
             if let Some(value) = node.get_modified_value(key) {
-                if !accept(&node.get_commit_id(), key, value.as_ref()) {
+                let need_next = accept(&node.get_commit_id(), key, value.as_opt_ref());
+                if !need_next {
                     return Ok(false);
                 }
             }
@@ -36,7 +39,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         commit_id: &S::CommitId,
         key: &S::Key,
-    ) -> PendResult<Option<Option<S::Value>>, S> {
+    ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
         while let Some(node) = node_option {
             if let Some(value) = node.get_modified_value(key) {
@@ -55,7 +58,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             for idx in to_remove {
                 self.detach_node(idx);
             }
-            let parent_node = self.get_mut_node_by_slab_index(parent_of_discard);
+            let parent_node = self.get_node_mut_by_slab_index(parent_of_discard);
             parent_node.remove_child(&slab_index);
             Ok(())
         } else {

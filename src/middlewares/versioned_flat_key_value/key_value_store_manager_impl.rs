@@ -7,6 +7,7 @@ use crate::{
     traits::{
         IsCompleted, KeyValueStoreBulksTrait, KeyValueStoreManager, KeyValueStoreRead, NeedNext,
     },
+    types::ValueEntry,
     StorageError,
 };
 
@@ -17,7 +18,7 @@ use super::{
 };
 
 pub struct OneStore<'db, T: VersionedKeyValueSchema> {
-    updates: Option<BTreeMap<T::Key, Option<T::Value>>>,
+    updates: Option<BTreeMap<T::Key, ValueEntry<T::Value>>>,
     history: Option<OneStoreHistory<'db, T>>,
 }
 
@@ -31,7 +32,7 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value> for On
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         if let Some(updates) = &self.updates {
             if let Some(opt_v) = updates.get(key) {
-                return Ok(opt_v.clone());
+                return Ok(opt_v.to_option());
             }
         }
 
@@ -130,7 +131,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
         let pending_res = self.pending_part.get_versioned_key(commit, key);
         let history_commit = match pending_res {
             Ok(Some(value)) => {
-                return Ok(value);
+                return Ok(value.into_option());
             }
             Ok(None) => {
                 if let Some(commit) = self.pending_part.get_parent_of_root() {

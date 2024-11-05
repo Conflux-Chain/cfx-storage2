@@ -81,7 +81,7 @@ fn get_versioned_key<'db, T: VersionedKeyValueSchema>(
 fn confirm_series_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     db: &mut D,
     to_confirm_start_height: usize,
-    to_confirm_ids_maps: Vec<(CommitID, BTreeMap<T::Key, Option<T::Value>>)>,
+    to_confirm_ids_maps: Vec<(CommitID, BTreeMap<T::Key, impl Into<Option<T::Value>>>)>,
 ) -> Result<()> {
     let write_schema = D::write_schema();
 
@@ -124,7 +124,11 @@ fn confirm_series_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
             });
             write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
 
-            change_history_table.commit(history_number, updates.into_iter(), &write_schema)?;
+            change_history_table.commit(
+                history_number,
+                updates.into_iter().map(|(key, value)| (key, value.into())),
+                &write_schema,
+            )?;
         }
     }
 

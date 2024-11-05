@@ -4,6 +4,7 @@ pub mod backends;
 pub mod errors;
 mod middlewares;
 pub mod traits;
+pub mod types;
 mod utils;
 
 pub use errors::{Result, StorageError};

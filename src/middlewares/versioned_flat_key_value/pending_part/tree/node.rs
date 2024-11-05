@@ -1,8 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::middlewares::versioned_flat_key_value::pending_part::pending_schema::{
-    ApplyMap, ApplyRecord, KeyValueMap, PendingKeyValueSchema, RecoverMap, RecoverRecord,
+    ApplyMap, ApplyRecord, KeyValueMap, LastCommitIdMap, PendingKeyValueSchema, RecoverMap,
+    RecoverRecord,
 };
+use crate::types::ValueEntry;
 
 use super::SlabIndex;
 
@@ -75,7 +77,7 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         self.commit_id
     }
 
-    pub fn get_modified_value(&self, key: &S::Key) -> Option<Option<S::Value>> {
+    pub fn get_modified_value(&self, key: &S::Key) -> Option<ValueEntry<S::Value>> {
         self.modifications.get(key).map(|v| v.value.clone())
     }
 
@@ -86,21 +88,28 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
             .collect()
     }
 
-    pub fn export_rollback_data(&self, rollbacks: &mut BTreeMap<S::Key, Option<S::CommitId>>) {
+    pub fn export_rollback_data<const OVERRIDE: bool>(&self, rollbacks: &mut LastCommitIdMap<S>) {
         for (key, RecoverRecord { last_commit_id, .. }) in self.modifications.iter() {
-            rollbacks.insert(key.clone(), *last_commit_id);
+            if OVERRIDE {
+                rollbacks.insert(key.clone(), *last_commit_id);
+            } else {
+                rollbacks.entry(key.clone()).or_insert(*last_commit_id);
+            }
         }
     }
 
-    pub fn export_commit_data(&self, commits_rev: &mut ApplyMap<S>) {
+    pub fn export_commit_data<const OVERRIDE: bool>(&self, commits: &mut ApplyMap<S>) {
         let commit_id = self.commit_id;
         for (key, RecoverRecord { value, .. }) in self.modifications.iter() {
-            commits_rev
-                .entry(key.clone())
-                .or_insert_with(|| ApplyRecord {
-                    commit_id,
-                    value: value.clone(),
-                });
+            let new_record = || ApplyRecord {
+                commit_id,
+                value: value.clone(),
+            };
+            if OVERRIDE {
+                commits.insert(key.clone(), new_record());
+            } else {
+                commits.entry(key.clone()).or_insert_with(new_record);
+            }
         }
     }
 }
