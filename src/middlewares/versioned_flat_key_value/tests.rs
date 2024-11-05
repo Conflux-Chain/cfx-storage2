@@ -23,6 +23,94 @@ use rand_chacha::{
     ChaChaRng,
 };
 
+impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
+    #[cfg(test)]
+    pub fn check_consistency(&self) -> Result<()> {
+        if self.check_consistency_inner().is_err() {
+            Err(StorageError::ConsistencyCheckFailure)
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    fn check_consistency_inner(&self) -> Result<()> {
+        use crate::middlewares::commit_id_schema::{
+            height_to_history_number, history_number_to_height,
+        };
+
+        if let Some(parent) = self.pending_part.get_parent_of_root() {
+            let parent_history_number =
+                if let Some(parent_history_number) = self.commit_id_table.get(&parent)? {
+                    parent_history_number.into_owned()
+                } else {
+                    return Err(StorageError::ConsistencyCheckFailure);
+                };
+
+            let mut history_number = parent_history_number;
+            let min_history_number = height_to_history_number(0);
+            while history_number >= min_history_number {
+                let commit_id =
+                    if let Some(commit_id) = self.history_number_table.get(&history_number)? {
+                        commit_id.into_owned()
+                    } else {
+                        return Err(StorageError::ConsistencyCheckFailure);
+                    };
+                let check_history_number =
+                    if let Some(check_history_number) = self.commit_id_table.get(&commit_id)? {
+                        check_history_number.into_owned()
+                    } else {
+                        return Err(StorageError::ConsistencyCheckFailure);
+                    };
+                if history_number != check_history_number {
+                    return Err(StorageError::ConsistencyCheckFailure);
+                };
+                history_number -= 1;
+            }
+
+            let parent_history_number_plus_one = parent_history_number + 1;
+            if self
+                .history_number_table
+                .iter(&parent_history_number_plus_one)?
+                .next()
+                .is_some()
+            {
+                return Err(StorageError::ConsistencyCheckFailure);
+            }
+
+            if self.commit_id_table.iter_from_start()?.count()
+                != self.history_number_table.iter_from_start()?.count()
+            {
+                return Err(StorageError::ConsistencyCheckFailure);
+            }
+
+            if !self
+                .pending_part
+                .check_consistency(history_number_to_height(parent_history_number + 1))
+            {
+                return Err(StorageError::ConsistencyCheckFailure);
+            }
+            // todo: history_index_table, change_table
+        } else if self.commit_id_table.iter_from_start()?.next().is_some()
+            || self
+                .history_number_table
+                .iter_from_start()?
+                .next()
+                .is_some()
+            || self.history_index_table.iter_from_start()?.next().is_some()
+            || self
+                .change_history_table
+                .iter_from_start()?
+                .next()
+                .is_some()
+        {
+            return Err(StorageError::ConsistencyCheckFailure);
+        }
+
+        Ok(())
+    }
+}
+
 type MockStore<T> = BTreeMap<
     <T as VersionedKeyValueSchema>::Key,
     (Option<<T as VersionedKeyValueSchema>::Value>, bool),

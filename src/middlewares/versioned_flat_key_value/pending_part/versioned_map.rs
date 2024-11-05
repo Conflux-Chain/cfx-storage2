@@ -161,6 +161,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     // alternative method of self.get_versioned_key(),
     // but it invokes self.checkout_current(),
     // thus is only suitable for frequent commit_id
+    #[cfg(test)]
     pub fn get_versioned_key_with_checkout(
         &self,
         commit_id: S::CommitId,
@@ -174,17 +175,17 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         Ok(current.get(key).map(|c| c.value.clone()))
     }
 
-    fn remove_discarded_current(&self, current: &mut Option<CurrentMap<S>>) {
-        if let Some(current_commit_id) = current.as_ref().map(|c| c.get_commit_id()) {
-            if !self.tree.contains_commit_id(&current_commit_id) {
-                *current = None;
-            }
-        }
-    }
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
-        let mut guard = self.current.write();
         self.tree.discard(commit_id)?;
-        self.remove_discarded_current(&mut guard);
+
+        let current = self.current.get_mut();
+        let obsoleted_commit_id =
+            |c: &CurrentMap<S>| !self.tree.contains_commit_id(&c.get_commit_id());
+
+        if current.as_ref().map_or(false, obsoleted_commit_id) {
+            *current = None;
+        }
+
         Ok(())
     }
 
