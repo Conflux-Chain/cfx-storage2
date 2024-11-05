@@ -1,10 +1,18 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::Deref};
 
 use super::pending_schema::{ApplyMap, ApplyRecord, PendingKeyValueSchema};
 
-pub struct CurrentMap<S: PendingKeyValueSchema> {
+pub(super) struct CurrentMap<S: PendingKeyValueSchema> {
     map: BTreeMap<S::Key, ApplyRecord<S>>,
     commit_id: S::CommitId,
+}
+
+impl<S: PendingKeyValueSchema> Deref for CurrentMap<S> {
+    type Target = BTreeMap<S::Key, ApplyRecord<S>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.map
+    }
 }
 
 impl<S: PendingKeyValueSchema> CurrentMap<S> {
@@ -13,10 +21,6 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
             map: BTreeMap::new(),
             commit_id,
         }
-    }
-
-    pub fn get_map(&self) -> &BTreeMap<S::Key, ApplyRecord<S>> {
-        &self.map
     }
 
     pub fn get_commit_id(&self) -> S::CommitId {

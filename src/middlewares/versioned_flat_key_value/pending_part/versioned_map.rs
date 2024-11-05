@@ -81,15 +81,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     ) -> PendResult<(), S> {
         // let parent to be self.current
         // this step is necessary for computing modifications' last_commit_id
-        self.tree
-            .checkout_current(parent_commit_id, &mut self.current.write())?;
+        let mut guard = self.current.write();
+        self.tree.checkout_current(parent_commit_id, &mut guard)?;
 
         // add node to tree
-        let current_read = self.current.read();
-        let current = current_read.as_ref().unwrap();
+        let current = guard.as_ref().unwrap();
         let mut modifications = BTreeMap::new();
         for (key, value) in updates.into_iter() {
-            let last_commit_id = current.get_map().get(&key).map(|s| s.commit_id);
+            let last_commit_id = current.get(&key).map(|s| s.commit_id);
             modifications.insert(
                 key,
                 RecoverRecord {
@@ -157,18 +156,11 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         key: &S::Key,
     ) -> PendResult<Option<Option<S::Value>>, S> {
         // let query node to be self.current
-        self.tree
-            .checkout_current(commit_id, &mut self.current.write())?;
+        let mut guard = self.current.write();
+        self.tree.checkout_current(commit_id, &mut guard)?;
 
-        // query
-        Ok(self
-            .current
-            .read()
-            .as_ref()
-            .unwrap()
-            .get_map()
-            .get(key)
-            .map(|c| c.value.clone()))
+        let current = guard.as_ref().unwrap();
+        Ok(current.get(key).map(|c| c.value.clone()))
     }
 
     fn remove_discarded_current(&self, current: &mut Option<CurrentMap<S>>) {
@@ -186,17 +178,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     pub fn get_versioned_store(&self, commit_id: S::CommitId) -> PendResult<KeyValueMap<S>, S> {
         // let query node to be self.current
-        self.tree
-            .checkout_current(commit_id, &mut self.current.write())?;
-        let current_read = self.current.read();
-        let map: BTreeMap<_, _> = current_read
-            .as_ref()
-            .unwrap()
-            .get_map()
+        let mut guard = self.current.write();
+        self.tree.checkout_current(commit_id, &mut guard)?;
+
+        let current = guard.as_ref().unwrap();
+        Ok(current
             .iter()
             .map(|(k, apply_record)| (k.clone(), apply_record.value.clone()))
-            .collect();
-        Ok(map)
+            .collect())
     }
 }
 
