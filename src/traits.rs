@@ -16,6 +16,9 @@ where
     fn iter<'a>(&'a self, key: &K) -> Result<impl 'a + Iterator<Item = (&K, &V)>>;
 }
 
+pub type NeedNext = bool;
+pub type IsCompleted = bool;
+
 pub trait KeyValueStoreManager<K, V, C>
 where
     K: 'static,
@@ -29,11 +32,12 @@ where
 
     /// Start from the given commit, and iter changes backforward
     #[allow(clippy::type_complexity)]
-    fn iter_historical_changes<'a>(
-        &'a self,
+    fn iter_historical_changes(
+        &self,
+        accept: impl FnMut(&C, &K, Option<&V>) -> NeedNext,
         commit_id: &C,
-        key: &'a K,
-    ) -> Result<Box<dyn 'a + Iterator<Item = (C, &K, Option<V>)>>>;
+        key: &K,
+    ) -> Result<IsCompleted>;
 
     fn discard(&mut self, commit: C) -> Result<()>;
 

@@ -1,10 +1,12 @@
-use std::collections::BTreeMap;
+use std::{borrow::Borrow, collections::BTreeMap};
 
 use crate::{
     backends::TableReader,
     errors::Result,
     middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks},
-    traits::{KeyValueStoreBulksTrait, KeyValueStoreManager, KeyValueStoreRead},
+    traits::{
+        IsCompleted, KeyValueStoreBulksTrait, KeyValueStoreManager, KeyValueStoreRead, NeedNext,
+    },
     StorageError,
 };
 
@@ -93,28 +95,27 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
         }
     }
 
-    #[allow(clippy::type_complexity)]
-    fn iter_historical_changes<'a>(
-        &'a self,
+    fn iter_historical_changes(
+        &self,
+        mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,
         commit_id: &CommitID,
-        key: &'a T::Key,
-    ) -> Result<Box<dyn 'a + Iterator<Item = (CommitID, &T::Key, Option<T::Value>)>>> {
-        let pending_res = self.pending_part.iter_historical_changes(commit_id, key);
+        key: &T::Key,
+    ) -> Result<IsCompleted> {
+        let pending_res = self
+            .pending_part
+            .iter_historical_changes(&mut accept, commit_id, key);
         match pending_res {
-            Ok(pending_iter) => {
+            Ok(false) => Ok(false),
+            Ok(true) => {
                 if let Some(history_commit) = self.pending_part.get_parent_of_root() {
-                    let history_iter =
-                        self.iter_historical_changes_history_part(&history_commit, key)?;
-                    Ok(Box::new(pending_iter.chain(history_iter)))
+                    self.iter_historical_changes_history_part(&mut accept, &history_commit, key)
                 } else {
-                    Ok(Box::new(pending_iter))
+                    Ok(true)
                 }
             }
             Err(PendingError::CommitIDNotFound(target_commit)) => {
                 assert_eq!(target_commit, *commit_id);
-                let history_iter =
-                    self.iter_historical_changes_history_part(&target_commit, key)?;
-                Ok(Box::new(history_iter))
+                self.iter_historical_changes_history_part(&mut accept, &target_commit, key)
             }
             Err(other_err) => Err(StorageError::PendingError(other_err)),
         }
@@ -154,20 +155,20 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
 
 // Helper methods used in trait implementations
 impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
-    fn iter_historical_changes_history_part<'a>(
-        &'a self,
+    fn iter_historical_changes_history_part(
+        &self,
+        mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,
         commit_id: &CommitID,
-        key: &'a T::Key,
-    ) -> Result<impl 'a + Iterator<Item = (CommitID, &T::Key, Option<T::Value>)>> {
+        key: &T::Key,
+    ) -> Result<IsCompleted> {
         let query_number = self.get_history_number_by_commit_id(*commit_id)?;
 
-        let mut num_items = 0;
         let range_query_key = HistoryIndexKey(key.clone(), query_number);
         for item in self.history_index_table.iter(&range_query_key)? {
             let (k_with_history_number, indices) = item?;
             let HistoryIndexKey(k, history_number) = k_with_history_number.as_ref();
             if k != key {
-                break;
+                return Ok(true);
             } else {
                 let found_version_number = indices.as_ref().last(*history_number);
                 let found_value = self
@@ -177,31 +178,12 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
                 if found_commit_id.is_none() {
                     return Err(StorageError::VersionNotFound);
                 }
-                num_items += 1;
+                if !accept(found_commit_id.unwrap().borrow(), key, found_value.as_ref()) {
+                    return Ok(false);
+                }
             }
         }
-
-        let history_iter = self
-            .history_index_table
-            .iter(&range_query_key)?
-            .take(num_items)
-            .map(move |item| {
-                let (k_with_history_number, indices) =
-                    item.expect("previous for + take() should truncate before err");
-                let HistoryIndexKey(k, history_number) = k_with_history_number.as_ref();
-                assert_eq!(k, key);
-                let found_version_number = indices.as_ref().last(*history_number);
-                let found_value = self
-                    .change_history_table
-                    .get_versioned_key(&found_version_number, key)
-                    .expect("previous for + take() should truncate before err");
-                let found_commit_id = self
-                    .history_number_table
-                    .get(&found_version_number)
-                    .expect("previous for + take() should truncate before err");
-                (found_commit_id.unwrap().into_owned(), key, found_value)
-            });
-        Ok(history_iter)
+        Ok(true)
     }
 
     // fn get_versioned_store_history_part(

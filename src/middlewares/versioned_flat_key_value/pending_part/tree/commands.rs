@@ -1,8 +1,11 @@
-use crate::middlewares::{
-    versioned_flat_key_value::pending_part::pending_schema::{
-        PendingKeyValueSchema, Result as PendResult,
+use crate::{
+    middlewares::{
+        versioned_flat_key_value::pending_part::pending_schema::{
+            PendingKeyValueSchema, Result as PendResult,
+        },
+        PendingError,
     },
-    PendingError,
+    traits::{IsCompleted, NeedNext},
 };
 
 use super::Tree;
@@ -11,20 +14,22 @@ use super::Tree;
 // supporting helper methods in VersionedMap for
 // implementing `KeyValueStoreManager` for `VersionedStore`.
 impl<S: PendingKeyValueSchema> Tree<S> {
-    pub fn iter_historical_changes<'a>(
-        &'a self,
+    pub fn iter_historical_changes(
+        &self,
+        mut accept: impl FnMut(&S::CommitId, &S::Key, Option<&S::Value>) -> NeedNext,
         commit_id: &S::CommitId,
-        key: &'a S::Key,
-    ) -> PendResult<impl 'a + Iterator<Item = (S::CommitId, &S::Key, Option<S::Value>)>, S> {
+        key: &S::Key,
+    ) -> PendResult<IsCompleted, S> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
-        let mut path = Vec::new();
         while let Some(node) = node_option {
             if let Some(value) = node.get_modified_value(key) {
-                path.push((node.get_commit_id(), key, value));
+                if !accept(&node.get_commit_id(), key, value.as_ref()) {
+                    return Ok(false);
+                }
             }
             node_option = self.get_parent_node(node);
         }
-        Ok(path.into_iter())
+        Ok(true)
     }
 
     pub fn get_versioned_key(

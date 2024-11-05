@@ -13,7 +13,7 @@ use crate::{
         },
         CommitID, PendingError,
     },
-    traits::{KeyValueStoreManager, KeyValueStoreRead},
+    traits::{IsCompleted, KeyValueStoreManager, KeyValueStoreRead, NeedNext},
     StorageError,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
@@ -90,17 +90,18 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
         }
     }
 
-    fn iter_historical_changes<'a>(
-        &'a self,
+    fn iter_historical_changes(
+        &self,
+        mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,
         commit_id: &CommitID,
-        key: &'a T::Key,
-    ) -> Result<Box<dyn 'a + Iterator<Item = (CommitID, &T::Key, Option<T::Value>)>>> {
-        let mut res = Vec::new();
-
+        key: &T::Key,
+    ) -> Result<IsCompleted> {
         let mut current_node = self.pending.tree.get(commit_id);
         while let Some(node) = current_node {
             if let Some((value, true)) = node.store.get(key) {
-                res.push((node.commit_id, key, value.clone()));
+                if !accept(&node.commit_id, key, value.as_ref()) {
+                    return Ok(false);
+                }
             }
             current_node = node.parent.map(|p| self.pending.tree.get(&p).unwrap());
         }
@@ -110,7 +111,7 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
                 parent_of_pending
             } else {
                 assert!(self.history.is_empty());
-                return Ok(Box::new(res.into_iter()));
+                return Ok(true);
             }
         } else {
             *commit_id
@@ -124,12 +125,14 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
         while let Some(cid) = current_cid {
             let (parent_cid, store) = self.history.get(&cid).unwrap();
             if let Some((value, true)) = store.get(key) {
-                res.push((cid, key, value.clone()));
+                if !accept(&cid, key, value.as_ref()) {
+                    return Ok(false);
+                }
             }
             current_cid = parent_cid.clone();
         }
 
-        Ok(Box::new(res.into_iter()))
+        Ok(true)
     }
 
     fn discard(&mut self, commit: CommitID) -> Result<()> {
@@ -514,7 +517,7 @@ impl VersionedKeyValueSchema for TestSchema {
     type Value = u64;
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 enum Operation {
     GetVersionedStore,
     IterHisoricalChanges,
@@ -907,8 +910,23 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
         let keys_on_path = self.mock_store.get_keys_on_path(&commit_id);
         let (key_type, key) = gen_key(rng, keys_on_path);
 
-        let mock_res = self.mock_store.iter_historical_changes(commit_id, &key);
-        let real_res = self.real_store.iter_historical_changes(commit_id, &key);
+        let mut mock_collected = Vec::new();
+        let mock_accept = |cid: &CommitID, k: &T::Key, v: Option<&T::Value>| -> NeedNext {
+            mock_collected.push((cid.clone(), k.clone(), v.map(|val| val.clone())));
+            true
+        };
+        let mock_res = self
+            .mock_store
+            .iter_historical_changes(mock_accept, commit_id, &key);
+
+        let mut real_collected = Vec::new();
+        let real_accept = |cid: &CommitID, k: &T::Key, v: Option<&T::Value>| -> NeedNext {
+            real_collected.push((cid.clone(), k.clone(), v.map(|val| val.clone())));
+            true
+        };
+        let real_res = self
+            .real_store
+            .iter_historical_changes(real_accept, commit_id, &key);
 
         let res_is_ok = match (mock_res, real_res) {
             (Err(mock_err), Err(real_err)) => {
@@ -919,15 +937,13 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
 
                 false
             }
-            (Ok(mock_ok), Ok(real_ok)) => {
-                let mock_ok: Vec<_> = mock_ok.collect();
-                let real_ok: Vec<_> = real_ok.collect();
-                assert_eq!(mock_ok, real_ok);
+            (Ok(true), Ok(true)) => {
+                assert_eq!(mock_collected, real_collected);
 
                 assert_ne!(commit_id_type, CommitIDType::Novel);
                 match key_type {
-                    KeyType::Exist => assert!(mock_ok.len() > 0),
-                    KeyType::Novel => assert!(mock_ok.len() == 0),
+                    KeyType::Exist => assert!(mock_collected.len() > 0),
+                    KeyType::Novel => assert!(mock_collected.len() == 0),
                 }
 
                 true
@@ -1180,8 +1196,17 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
 
     println!("operations_analyses");
 
+    let operations_set = BTreeSet::from([
+        Operation::GetVersionedStore,
+        Operation::IterHisoricalChanges,
+        Operation::Discard,
+        Operation::GetVersionedKey,
+        Operation::AddToPendingPart,
+        Operation::ConfirmedPendingToHistory,
+    ]);
+
     print!("{:<20}", "");
-    for op in &operations {
+    for op in &operations_set {
         let str = match op {
             Operation::IterHisoricalChanges => "IterChanges",
             Operation::GetVersionedStore => "GetStore",
@@ -1196,7 +1221,7 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
 
     for &flag in &[true, false] {
         print!("{:<20}", flag);
-        for op in &operations {
+        for op in &operations_set {
             let count = operations_analyses.get(&(op.clone(), flag)).unwrap_or(&0);
             print!("{:>15}", count);
         }

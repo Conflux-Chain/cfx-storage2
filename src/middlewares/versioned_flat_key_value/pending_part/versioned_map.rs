@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use crate::traits::{IsCompleted, NeedNext};
+
 use super::{
     current_map::CurrentMap,
     pending_schema::{KeyValueMap, PendingKeyValueSchema, RecoverRecord, Result as PendResult},
@@ -129,12 +131,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 // Helper methods in pending part to support
 // impl KeyValueStoreManager for VersionedStore
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    pub fn iter_historical_changes<'a>(
-        &'a self,
+    pub fn iter_historical_changes(
+        &self,
+        mut accept: impl FnMut(&S::CommitId, &S::Key, Option<&S::Value>) -> NeedNext,
         commit_id: &S::CommitId,
-        key: &'a S::Key,
-    ) -> PendResult<impl 'a + Iterator<Item = (S::CommitId, &S::Key, Option<S::Value>)>, S> {
-        self.tree.iter_historical_changes(commit_id, key)
+        key: &S::Key,
+    ) -> PendResult<IsCompleted, S> {
+        self.tree
+            .iter_historical_changes(&mut accept, commit_id, key)
     }
 
     // None: pending_part not know
