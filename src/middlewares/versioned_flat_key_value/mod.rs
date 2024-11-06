@@ -25,9 +25,6 @@ use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
 use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
 
-#[cfg(test)]
-use crate::middlewares::commit_id_schema::history_number_to_height;
-
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 

@@ -39,6 +39,8 @@ where
         key: &K,
     ) -> Result<IsCompleted>;
 
+    /// make commit the unique child of its parent
+    /// do nothing if commit is in history or if commit is pending root
     fn discard(&mut self, commit: C) -> Result<()>;
 
     fn get_versioned_key(&self, commit: &C, key: &K) -> Result<Option<V>>;

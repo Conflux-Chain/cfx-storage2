@@ -1,9 +1,6 @@
 use crate::{
-    middlewares::{
-        versioned_flat_key_value::pending_part::pending_schema::{
-            PendingKeyValueSchema, Result as PendResult,
-        },
-        PendingError,
+    middlewares::versioned_flat_key_value::pending_part::pending_schema::{
+        PendingKeyValueSchema, Result as PendResult,
     },
     traits::{IsCompleted, NeedNext},
     types::ValueEntry,
@@ -52,17 +49,22 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
-        let node = self.get_node_by_slab_index(slab_index);
-        if let Some(parent_of_discard) = node.get_parent() {
-            let to_remove = self.bfs_subtree(slab_index);
+        if let Some(parent_of_discard) = self.get_node_by_slab_index(slab_index).get_parent() {
+            let parent_node = self.get_node_by_slab_index(parent_of_discard);
+            let mut to_remove = Vec::new();
+            for child in parent_node.get_children() {
+                if *child != slab_index {
+                    to_remove.append(&mut self.bfs_subtree(*child));
+                }
+            }
             for idx in to_remove {
                 self.detach_node(idx);
             }
+
             let parent_node = self.get_node_mut_by_slab_index(parent_of_discard);
-            parent_node.remove_child(&slab_index);
-            Ok(())
-        } else {
-            Err(PendingError::RootShouldNotBeDiscarded)
-        }
+            parent_node.remove_child_except(&slab_index);
+        } // else // root is already the unique child of its parent, so do nothing
+
+        Ok(())
     }
 }

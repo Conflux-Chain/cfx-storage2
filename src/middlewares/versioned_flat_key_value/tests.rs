@@ -224,39 +224,39 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
     }
 
     fn discard(&mut self, commit: CommitID) -> Result<()> {
-        if let Some(node) = self.pending.tree.remove(&commit) {
-            if let Some(parent) = node.parent {
-                let mut removed_but_children = VecDeque::new();
-                removed_but_children.push_back(node);
-                while !removed_but_children.is_empty() {
-                    let removed_this_children = removed_but_children.pop_front().unwrap();
-                    for child in removed_this_children.children.iter() {
-                        removed_but_children.push_back(self.pending.tree.remove(child).unwrap());
-                    }
-                }
-                assert_eq!(
-                    self.pending
-                        .tree
-                        .get_mut(&parent)
-                        .unwrap()
-                        .children
-                        .remove(&commit),
-                    true
-                );
-                assert!(!self
+        if self.history.contains_key(&commit) {
+            return Ok(());
+        }
+
+        if self.pending.tree.contains_key(&commit) {
+            if let Some(parent) = self.pending.tree.get(&commit).unwrap().parent {
+                let mut to_remove = VecDeque::new();
+
+                assert!(self
                     .pending
                     .tree
                     .get(&parent)
                     .unwrap()
                     .children
                     .contains(&commit));
-                Ok(())
-            } else {
-                self.pending.tree.insert(commit, node);
-                Err(StorageError::PendingError(
-                    PendingError::RootShouldNotBeDiscarded,
-                ))
+                for child in self.pending.tree.get(&parent).unwrap().children.iter() {
+                    if *child != commit {
+                        to_remove.push_back(*child);
+                    }
+                }
+
+                while !to_remove.is_empty() {
+                    let remove_this = to_remove.pop_front().unwrap();
+                    let remove_this_node = self.pending.tree.remove(&remove_this).unwrap();
+                    for child in remove_this_node.children.iter() {
+                        to_remove.push_back(*child);
+                    }
+                }
+
+                self.pending.tree.get_mut(&parent).unwrap().children = HashSet::from([commit]);
             }
+
+            Ok(())
         } else {
             Err(StorageError::PendingError(PendingError::CommitIDNotFound(
                 commit,
@@ -553,17 +553,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
             .parent;
         let mut commit_id = new_root_commit_id;
         while let Some(parent_commit_id) = parent_cid {
-            let mut siblings = self
-                .pending
-                .tree
-                .get(&parent_commit_id)
-                .unwrap()
-                .children
-                .clone();
-            assert_eq!(siblings.remove(&commit_id), true);
-            for sibling in siblings.into_iter() {
-                self.discard(sibling).unwrap();
-            }
+            self.discard(commit_id).unwrap();
 
             let parent_node = self.pending.tree.remove(&parent_commit_id).unwrap();
 
@@ -1085,19 +1075,13 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
         assert_eq!(mock_res, real_res);
 
         match commit_id_type {
-            CommitIDType::PendingNonRoot => assert!(mock_res.is_ok()),
-            CommitIDType::PendingRoot => assert_eq!(
-                mock_res,
-                Err(StorageError::PendingError(
-                    PendingError::RootShouldNotBeDiscarded
-                ))
-            ),
-            _ => assert_eq!(
+            CommitIDType::Novel => assert_eq!(
                 mock_res,
                 Err(StorageError::PendingError(PendingError::CommitIDNotFound(
                     commit
                 )))
             ),
+            _ => assert!(mock_res.is_ok()),
         };
 
         self.mock_store.check_consistency();
@@ -1256,6 +1240,7 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
                 let real_res = confirmed_pending_to_history(&mut db, &mut pending_part, commit_id);
                 real_versioned_store = VersionedStore::new(&db, &mut pending_part).unwrap();
                 real_versioned_store.check_consistency().unwrap();
+
                 versioned_store_proxy = VersionedStoreProxy::new(
                     &mut mock_versioned_store,
                     &mut real_versioned_store,

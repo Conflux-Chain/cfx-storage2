@@ -65,8 +65,8 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         self.children.insert(new_child);
     }
 
-    pub fn remove_child(&mut self, child_to_remove: &SlabIndex) {
-        self.children.remove(child_to_remove);
+    pub fn remove_child_except(&mut self, child_to_remove: &SlabIndex) {
+        self.children = BTreeSet::from([*child_to_remove]);
     }
 
     pub fn get_height(&self) -> usize {
