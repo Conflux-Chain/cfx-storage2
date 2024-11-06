@@ -1,6 +1,6 @@
 use crate::{
     middlewares::versioned_flat_key_value::pending_part::pending_schema::{
-        PendingKeyValueSchema, Result as PendResult,
+        PendingKeyValueSchema, RecoverRecord, Result as PendResult,
     },
     traits::{IsCompleted, NeedNext},
     types::ValueEntry,
@@ -19,16 +19,39 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         key: &S::Key,
     ) -> PendResult<IsCompleted, S> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
+        let mut old_commit_id = None;
         while let Some(node) = node_option {
-            // TODO: faster historical changes iteration
-            if let Some(value) = node.get_modified_value(key) {
+            if let Some(RecoverRecord {
+                value,
+                last_commit_id,
+            }) = node.get_recover_record(key)
+            {
                 let need_next = accept(&node.get_commit_id(), key, value.as_opt_ref());
                 if !need_next {
                     return Ok(false);
                 }
+                old_commit_id = *last_commit_id;
+                break;
             }
             node_option = self.get_parent_node(node);
         }
+
+        while let Some(old_cid) = old_commit_id {
+            if !self.contains_commit_id(&old_cid) {
+                break;
+            }
+            let node = self.get_node_by_commit_id(old_cid).unwrap();
+            let RecoverRecord {
+                value,
+                last_commit_id,
+            } = node.get_recover_record(key).unwrap();
+            let need_next = accept(&node.get_commit_id(), key, value.as_opt_ref());
+            if !need_next {
+                return Ok(false);
+            }
+            old_commit_id = *last_commit_id;
+        }
+
         Ok(true)
     }
 

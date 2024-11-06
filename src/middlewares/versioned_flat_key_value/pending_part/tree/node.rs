@@ -81,6 +81,10 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         self.modifications.get(key).map(|v| v.value.clone())
     }
 
+    pub fn get_recover_record(&self, key: &S::Key) -> Option<&RecoverRecord<S>> {
+        self.modifications.get(key)
+    }
+
     pub fn get_updates(&self) -> KeyValueMap<S> {
         self.modifications
             .iter()
