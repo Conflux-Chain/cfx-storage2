@@ -1,7 +1,7 @@
 mod manager_impl;
 mod pending_part;
 mod serde;
-mod table_schema;
+pub mod table_schema;
 #[cfg(test)]
 mod tests;
 
@@ -24,6 +24,8 @@ use crate::middlewares::commit_id_schema::height_to_history_number;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
 use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
+
+pub type VersionedStoreCache<Schema> = VersionedMap<PendingKeyValueConfig<Schema, CommitID>>;
 
 #[cfg(test)]
 use crate::middlewares::commit_id_schema::history_number_to_height;

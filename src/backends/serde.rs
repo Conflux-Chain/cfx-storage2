@@ -70,6 +70,18 @@ impl Decode for [u8] {
     }
 }
 
+impl Encode for Box<[u8]> {
+    fn encode(&self) -> Cow<[u8]> {
+        Cow::Borrowed(self)
+    }
+}
+
+impl Decode for Box<[u8]> {
+    fn decode(input: &[u8]) -> DecResult<Cow<Self>> {
+        Ok(Cow::Owned(input.to_owned().into_boxed_slice()))
+    }
+}
+
 impl Encode for H256 {
     fn encode(&self) -> Cow<[u8]> {
         Cow::Borrowed(&self.0)
@@ -121,4 +133,4 @@ macro_rules! subkey_not_support {
     };
 }
 
-subkey_not_support!([u8], H256, u64);
+subkey_not_support!([u8], H256, u64, Box<[u8]>);

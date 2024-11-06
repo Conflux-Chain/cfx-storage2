@@ -3,6 +3,7 @@
 pub mod backends;
 pub mod errors;
 mod middlewares;
+mod storage;
 pub mod traits;
 pub mod types;
 mod utils;
