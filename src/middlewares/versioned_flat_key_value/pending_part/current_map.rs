@@ -5,27 +5,44 @@ use super::{
     tree::Tree,
 };
 
+/// A `CurrentMap` stores a `CommitId` and its corresponding *relative snapshot*.
+/// A *relative snapshot* refers to all the changes (including both the key-value pair,
+/// and the `CommitId` that indicates where each change was most recently modified）
+/// in the snapshot corresponding to this `CommitId` relative to the snapshot of the parent of the pending root.
 pub(super) struct CurrentMap<S: PendingKeyValueSchema> {
-    map: BTreeMap<S::Key, ApplyRecord<S>>,
+    /// `commit_id`: the `CommitId` that `CurrentMap` corresponds to
     commit_id: S::CommitId,
+    /// `map`: *relative snapshot* at `commit_id`
+    map: BTreeMap<S::Key, ApplyRecord<S>>,
 }
 
 impl<S: PendingKeyValueSchema> Deref for CurrentMap<S> {
     type Target = BTreeMap<S::Key, ApplyRecord<S>>;
 
+    /// Deref `CurrentMap` as its `map` field
     fn deref(&self) -> &Self::Target {
         &self.map
     }
 }
 
 impl<S: PendingKeyValueSchema> CurrentMap<S> {
-    pub fn new(commit_id: S::CommitId) -> Self {
+    /// Creates a new, uninitialized `CurrentMap` with only the `commit_id` set.
+    ///
+    /// # Notes:
+    /// The resulting `CurrentMap` object is incomplete: while the `commit_id` is correctly set,
+    /// the `map` (which represents the *relative snapshot* at this commit) is initialized as empty.
+    /// Additional computation is required to populate the correct `map`.
+    ///
+    /// This function should be used when you need to create a placeholder for a `CurrentMap`
+    /// before performing further calculations to derive its contents.
+    pub fn new_uninitialized(commit_id: S::CommitId) -> Self {
         Self {
             map: BTreeMap::new(),
             commit_id,
         }
     }
 
+    /// Returns the `CommitId` of this `CurrentMap`.
     pub fn get_commit_id(&self) -> S::CommitId {
         self.commit_id
     }

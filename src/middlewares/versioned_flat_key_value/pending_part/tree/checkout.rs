@@ -43,7 +43,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
     fn make_current(&self, target_commit_id: S::CommitId) -> PendResult<CurrentMap<S>, S> {
         let applys = self.get_apply_map_from_root_included(target_commit_id)?;
-        let mut new_current = CurrentMap::<S>::new(target_commit_id);
+        let mut new_current = CurrentMap::<S>::new_uninitialized(target_commit_id);
         new_current.apply(applys);
         Ok(new_current)
     }
