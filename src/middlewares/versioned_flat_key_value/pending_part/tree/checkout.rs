@@ -35,16 +35,13 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     ) -> PendResult<(), S> {
         let (rollbacks, applys) =
             self.collect_rollback_and_apply_ops(current.get_commit_id(), target_commit_id)?;
-        current.rollback(rollbacks);
-        current.apply(applys);
-        current.set_commit_id(target_commit_id);
+        current.switch_to_commit(rollbacks, applys, target_commit_id);
         Ok(())
     }
 
     fn make_current(&self, target_commit_id: S::CommitId) -> PendResult<CurrentMap<S>, S> {
         let applys = self.get_apply_map_from_root_included(target_commit_id)?;
-        let mut new_current = CurrentMap::<S>::new_uninitialized(target_commit_id);
-        new_current.apply(applys);
+        let new_current = CurrentMap::<S>::new(target_commit_id, applys);
         Ok(new_current)
     }
 

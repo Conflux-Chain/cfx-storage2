@@ -26,20 +26,13 @@ impl<S: PendingKeyValueSchema> Deref for CurrentMap<S> {
 }
 
 impl<S: PendingKeyValueSchema> CurrentMap<S> {
-    /// Creates a new, uninitialized `CurrentMap` with only the `commit_id` set.
-    ///
-    /// # Notes:
-    /// The resulting `CurrentMap` object is incomplete: while the `commit_id` is correctly set,
-    /// the `map` (which represents the *relative snapshot* at this commit) is initialized as empty.
-    /// Additional computation is required to populate the correct `map`.
-    ///
-    /// This function should be used when you need to create a placeholder for a `CurrentMap`
-    /// before performing further calculations to derive its contents.
-    pub fn new_uninitialized(commit_id: S::CommitId) -> Self {
-        Self {
+    pub fn new(commit_id: S::CommitId, applys: ApplyMap<S>) -> Self {
+        let mut current_map = Self {
             map: BTreeMap::new(),
             commit_id,
-        }
+        };
+        current_map.apply(applys);
+        current_map
     }
 
     /// Returns the `CommitId` of this `CurrentMap`.
@@ -47,11 +40,23 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
         self.commit_id
     }
 
-    pub fn set_commit_id(&mut self, commit_id: S::CommitId) {
+    pub fn switch_to_commit(
+        &mut self,
+        rollbacks: BTreeMap<S::Key, Option<ApplyRecord<S>>>,
+        applys: ApplyMap<S>,
+        commit_id: S::CommitId,
+    ) {
+        self.rollback(rollbacks);
+        self.apply(applys);
         self.commit_id = commit_id;
     }
 
-    pub fn rollback(&mut self, rollbacks: BTreeMap<S::Key, Option<ApplyRecord<S>>>) {
+    pub fn adjust_for_new_root(&mut self, tree: &Tree<S>) {
+        self.map
+            .retain(|_, ApplyRecord { commit_id, .. }| tree.contains_commit_id(commit_id));
+    }
+
+    fn rollback(&mut self, rollbacks: BTreeMap<S::Key, Option<ApplyRecord<S>>>) {
         for (key, to_rollback) in rollbacks.into_iter() {
             match to_rollback {
                 None => {
@@ -64,14 +69,9 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
         }
     }
 
-    pub fn apply(&mut self, applys: ApplyMap<S>) {
+    fn apply(&mut self, applys: ApplyMap<S>) {
         for (key, apply) in applys.into_iter() {
             self.map.insert(key, apply);
         }
-    }
-
-    pub fn update_rerooted(&mut self, tree: &Tree<S>) {
-        self.map
-            .retain(|_, ApplyRecord { commit_id, .. }| tree.contains_commit_id(commit_id));
     }
 }

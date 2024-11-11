@@ -254,7 +254,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             // because apply_commit_id in current.map may be removed from pending part
             self.clear_removed_current();
             if let Some(current) = self.current.get_mut() {
-                current.update_rerooted(&self.tree);
+                current.adjust_for_new_root(&self.tree);
             }
         }
 
