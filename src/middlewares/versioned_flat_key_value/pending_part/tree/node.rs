@@ -20,6 +20,10 @@ pub(super) struct TreeNode<S: PendingKeyValueSchema> {
     // before current node, the old value of this key is modified by which commit_id,
     // if none, this key is absent before current node
     // here must use CommitID instead of SlabIndex (which may be reused, see slab doc)
+    ///    Note: The node containing the previous modification of the `key` may have already been removed from the pending part.
+    ///    However, the node where the current modification occurred still stores a `last_commit_id` with a value of `Some`,
+    ///    which points to that previous modification. This is done to ensure efficient operation of the `change_root` function
+    ///    (i.e., in `change_root`, nodes that remain do not have their `last_commit_id` set to `None` even if the previous node was removed).
     modifications: RecoverMap<S>,
 }
 

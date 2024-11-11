@@ -35,7 +35,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     ) -> PendResult<(), S> {
         let (rollbacks, applys) =
             self.collect_rollback_and_apply_ops(current.get_commit_id(), target_commit_id)?;
-        current.switch_to_commit(rollbacks, applys, target_commit_id);
+        current.switch_to_commit(target_commit_id, rollbacks, applys);
         Ok(())
     }
 
