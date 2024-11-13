@@ -1,6 +1,9 @@
+//! Methods in `Tree`: used in the pending part to support the logic
+//! for implementing the `KeyValueStoreManager` trait for `VersionedStore`.
+
 use crate::{
     middlewares::versioned_flat_key_value::pending_part::pending_schema::{
-        PendingKeyValueSchema, RecoverRecord, Result as PendResult,
+        ChangeWithRecoverRecord, PendingKeyValueSchema, Result as PendResult,
     },
     traits::{IsCompleted, NeedNext},
     types::ValueEntry,
@@ -8,9 +11,6 @@ use crate::{
 
 use super::Tree;
 
-// Internal Tree methods
-// supporting helper methods in VersionedMap for
-// implementing `KeyValueStoreManager` for `VersionedStore`.
 impl<S: PendingKeyValueSchema> Tree<S> {
     /// Queries the modification history of a specified `Key` in the tree.
     /// Starts from the given `CommitID` and iterates changes upward to the root (including the given `CommitID` and the root).
@@ -47,7 +47,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
         let mut old_commit_id = None;
         while let Some(node) = node_option {
-            if let Some(RecoverRecord {
+            if let Some(ChangeWithRecoverRecord {
                 value,
                 last_commit_id,
             }) = node.get_recover_record(key)
@@ -67,7 +67,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
                 break;
             }
             let node = self.get_node_by_commit_id(old_cid).unwrap();
-            let RecoverRecord {
+            let ChangeWithRecoverRecord {
                 value,
                 last_commit_id,
             } = node.get_recover_record(key).unwrap();

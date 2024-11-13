@@ -54,7 +54,7 @@ impl HistoryIndices {
 ///
 /// struct `VersionedStore`:
 /// Holds a reference to the underlying database, including:
-/// - an immutable reference to the historical part
+/// - an immutable reference to the historical part;
 /// - and a mutable reference to the pending part.
 /// Supports query and modification operations on the underlying database,
 /// - Supported query interfaces include:

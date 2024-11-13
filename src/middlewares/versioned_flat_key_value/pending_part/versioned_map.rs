@@ -5,7 +5,9 @@ use crate::types::ValueEntry;
 
 use super::{
     current_map::CurrentMap,
-    pending_schema::{KeyValueMap, PendingKeyValueSchema, RecoverRecord, Result as PendResult},
+    pending_schema::{
+        ChangeWithRecoverRecord, KeyValueMap, PendingKeyValueSchema, Result as PendResult,
+    },
     tree::Tree,
     PendingError,
 };
@@ -154,7 +156,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     ///
     /// # Notes:
     /// Information required to trace back to the most recent modification in the pending part of each key in these changes
-    /// is stored in the `last_commit_id` field of `RecoverRecord`. When adding a root, since there are no nodes
+    /// is stored in the `last_commit_id` field of `ChangeWithRecoverRecord`. When adding a root, since there are no nodes
     /// before the root in the pending part, the `last_commit_id` for all keys is set to `None`.
     ///
     /// # Returns:
@@ -169,7 +171,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         let enact_update = |(key, value)| {
             (
                 key,
-                RecoverRecord::<S> {
+                ChangeWithRecoverRecord::<S> {
                     value,
                     last_commit_id: None,
                 },
@@ -192,7 +194,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     ///
     /// # Notes:
     /// Information required to trace back to the most recent modification in the pending part of each key in these changes
-    /// is stored in the `last_commit_id` field of `RecoverRecord`. When adding a non-root node,
+    /// is stored in the `last_commit_id` field of `ChangeWithRecoverRecord`. When adding a non-root node,
     /// the `last_commit_id` for all keys requires extra computation:
     /// 1. First, obtain the `CurrentMap` at `parent_commit_id`. Then the `CurrentMap` stores all the changes
     ///    (including the `CommitId` that indicates where each change was most recently modified) in the snapshot
@@ -225,7 +227,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             let last_commit_id = current.get(&key).map(|s| s.commit_id);
             modifications.insert(
                 key,
-                RecoverRecord {
+                ChangeWithRecoverRecord {
                     value,
                     last_commit_id,
                 },
@@ -451,7 +453,7 @@ mod tests {
                 .map(|(key, value)| {
                     (
                         *key,
-                        RecoverRecord {
+                        ChangeWithRecoverRecord {
                             value: ValueEntry::from_option(*value),
                             last_commit_id: None,
                         },
