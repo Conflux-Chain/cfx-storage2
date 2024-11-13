@@ -45,7 +45,7 @@ use crate::types::ValueEntry;
 /// The `VersionedMap` structure is built on top of the `Tree` and maintains a `CurrentMap`, which provides an optimized way
 /// to quickly switch between different commits and perform efficient queries. By maintaining a separate `CurrentMap`,
 /// `VersionedMap` can accelerate operations that would otherwise require traversing or recalculating parts of the tree.
-pub struct Tree<S: PendingKeyValueSchema> {
+pub(super) struct Tree<S: PendingKeyValueSchema> {
     /// The `CommitId` of the parent node for the root of this tree.
     /// This refers to the latest node in the historical part or is set to `None` if there is no historical data.
     parent_of_root: Option<S::CommitId>,

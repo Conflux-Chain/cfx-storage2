@@ -9,6 +9,29 @@ use super::{node::TreeNode, Tree};
 
 // methods to support VersionedMap::add_node()
 impl<S: PendingKeyValueSchema> Tree<S> {
+    /// Adds a root to the tree.
+    ///
+    /// # Parameters:
+    /// - `commit_id`: The `CommitID` of the node being added.
+    /// - `modifications`: A `RecoverMap = BTreeMap<Key, RecoverRecord>` representing the changes from the parent node to the new node.
+    ///   Each change is recorded as a (`Key`, `RecoverRecord`) pair.
+    ///   `RecoverRecord` includes two fields:
+    ///   - `value`: an enum type `ValueEntry` representing this modification:
+    ///     - `ValueEntry::Deleted` represents deletion.
+    ///     - `ValueEntry::Value(value)` represents a specific value.
+    ///   - `last_commit_id`: an `Option<CommitId>` recording where the last modification before this modification occurred:
+    ///     - `None`: no modification before this modification in the tree.
+    ///     - `Some(last_cid)`: the last modification occurred at `last_cid`.
+    ///     For the `add_root` function, each `last_commit_id` should be set to `None`.
+    ///
+    /// # Notes:
+    /// When creating a new `TreeNode`, the height of this node in the underlying database should be provided.
+    /// The root's height is already stored in the tree when it is initialized, so it can be retrieved directly.
+    ///
+    /// # Returns:
+    /// A `Result` that is empty if successful, or returns an error if the operation fails.
+    /// Failure can occur due to:
+    /// - the tree already has a root.
     pub fn add_root(
         &mut self,
         commit_id: S::CommitId,
