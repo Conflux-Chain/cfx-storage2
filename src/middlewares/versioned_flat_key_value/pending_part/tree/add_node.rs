@@ -1,3 +1,5 @@
+//! Implementation of [`Tree`] to support the `add_node` function in [`super::super::super::VersionedMap`]
+
 use crate::middlewares::{
     versioned_flat_key_value::pending_part::pending_schema::{
         ChangeWithRecoverMap, PendingKeyValueSchema, Result as PendResult,
@@ -7,30 +9,16 @@ use crate::middlewares::{
 
 use super::{node::TreeNode, Tree};
 
-// methods to support VersionedMap::add_node()
 impl<S: PendingKeyValueSchema> Tree<S> {
-    /// Adds a root to the tree.
+    /// Adds the root to the tree.
     ///
     /// # Parameters:
-    /// - `commit_id`: The `CommitID` of the node being added.
-    /// - `modifications`: A `BTreeMap<Key, ChangeWithRecoverRecord>` representing the changes from the parent node to the new node.
-    ///   Each change is recorded as a (`Key`, `ChangeWithRecoverRecord`) pair.
-    ///   `ChangeWithRecoverRecord` includes two fields:
-    ///   - `value`: an enum type `ValueEntry` representing this modification:
-    ///     - `ValueEntry::Deleted` represents deletion.
-    ///     - `ValueEntry::Value(value)` represents a specific value.
-    ///   - `last_commit_id`: an `Option<CommitId>` recording where the last modification before this modification occurred.
-    ///     For the `add_root` function, each `last_commit_id` is `None`, i.e., no modification occurred before this modification in the tree.
-    ///     This should be ensured by the caller of this function.
+    /// - `modifications`: The changes from the parent node to the new node.
+    ///   Each change is recorded as a (`Key`, [`super::super::pending_schema::ChangeWithRecoverRecord`]) pair.
     ///
     /// # Notes:
-    /// When creating a new `TreeNode`, the height of this node in the underlying database should be provided.
+    /// When creating a new [`TreeNode`], the height of this node in the underlying database should be provided.
     /// The root's height is already stored in the tree when the tree is initialized, so it can be retrieved directly.
-    ///
-    /// # Returns:
-    /// A `Result` that is empty if successful, or returns an error if the operation fails.
-    /// Failure can occur due to:
-    /// - the tree already has a root.
     pub fn add_root(
         &mut self,
         commit_id: S::CommitId,
@@ -55,28 +43,12 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     /// Adds a non-root node to the tree.
     ///
     /// # Parameters:
-    /// - `commit_id`: The `CommitID` of the node being added.
-    /// - `parent_commit_id`: Specifies the `CommitID` of the parent node for the node being added.
-    /// - `modifications`: A `BTreeMap<Key, ChangeWithRecoverRecord>` representing the changes from the parent node to the new node.
-    ///   Each change is recorded as a (`Key`, `ChangeWithRecoverRecord`) pair.
-    ///   `ChangeWithRecoverRecord` includes two fields:
-    ///   - `value`: an enum type `ValueEntry` representing this modification:
-    ///     - `ValueEntry::Deleted` represents deletion.
-    ///     - `ValueEntry::Value(value)` represents a specific value.
-    ///   - `last_commit_id`: an `Option<CommitId>` recording where the last modification before this modification occurred:
-    ///     - `None`: no modification occurred before this modification in the tree.
-    ///     - `Some(last_cid)`: the last modification occurred at `last_cid` in the `tree`.
-    ///       `last_cid` should be in the `tree`. This should be ensured by the caller of this function.
+    /// - `modifications`: The changes from the parent node to the new node.
+    ///   Each change is recorded as a (`Key`, [`super::super::pending_schema::ChangeWithRecoverRecord`]) pair.
     ///
     /// # Notes:
-    /// When creating a new `TreeNode`, the height of this node in the underlying database should be provided.
+    /// When creating a new [`TreeNode`], the height of this node in the underlying database should be provided.
     /// The new node's height is calculated as its parent node's height plus 1.
-    ///
-    /// # Returns:
-    /// A `Result` that is empty if successful, or returns an error if the operation fails.
-    /// Failure can occur due to:
-    /// - `parent_commit_id` does not exist in the pending part yet;
-    /// - or `commit_id` is already in the pending part.
     pub fn add_non_root_node(
         &mut self,
         commit_id: S::CommitId,

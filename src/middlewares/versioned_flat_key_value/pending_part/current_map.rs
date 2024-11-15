@@ -1,3 +1,5 @@
+//! Implementation of [`CurrentMap`]
+
 use std::{collections::BTreeMap, ops::Deref};
 
 use super::{
@@ -12,14 +14,13 @@ use super::{
 pub(super) struct CurrentMap<S: PendingKeyValueSchema> {
     /// `commit_id`: the `CommitId` that `CurrentMap` corresponds to
     commit_id: S::CommitId,
-    /// `map`: *relative snapshot* at `commit_id`
+    /// `map`: the *relative snapshot* at `commit_id`
     map: BTreeMap<S::Key, ApplyRecord<S>>,
 }
 
 impl<S: PendingKeyValueSchema> Deref for CurrentMap<S> {
     type Target = BTreeMap<S::Key, ApplyRecord<S>>;
 
-    /// Deref `CurrentMap` as its `map` field
     fn deref(&self) -> &Self::Target {
         &self.map
     }
@@ -43,7 +44,7 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
         current_map
     }
 
-    /// Returns the `CommitId` of this `CurrentMap`.
+    /// Returns the `commit_id` of this `CurrentMap`.
     pub fn get_commit_id(&self) -> S::CommitId {
         self.commit_id
     }
@@ -73,23 +74,16 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
     /// This function retains only those entries in `CurrentMap` whose `commit_id`s are present in the provided `tree`.
     ///
     /// # Parameters:
-    /// - `tree`: The `Tree` that contains the node corresponding to this `CurrentMap`.
+    /// - `tree`: The [`Tree`] that contains the node corresponding to this `CurrentMap`.
     ///   The provided `tree` should be the one that this `CurrentMap` is associated with.
     pub fn adjust_for_new_root(&mut self, tree: &Tree<S>) {
         self.map
             .retain(|_, ApplyRecord { commit_id, .. }| tree.contains_commit_id(commit_id));
     }
 
-    /// Rolls back changes in the current state based on the provided rollbacks.
-    ///
-    /// This function updates the `CurrentMap` by removing or restoring entries based on the
-    /// specified rollbacks. If a key is associated with `None`, it is removed from the map.
-    /// If a key is associated with a specific `ApplyRecord`, that record is restored in the map.
-    ///
-    /// # Parameters:
-    /// - `rollbacks`: A mapping of keys to their corresponding rollback records.
-    ///   - If a key's value is `None`, it indicates that the key should be removed from the map.
-    ///   - If a key's value is `Some(ApplyRecord)`, it indicates that this record should be restored.
+    /// Rolls back changes in the `CurrentMap` by removing or restoring entries based on the given `rollbacks`.
+    /// - If a key is associated with `None`, it is removed from `self.map`.
+    /// - If a key is associated with a specific `ApplyRecord`, that record is restored in `self.map`.
     ///
     /// # Notes:
     /// This function is private and should be used in conjunction with other functions and statements
@@ -107,14 +101,7 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
         }
     }
 
-    /// Applies changes to the current state based on the provided updates.
-    ///
-    /// This function updates the `CurrentMap` by inserting the specified key-value pairs
-    /// into the map.
-    ///
-    /// # Parameters:
-    /// - `applys`: A mapping of keys to their corresponding `ApplyRecord` values.
-    ///   Each entry represents a change to be applied to the current state.
+    /// Applies changes to the `CurrentMap` by inserting entries to `self.map` based on the given `applys`.
     ///
     /// # Notes:
     /// This function is private and should be used in conjunction with other functions and statements

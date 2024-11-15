@@ -1,6 +1,9 @@
+/// Represents a change to a key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueEntry<T> {
+    /// The key's value is updated to `T`.
     Value(T),
+    /// The key is deleted.
     Deleted,
 }
 

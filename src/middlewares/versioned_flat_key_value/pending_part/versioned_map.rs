@@ -1,3 +1,5 @@
+//! Implementation of [`VersionedMap`]
+
 use std::collections::BTreeMap;
 
 use crate::traits::{IsCompleted, NeedNext};
@@ -14,64 +16,39 @@ use super::{
 
 use parking_lot::RwLock;
 
-/// The `VersionedMap` structure implements the pending part of the underlying database (see `VersionedStore`).
+/// The pending part of the underlying database (see [`super::super::VersionedStore`]).
 ///
 /// # Overview:
-/// The pending part is in-memory and allows forking, where each node represents a snapshot of a key-value store,
-/// and each edge represents the changes between parent and child nodes. The root of this tree is unique
+/// The pending part is a tree, where each node represents a snapshot of a key-value store,
+/// and each edge represents the changes between parent and child nodes. The root of this tree is unique,
 /// and its parent is always the latest node in the historical part. If the historical part is empty,
 /// the parent of the pending root is `None`.
 ///
 /// # Implementation Details:
-/// `VersionedMap` supports efficient queries, as well as adding or discarding nodes in the pending part.
+/// [`VersionedMap`] supports efficient queries, as well as adding or discarding nodes in the pending part.
+/// It is built on top of [`Tree`] and leverages a [`CurrentMap`] to optimize operations.
+/// A [`CurrentMap`] stores a `CommitId` and its corresponding *relative snapshot*,
+/// which represents all changes relative to the snapshot of the parent of the pending root.
+/// While the [`Tree`] tracks all nodes (commits) and their relationships, [`VersionedMap`] provides a more efficient
+/// interface for switching between commits and querying snapshots.
+/// More specifically, by propagating updates downwards or tracing upwards through the `Tree`,
+/// one `CurrentMap` can be efficiently derived from another.
 ///
-/// - Tree:
-///   The `Tree` maintains both:
-///   - Information used to connect with the historical part:
-///     - The parent of the pending root.
-///     - The height of the root (referring to the height of the pending root in the entire underlying database,
-///       in order to obtain a continuously increasing `HistoryNumber` when moving it into the historical part in the future).
-///   - Information used to support queries in the pending part:
-///     - The changes made by each node relative to its parent.
-///     - Information required to trace back to the most recent modification in the pending part of each key in these changes.
-///
-/// - CurrentMap:
-///   A `CurrentMap` stores a `CommitId` and its corresponding *relative snapshot*.
-///   A *relative snapshot* refers to all the changes (including both the key-value pair,
-///   and the `CommitId` that indicates where each change was most recently modified）
-///   in the snapshot corresponding to this `CommitId` relative to the snapshot of the parent of the pending root.
-///
-/// - Efficient Querying:
-///   By propagating updates downwards or tracing upwards through the `Tree`, one `CurrentMap` can be efficiently derived from another.
-///   Since `CurrentMap` and `Tree` are decoupled, in principle, multiple `CurrentMap`s with multiple branches
-///   could be maintained to accelerate queries. However, currently only one `CurrentMap` is maintained at a time.
-///
-/// - Handling of `None`:
-///   If `CurrentMap` is `None`, it indicates that no `CurrentMap` has been computed yet
-///   or that the node corresponding to this `CurrentMap` has been pruned.
-///
-/// # Fields:
-/// - `tree`: Maintains the `Tree`.
-/// - `current`: Holds an optional reference to a `CurrentMap`.
+/// # Future Optimizations:
+/// Since [`CurrentMap`] and [`Tree`] are decoupled, in principle, multiple `CurrentMap`s with multiple branches
+/// could be maintained to accelerate queries. However, currently only one `CurrentMap` is maintained at a time.
 pub struct VersionedMap<S: PendingKeyValueSchema> {
     tree: Tree<S>,
+    /// `None`: no `CurrentMap` has been computed yet or the corresponding node has been pruned.
     current: RwLock<Option<CurrentMap<S>>>,
 }
 
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    /// Creates a new `VersionedMap` instance, initializing the pending part of the database.
+    /// Initializes the pending part of the database, with an empty `tree` and a no computed `current`.
     ///
     /// # Parameters:
-    /// - `parent_of_root`: The `CommitId` of the parent of the pending root (i.e., the latest node in the historical part).
-    ///   If the historical part is empty, this should be `None`.
-    /// - `height_of_root`: The height of the pending root in the entire underlying database. This is used to ensure that when
-    ///   moving the pending root into the historical part, it will receive a continuously increasing `HistoryNumber`.
-    ///
-    /// # Returns:
-    /// A new `VersionedMap` instance with an empty tree and no computed `CurrentMap`.
-    ///
-    /// # Notes:
-    /// The `current` field is initialized as `None`, indicating that no `CurrentMap` has been computed yet.
+    /// - `parent_of_root`: The latest `CommitId` in the historical part. If `None`, the historical part is empty.
+    /// - `height_of_root`: The height of the pending root in the entire underlying database.
     pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: usize) -> Self {
         VersionedMap {
             tree: Tree::new(parent_of_root, height_of_root),
@@ -89,11 +66,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
     }
 
-    /// Returns the `CommitId` of the parent of the pending root.
-    ///
-    /// # Returns:
-    /// An `Option<CommitId>` representing the parent of the pending root.
-    /// If the historical part is empty, this will return `None`.
+    /// Returns the latest `CommitId` in the historical part. If `None`, the historical part is empty.
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
         self.tree.get_parent_of_root()
     }
@@ -102,33 +75,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 // add_node
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
     /// Adds a node to the pending part.
-    ///
-    /// # Parameters:
-    /// - `parent_commit_id`: Specifies the `CommitID` of the parent node for the node being added.
-    ///   If the node being added is the first node in the underlying database, then `parent_commit_id` should be set to `None`.
-    /// - `commit_id`: The `CommitID` of the node being added.
-    /// - `updates`: A `impl IntoIterator<Item = (Key, Option<Value>)>` representing the changes from the parent node to the new node.
-    ///   Here, a pair `(key, None)` indicates the deletion of the key.
-    ///
-    /// # Notes:
-    /// The changes passed in from outside of `VersionedMap` are represented using the `Option<Value>` type
-    /// (i.e., `None` indicates deletion, and `Some` represents a specific value).
-    /// When stored inside `VersionedMap`, they are converted to the `ValueEntry` type
-    /// (i.e., `ValueEntry::Deleted` represents deletion, and `ValueEntry::Value(value)` represents a specific value).
-    /// The purpose of this conversion is to assign a specific type for this particular meaning of `Option`,
-    /// to avoid confusion with other uses of `Option`.
-    ///
-    /// # Returns:
-    /// A `Result` that is empty if successful, or returns an error if the operation fails.
-    /// Failure can occur under several circumstances:
-    /// - `parent_commit_id` equals to the parent of the pending root, which indicates that this invocation is to add a pending root,
-    ///   but the pending root already exists.
-    /// - `parent_commit_id` is different from the parent of the pending root,
-    ///   which indicates that this invocation is to add a pending non-root node
-    ///   and `parent_commit_id` must already exist in the pending part, but
-    ///   - `parent_commit_id` is `None`;
-    ///   - or `parent_commit_id` does not exist in the pending part yet;
-    ///   - or `commit_id` is already in the pending part.
+    /// Distinguishes whether the added node is the root or a non-root, and calls the corresponding function.
     pub fn add_node(
         &mut self,
         updates: impl IntoIterator<Item = (S::Key, Option<S::Value>)>,
@@ -147,21 +94,13 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
     }
 
-    /// Adds a pending root.
-    ///
-    /// # Parameters:
-    /// - `commit_id`: The `CommitID` of the node being added.
-    /// - `updates`: A `impl Iterator<Item = (S::Key, ValueEntry<S::Value>)>` representing the changes from the parent node to the new node.
-    ///   `ValueEntry::Deleted` represents deletion, and `ValueEntry::Value(value)` represents a specific value.
+    /// Adds the pending root.
     ///
     /// # Notes:
-    /// Information required to trace back to the most recent modification in the pending part of each key in these changes
-    /// is stored in the `last_commit_id` field of `ChangeWithRecoverRecord`. When adding a root, since there are no nodes
-    /// before the root in the pending part, the `last_commit_id` for all keys is set to `None`.
+    /// When adding the root, since there are no nodes before the root in the pending part,
+    /// the `last_commit_id` showing the last modification in the pending tree is set to `None`.
     ///
-    /// # Returns:
-    /// A `Result` that is empty if successful, or returns an error if the operation fails.
-    /// Failure can occur due to:
+    /// Returns an error if:
     /// - the pending root already exists.
     fn add_root(
         &mut self,
@@ -186,29 +125,13 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     /// Adds a non-root node to the pending part.
     ///
-    /// # Parameters:
-    /// - `parent_commit_id`: Specifies the `CommitID` of the parent node for the node being added.
-    /// - `commit_id`: The `CommitID` of the node being added.
-    /// - `updates`: A `impl Iterator<Item = (S::Key, ValueEntry<S::Value>)>` representing the changes from the parent node to the new node.
-    ///   `ValueEntry::Deleted` represents deletion, and `ValueEntry::Value(value)` represents a specific value.
-    ///
     /// # Notes:
-    /// Information required to trace back to the most recent modification in the pending part of each key in these changes
-    /// is stored in the `last_commit_id` field of `ChangeWithRecoverRecord`. When adding a non-root node,
-    /// the `last_commit_id` for all keys requires extra computation:
-    /// 1. First, obtain the `CurrentMap` at `parent_commit_id`. Then the `CurrentMap` stores all the changes
-    ///    (including the `CommitId` that indicates where each change was most recently modified) in the snapshot
-    ///    corresponding to `parent_commit_id` relative to the snapshot of the parent of the pending root.
-    /// 2. For each change from the parent node to the new node, query the `CurrentMap` at `parent_commit_id` to get `last_commit_id`:
-    ///    - If found, use the result (of type `Option<CommitId>`) directly as `last_commit_id`.
-    ///    - If not found, it means that this key has not been modified in any of the ancestors of `commit_id` within the pending part,
-    ///      so set `last_commit_id` to `None`.
+    /// When adding the root, to calculate the `last_commit_id` showing the last modification in the pending tree,
+    /// obtaining the [`CurrentMap`] at `parent_commit_id` is necessary.
     ///
-    /// # Returns:
-    /// A `Result` that is empty if successful, or returns an error if the operation fails.
-    /// Failure can occur due to:
-    /// - `parent_commit_id` does not exist in the pending part yet;
-    /// - or `commit_id` is already in the pending part.
+    /// Returns an error if:
+    /// - `parent_commit_id` does not exist in the pending part.
+    /// - `commit_id` already exists in the pending part.
     fn add_non_root_node(
         &mut self,
         updates: impl Iterator<Item = (S::Key, ValueEntry<S::Value>)>,
@@ -267,20 +190,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 // Helper methods in pending part to support
 // impl KeyValueStoreManager for VersionedStore
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    /// Queries the modification history of a specified `Key` in the pending part.
+    /// Queries the modification history of a given `Key` in the pending part.
     /// Starts from the given `CommitID` and iterates changes backward in the pending part.
     ///
     /// # Parameters:
-    /// - `accept`: `impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext`
-    ///   Receives a change, including the `CommitID` where the change occurred, the `Key` that was changed, and an `Option<Value>`
-    ///   (None means the key was deleted in this change).
-    ///   Returns whether to continue iterating backward.
-    /// - `commit_id`: The `CommitID` of the snapshot to start iterating backward.
-    /// - `key`: The `Key` to query.
+    /// - `accept`: A function that receives a change and returns whether to continue.
     ///
     /// # Returns:
-    /// A `Result` containing an `IsCompleted` (i.e., a boolean indicating whether the iteration is completed) if successful,
-    /// or an error if the operation fails. Failures include:
+    /// A `Result` with a boolean ([`IsCompleted`]) indicating whether the iteration is completed, or an error if:
     /// - The `commit_id` does not exist in the pending part.
     ///
     /// # Notes:
@@ -298,18 +215,13 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     /// Queries the change of the given `Key` in the snapshot at the given `CommitId` in the pending part
     /// relative to the snapshot of the parent of the pending root.
     ///
-    /// # Parameters:
-    /// - `commit_id`: The `CommitID` to query.
-    /// - `key`: The `Key` to query.
+    /// Returns the changed value if successful:
+    /// - `None`: no change of `key` compared to the parent of the pending root;
+    /// - `Some(ValueEntry::Deleted)`: `key` is deleted;
+    /// - `Some(ValueEntry::Value(value))`: `key`'s value is set to `value`.
     ///
-    /// # Returns:
-    /// A `Result` containing the changed value if successful, otherwise returns an error if the operation fails.
-    /// - The changed value is of type `Option<ValueEntry<Value>>`:
-    ///   - None: the value of `key` at `commit_id` is exactly the value of `key` at the parent of the pending root;
-    ///   - Some(ValueEntry::Deleted): in the snapshot of `commit_id`, `key` is deleted;
-    ///   - Some(ValueEntry::Value(value)): in the snapshot of `commit_id`, `key`'s value is value.
-    /// - Failures include:
-    ///   - The `commit_id` does not exist in the pending part.
+    /// Returns an error if:
+    /// - `commit_id` does not exist in the pending part.
     ///
     /// # Notes:
     /// All information required is in `self.tree`. No read or write on `self.current`.
@@ -359,23 +271,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     /// Querys the changes of key-value pairs in the snapshot at a given `CommitID` relative to the parent of the pending root.
     ///
-    /// # Parameters:
-    /// - `commit_id`: The `CommitID` to query.
-    ///
-    /// # Returns:
-    /// A `Result` containing the changes in the type `BTreeMap<Key, ValueEntry<Value>>` if successful,
-    /// or an error if the operation fails. Failures include:
+    /// Returns an error if:
     /// - The `commit_id` does not exist in the pending part.
     ///
     /// # Notes:
-    /// Need to obtain the `CurrentMap` at `commit_id`. Then the `CurrentMap` stores all the changes (including the key-value pairs)
-    /// in the snapshot corresponding to `commit_id` relative to the snapshot of the parent of the pending root.
-    /// The key-value pairs are in the type of (`Key`, `ValueEntry(Value)`), where
-    /// - `ValueEntry::Deleted` means that the key is deleted;
-    /// - `ValueEntry::Value(value)` means that the key is set to be of value.
+    /// Need to obtain the [`CurrentMap`] at `commit_id`.
     ///
-    /// # Attentions:
-    /// - checkout_current & read current should be guarded together
+    /// # ATTENTION:
+    /// - `checkout_current` & read current should be guarded together.
     pub fn get_versioned_store(&self, commit_id: S::CommitId) -> PendResult<KeyValueMap<S>, S> {
         // let query node to be self.current
         let mut guard = self.current.write();

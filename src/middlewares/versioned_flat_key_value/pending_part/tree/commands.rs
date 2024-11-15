@@ -1,5 +1,4 @@
-//! Methods in `Tree`: used in the pending part to support the logic
-//! for implementing the `KeyValueStoreManager` trait for `VersionedStore`.
+//! Implementation of [`Tree`] to support [`crate::traits::KeyValueStoreManager`] for [`super::super::super::VersionedStore`]
 
 use crate::{
     middlewares::versioned_flat_key_value::pending_part::pending_schema::{
@@ -12,32 +11,24 @@ use crate::{
 use super::Tree;
 
 impl<S: PendingKeyValueSchema> Tree<S> {
-    /// Queries the modification history of a specified `Key` in the tree.
+    /// Queries the modification history of a given `Key` in the tree.
     /// Starts from the given `CommitID` and iterates changes upward to the root (including the given `CommitID` and the root).
     ///
     /// # Parameters:
-    /// - `accept`: `impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext`
-    ///   Receives a change, including the `CommitID` where the change occurred, the `Key` that was changed, and an `Option<Value>`
-    ///   (None means the key was deleted in this change).
-    ///   Returns whether to continue iterating.
-    /// - `commit_id`: The `CommitID` of the node to start iterating upward.
-    /// - `key`: The `Key` to query.
-    ///
-    /// # Algorithm:
-    /// 1. Traverse up the `Tree` from the given `commit_id`, searching for the most recent modification of the `key`.
-    /// 2. Since each node stores information required to trace back to the most recent modification of each key in the changes
-    ///    that this node made relative to its parent, we can directly jump from one modification of the `key` to the previous one,
-    ///    continuing until there are no more modifications in the tree.
-    ///
-    ///    Note: The node containing the previous modification of the `key` may have already been removed from the tree.
-    ///    However, the node where the current modification occurred still stores a `last_commit_id` with a value of `Some`,
-    ///    which points to that previous modification. This is done to ensure efficient operation of the `change_root` function
-    ///    (i.e., in `change_root`, nodes that remain do not have their `last_commit_id` set to `None` even if the previous node was removed).
+    /// - `accept`: A function that receives a change and returns whether to continue.
     ///
     /// # Returns:
-    /// A `Result` containing an `IsCompleted` (i.e., a boolean indicating whether the iteration is completed) if successful,
-    /// or an error if the operation fails. Failures include:
+    /// A `Result` with a boolean ([`IsCompleted`]) indicating whether the iteration is completed, or an error if:
     /// - The `commit_id` does not exist in the tree.
+    ///
+    /// # Algorithm:
+    /// 1. Traverse up the tree from the given `commit_id`, searching for the most recent modification of the `key`.
+    /// 2. Since each change stored in a node includes where the last modification of this change's key occurred,
+    ///    we can directly jump from one modification of the `key` to the previous one,
+    ///    continuing until there are no more modifications in the tree.
+    ///
+    ///    Note: The node that the previous modification occurred may have already been moved from the tree to
+    ///    the historical part. When encountering such node, the iteration in the tree is also completed.
     pub fn iter_historical_changes(
         &self,
         mut accept: impl FnMut(&S::CommitId, &S::Key, Option<&S::Value>) -> NeedNext,
@@ -63,6 +54,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
 
         while let Some(old_cid) = old_commit_id {
+            // `old_cid` may have been removed from the tree, so this check is necessary
             if !self.contains_commit_id(&old_cid) {
                 break;
             }
@@ -81,24 +73,19 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         Ok(true)
     }
 
-    /// Queries the most recent modification from the given `commit_id` of the given `key`.
-    ///
-    /// # Parameters:
-    /// - `commit_id`: The `CommitID` to query.
-    /// - `key`: The `Key` to query.
+    /// Queries the most recent (i.e., further from the root) modification
+    /// from the given `commit_id` (included) of the given `key`.
     ///
     /// # Algorithm:
-    /// Traverse up the `Tree` from the given `commit_id`, searching for the most recent modification of the `key`.
+    /// Traverse up the tree from the given `commit_id`, searching for the most recent modification of the `key`.
     ///
-    /// # Returns:
-    /// A `Result` containing the changed value if successful, otherwise returns an error if the operation fails.
-    /// - The changed value is of type `Option<ValueEntry<Value>>`:
-    ///   - None: there is no modification of the `key` in the tree
-    ///     (i.e., the value of `key` at `commit_id` is exactly the value of `key` at the parent of the pending root);
-    ///   - Some(ValueEntry::Deleted): in the snapshot of `commit_id`, `key` is deleted;
-    ///   - Some(ValueEntry::Value(value)): in the snapshot of `commit_id`, `key`'s value is value.
-    /// - Failures include:
-    ///   - The `commit_id` does not exist in the tree.
+    /// Returns the changed value if successful:
+    /// - `None`: no change of `key` occurred from `commit_id` (included) to the root (included);
+    /// - `Some(ValueEntry::Deleted)`: `key` is deleted;
+    /// - `Some(ValueEntry::Value(value))`: `key`'s value is set to `value`.
+    ///
+    /// Returns an error if:
+    /// - `commit_id` does not exist in the tree.
     pub fn get_versioned_key(
         &self,
         commit_id: &S::CommitId,
