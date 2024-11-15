@@ -27,9 +27,6 @@ use crate::StorageError;
 
 pub type VersionedStoreCache<Schema> = VersionedMap<PendingKeyValueConfig<Schema, CommitID>>;
 
-#[cfg(test)]
-use crate::middlewares::commit_id_schema::history_number_to_height;
-
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 

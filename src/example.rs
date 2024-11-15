@@ -36,4 +36,3 @@ impl VersionedKeyValueSchema for FlatKeyValue {
     type Key = Box<[u8]>;
     type Value = Box<[u8]>;
 }
-

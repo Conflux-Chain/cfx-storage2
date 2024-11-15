@@ -2,8 +2,10 @@
 
 pub mod backends;
 pub mod errors;
+mod example;
+mod lvmt;
+mod macros;
 mod middlewares;
-mod storage;
 pub mod traits;
 pub mod types;
 mod utils;
