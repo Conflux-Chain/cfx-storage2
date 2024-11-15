@@ -1,3 +1,4 @@
+use ark_serialize::SerializationError;
 use thiserror::Error;
 
 use crate::middlewares::{CommitID, PendingError};
@@ -32,7 +33,20 @@ pub type Result<T> = ::std::result::Result<T, StorageError>;
 pub enum DecodeError {
     #[error("incorrect input length")]
     IncorrectLength,
+    #[error("too short header")]
+    TooShortHeader,
+    #[error("Cannot parse crypto element")]
+    CryptoError,
+    #[error("Custom error: {0}")]
+    Custom(&'static str),
 }
+
+impl From<SerializationError> for DecodeError {
+    fn from(value: SerializationError) -> Self {
+        Self::CryptoError
+    }
+}
+
 pub type DecResult<T> = ::std::result::Result<T, DecodeError>;
 
 #[cfg(test)]

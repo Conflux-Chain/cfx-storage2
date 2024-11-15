@@ -25,6 +25,10 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
     }
 
+    pub fn new_empty() -> Self {
+        Self::new(None, 0)
+    }
+
     #[cfg(test)]
     pub fn check_consistency(&self, height_of_root: usize) -> bool {
         if self.tree.check_consistency(height_of_root) {

@@ -1,6 +1,7 @@
 use std::borrow::{Borrow, Cow};
 
 use ethereum_types::H256;
+use static_assertions::const_assert_eq;
 
 use crate::errors::{DecResult, DecodeError};
 
@@ -70,6 +71,18 @@ impl Decode for [u8] {
     }
 }
 
+impl Encode for Box<[u8]> {
+    fn encode(&self) -> Cow<[u8]> {
+        Cow::Borrowed(self)
+    }
+}
+
+impl Decode for Box<[u8]> {
+    fn decode(input: &[u8]) -> DecResult<Cow<Self>> {
+        Ok(Cow::Owned(input.to_owned().into_boxed_slice()))
+    }
+}
+
 impl Encode for H256 {
     fn encode(&self) -> Cow<[u8]> {
         Cow::Borrowed(&self.0)
@@ -107,13 +120,41 @@ impl Decode for u64 {
     }
 }
 
+impl Encode for [H256; 4] {
+    fn encode(&self) -> Cow<[u8]> {
+        use std::mem::{align_of, size_of, transmute};
+        const_assert_eq!(size_of::<[H256; 4]>(), size_of::<[u8; 128]>());
+        const_assert_eq!(align_of::<[H256; 4]>(), align_of::<[u8; 128]>());
+
+        let raw = unsafe { transmute::<_, &[u8; 128]>(self) };
+        Cow::Borrowed(raw.as_ref())
+    }
+}
+
+impl Decode for [H256; 4] {
+    fn decode(input: &[u8]) -> DecResult<Cow<Self>> {
+        const N: usize = H256::len_bytes();
+        if input.len() != N * 4 {
+            return Err(DecodeError::IncorrectLength);
+        }
+
+        let mut raw = [0u8; N * 4];
+        raw.copy_from_slice(input);
+
+        let res = unsafe { std::mem::transmute::<[u8; N * 4], [H256; 4]>(raw) };
+
+        Ok(Cow::Owned(res))
+    }
+}
+
+#[macro_export]
 macro_rules! subkey_not_support {
     ($($t:ty),+) => {
         $(
-            impl EncodeSubKey for $t {
+            impl crate::backends::serde::EncodeSubKey for $t {
                 const HAVE_SUBKEY: bool = false;
 
-                fn encode_subkey(&self) -> (Cow<[u8]>, Cow<[u8]>) {
+                fn encode_subkey(&self) -> (std::borrow::Cow<[u8]>, std::borrow::Cow<[u8]>) {
                     unimplemented!()
                 }
             }
@@ -121,4 +162,4 @@ macro_rules! subkey_not_support {
     };
 }
 
-subkey_not_support!([u8], H256, u64);
+subkey_not_support!([u8], H256, u64, Box<[u8]>);
