@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+amt = { path = "amt" }
 thiserror = "1"
 auto_impl = "1.2"
 kvdb-rocksdb = "0.19"
