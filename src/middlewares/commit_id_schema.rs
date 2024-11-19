@@ -30,8 +30,6 @@ impl TableSchema for HistoryNumberSchema {
     type Value = CommitID;
 }
 
-pub const MIN_HISTORY_NUMBER_MINUS_ONE: HistoryNumber = 0;
-
 /// Converts a `height` to a `history_number`.
 pub fn height_to_history_number(height: usize) -> HistoryNumber {
     height as u64 + 1
