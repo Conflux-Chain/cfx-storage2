@@ -12,6 +12,4 @@ pub enum PendingError<CommitId: Debug + Eq + Hash> {
     CommitIdAlreadyExists(CommitId),
     #[error("non_root node should have parent")]
     NonRootNodeShouldHaveParent,
-    #[error("root should not be discarded")]
-    RootShouldNotBeDiscarded,
 }

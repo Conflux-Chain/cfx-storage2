@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, ops::Deref};
 
-use super::pending_schema::{ApplyMap, ApplyRecord, PendingKeyValueSchema};
+use super::{
+    pending_schema::{ApplyMap, ApplyRecord, PendingKeyValueSchema},
+    tree::Tree,
+};
 
 pub(super) struct CurrentMap<S: PendingKeyValueSchema> {
     map: BTreeMap<S::Key, ApplyRecord<S>>,
@@ -48,5 +51,10 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
         for (key, apply) in applys.into_iter() {
             self.map.insert(key, apply);
         }
+    }
+
+    pub fn update_rerooted(&mut self, tree: &Tree<S>) {
+        self.map
+            .retain(|_, ApplyRecord { commit_id, .. }| tree.contains_commit_id(commit_id));
     }
 }

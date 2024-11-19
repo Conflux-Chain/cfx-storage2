@@ -65,8 +65,8 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         self.children.insert(new_child);
     }
 
-    pub fn remove_child(&mut self, child_to_remove: &SlabIndex) {
-        self.children.remove(child_to_remove);
+    pub fn remove_child_except(&mut self, child_to_remove: &SlabIndex) {
+        self.children = BTreeSet::from([*child_to_remove]);
     }
 
     pub fn get_height(&self) -> usize {
@@ -79,6 +79,10 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
 
     pub fn get_modified_value(&self, key: &S::Key) -> Option<ValueEntry<S::Value>> {
         self.modifications.get(key).map(|v| v.value.clone())
+    }
+
+    pub fn get_recover_record(&self, key: &S::Key) -> Option<&RecoverRecord<S>> {
+        self.modifications.get(key)
     }
 
     pub fn get_updates(&self) -> KeyValueMap<S> {

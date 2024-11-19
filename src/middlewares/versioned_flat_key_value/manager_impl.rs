@@ -112,6 +112,10 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
     }
 
     fn discard(&mut self, commit: CommitID) -> Result<()> {
+        if self.commit_id_table.get(&commit)?.is_some() {
+            return Ok(());
+        }
+
         Ok(self.pending_part.discard(commit)?)
     }
 

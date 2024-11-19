@@ -130,8 +130,10 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         if let Some(parent_of_new_root) = to_commit.last() {
             // clear current is necessary
             // because apply_commit_id in current.map may be removed from pending part
-            // TODO: consider modify on current instead of removing it.
-            *self.current.get_mut() = None;
+            self.clear_removed_current();
+            if let Some(current) = self.current.get_mut() {
+                current.update_rerooted(&self.tree);
+            }
         }
 
         Ok((start_height_to_commit, to_commit))
@@ -182,15 +184,20 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
         self.tree.discard(commit_id)?;
 
+        self.clear_removed_current();
+
+        Ok(())
+    }
+
+    fn clear_removed_current(&mut self) {
         let current = self.current.get_mut();
+
         let obsoleted_commit_id =
             |c: &CurrentMap<S>| !self.tree.contains_commit_id(&c.get_commit_id());
 
         if current.as_ref().map_or(false, obsoleted_commit_id) {
             *current = None;
         }
-
-        Ok(())
     }
 
     pub fn get_versioned_store(&self, commit_id: S::CommitId) -> PendResult<KeyValueMap<S>, S> {
