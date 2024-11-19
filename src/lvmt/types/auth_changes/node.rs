@@ -178,7 +178,7 @@ mod tests {
     fn leaves_strategy(size: impl Into<SizeRange>) -> impl Strategy<Value = Vec<H256>> {
         vec(bytes32_strategy(), size).prop_filter_map("duplicated item", |mut x| {
             x.sort();
-            if x.len() > 0 {
+            if !x.is_empty() {
                 for i in 0..(x.len() - 1) {
                     if x[i + 1] == x[i] {
                         return None;

@@ -315,7 +315,7 @@ mod tests {
                 let apply_map = forward_only_tree
                     .get_apply_map_from_root_included_for_test(commit_id)
                     .unwrap();
-                let answer = apply_map.get(&key).map(|a| a.value.clone());
+                let answer = apply_map.get(&key).map(|a| a.value);
                 assert_eq!(versioned_value, answer);
                 assert_eq!(versioned_value_with_checkout, answer);
             }

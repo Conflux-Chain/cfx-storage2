@@ -131,7 +131,7 @@ impl<K: Ord + Clone, V: Clone> MockOneStore<K, V> {
     }
 
     pub fn get_keys(&self) -> Vec<K> {
-        self.map.keys().cloned().into_iter().collect()
+        self.map.keys().cloned().collect()
     }
 }
 
@@ -169,12 +169,10 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
     fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
         if let Some(pending_res) = self.pending.tree.get(commit) {
             Ok(MockOneStore::from_mock_map(&pending_res.store))
+        } else if let Some((_, history_res)) = self.history.get(commit) {
+            Ok(MockOneStore::from_mock_map(history_res))
         } else {
-            if let Some((_, history_res)) = self.history.get(commit) {
-                Ok(MockOneStore::from_mock_map(history_res))
-            } else {
-                Err(StorageError::CommitIDNotFound)
-            }
+            Err(StorageError::CommitIDNotFound)
         }
     }
 
@@ -217,7 +215,7 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
                     return Ok(false);
                 }
             }
-            current_cid = parent_cid.clone();
+            current_cid = *parent_cid;
         }
 
         Ok(true)
@@ -234,15 +232,13 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
                         removed_but_children.push_back(self.pending.tree.remove(child).unwrap());
                     }
                 }
-                assert_eq!(
-                    self.pending
-                        .tree
-                        .get_mut(&parent)
-                        .unwrap()
-                        .children
-                        .remove(&commit),
-                    true
-                );
+                assert!(self
+                    .pending
+                    .tree
+                    .get_mut(&parent)
+                    .unwrap()
+                    .children
+                    .remove(&commit));
                 assert!(!self
                     .pending
                     .tree
@@ -415,7 +411,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
     }
 
     pub fn get_pending(&self) -> Vec<CommitID> {
-        let mut pending: Vec<_> = self.pending.tree.keys().cloned().into_iter().collect();
+        let mut pending: Vec<_> = self.pending.tree.keys().cloned().collect();
         pending.sort();
         pending
     }
@@ -425,7 +421,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
     }
 
     pub fn get_history(&self) -> Vec<CommitID> {
-        let mut history: Vec<_> = self.history.keys().cloned().into_iter().collect();
+        let mut history: Vec<_> = self.history.keys().cloned().collect();
         history.sort();
         history
     }
@@ -444,20 +440,17 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
         self.history
             .keys()
             .cloned()
-            .into_iter()
-            .chain(self.pending.tree.keys().cloned().into_iter())
+            .chain(self.pending.tree.keys().cloned())
             .collect()
     }
 
     fn get_keys_on_path(&self, commit: &CommitID) -> Vec<T::Key> {
         let mut keys: Vec<_> = if let Some(pending_res) = self.pending.tree.get(commit) {
-            pending_res.store.keys().cloned().into_iter().collect()
+            pending_res.store.keys().cloned().collect()
+        } else if let Some((_, history_res)) = self.history.get(commit) {
+            history_res.keys().cloned().collect()
         } else {
-            if let Some((_, history_res)) = self.history.get(commit) {
-                history_res.keys().cloned().into_iter().collect()
-            } else {
-                Vec::new()
-            }
+            Vec::new()
         };
         keys.sort();
         keys
@@ -498,42 +491,40 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
             self.pending.tree.insert(commit, root);
 
             Ok(())
-        } else {
-            if let Some(parent_commit_id) = parent_commit {
-                if !self.pending.tree.contains_key(&parent_commit_id) {
-                    return Err(StorageError::PendingError(PendingError::CommitIDNotFound(
-                        parent_commit_id,
-                    )));
-                }
-                if self.pending.tree.contains_key(&commit) {
-                    return Err(StorageError::PendingError(
-                        PendingError::CommitIdAlreadyExists(commit),
-                    ));
-                }
-
-                let last_store = &self.pending.tree.get(&parent_commit_id).unwrap().store;
-                let store = update_last_store_to_store::<T>(last_store, updates);
-
-                let node = MockNode {
-                    commit_id: commit,
-                    parent: parent_commit,
-                    children: Default::default(),
-                    store,
-                };
-                self.pending.tree.insert(commit, node);
-                self.pending
-                    .tree
-                    .get_mut(&parent_commit_id)
-                    .unwrap()
-                    .children
-                    .insert(commit);
-
-                Ok(())
-            } else {
-                Err(StorageError::PendingError(
-                    PendingError::NonRootNodeShouldHaveParent,
-                ))
+        } else if let Some(parent_commit_id) = parent_commit {
+            if !self.pending.tree.contains_key(&parent_commit_id) {
+                return Err(StorageError::PendingError(PendingError::CommitIDNotFound(
+                    parent_commit_id,
+                )));
             }
+            if self.pending.tree.contains_key(&commit) {
+                return Err(StorageError::PendingError(
+                    PendingError::CommitIdAlreadyExists(commit),
+                ));
+            }
+
+            let last_store = &self.pending.tree.get(&parent_commit_id).unwrap().store;
+            let store = update_last_store_to_store::<T>(last_store, updates);
+
+            let node = MockNode {
+                commit_id: commit,
+                parent: parent_commit,
+                children: Default::default(),
+                store,
+            };
+            self.pending.tree.insert(commit, node);
+            self.pending
+                .tree
+                .get_mut(&parent_commit_id)
+                .unwrap()
+                .children
+                .insert(commit);
+
+            Ok(())
+        } else {
+            Err(StorageError::PendingError(
+                PendingError::NonRootNodeShouldHaveParent,
+            ))
         }
     }
 
@@ -560,7 +551,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
                 .unwrap()
                 .children
                 .clone();
-            assert_eq!(siblings.remove(&commit_id), true);
+            assert!(siblings.remove(&commit_id));
             for sibling in siblings.into_iter() {
                 self.discard(sibling).unwrap();
             }
@@ -691,7 +682,7 @@ fn gen_updates(
     }
 
     for key in updates.keys() {
-        all_keys.insert(key.clone());
+        all_keys.insert(*key);
     }
 
     updates
@@ -735,10 +726,7 @@ fn gen_init(
     }
 
     let mut empty_db = InMemoryDatabase::empty();
-    let pending_part = VersionedMap::new(
-        history_cids.items().last().map(|last_cid| *last_cid),
-        history_cids.len(),
-    );
+    let pending_part = VersionedMap::new(history_cids.items().last().copied(), history_cids.len());
 
     confirm_series_to_history::<InMemoryDatabase, TestSchema>(
         &mut empty_db,
@@ -747,7 +735,7 @@ fn gen_init(
             .clone()
             .to_vec()
             .into_iter()
-            .zip(history_updates.clone().into_iter())
+            .zip(history_updates.clone())
             .collect(),
     )
     .unwrap();
@@ -995,12 +983,12 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
         commit_id_type: CommitIDType,
         commit_id: &CommitID,
     ) -> bool {
-        let keys_on_path = self.mock_store.get_keys_on_path(&commit_id);
+        let keys_on_path = self.mock_store.get_keys_on_path(commit_id);
         let (key_type, key) = gen_key(rng, keys_on_path);
 
         let mut mock_collected = Vec::new();
         let mock_accept = |cid: &CommitID, k: &T::Key, v: Option<&T::Value>| -> NeedNext {
-            mock_collected.push((cid.clone(), k.clone(), v.map(|val| val.clone())));
+            mock_collected.push((*cid, *k, v.copied()));
             true
         };
         let mock_res = self
@@ -1009,14 +997,14 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
 
         let mut real_collected = Vec::new();
         let real_accept = |cid: &CommitID, k: &T::Key, v: Option<&T::Value>| -> NeedNext {
-            real_collected.push((cid.clone(), k.clone(), v.map(|val| val.clone())));
+            real_collected.push((*cid, *k, v.copied()));
             true
         };
         let real_res = self
             .real_store
             .iter_historical_changes(real_accept, commit_id, &key);
 
-        let res_is_ok = match (mock_res, real_res) {
+        match (mock_res, real_res) {
             (Err(mock_err), Err(real_err)) => {
                 assert_eq!(mock_err, real_err);
 
@@ -1030,16 +1018,14 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
 
                 assert_ne!(commit_id_type, CommitIDType::Novel);
                 match key_type {
-                    KeyType::Exist => assert!(mock_collected.len() > 0),
-                    KeyType::Novel => assert!(mock_collected.len() == 0),
+                    KeyType::Exist => assert!(!mock_collected.is_empty()),
+                    KeyType::Novel => assert!(mock_collected.is_empty()),
                 }
 
                 true
             }
             _ => panic!(),
-        };
-
-        res_is_ok
+        }
     }
 
     fn get_versioned_key(

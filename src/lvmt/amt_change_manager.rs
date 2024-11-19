@@ -22,9 +22,9 @@ impl AmtChangeManager {
         let slot = self
             .0
             .entry(amt_id)
-            .or_insert_with(|| BTreeMap::new())
-            .entry(node_index as u16)
-            .or_insert_with(|| Default::default())
+            .or_default()
+            .entry(node_index)
+            .or_default()
             .get_mut(slot_index as usize)
             .unwrap();
 
