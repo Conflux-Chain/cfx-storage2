@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use tinyvec::ArrayVec;
 
 type Prefix = ArrayVec<[u8; 32]>;
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthChangeNode {
     hashes: ArrayVec<[H256; MAX_NODE_SIZE]>,
     ticks: Option<ArrayVec<[Prefix; MAX_NODE_SIZE - 1]>>,
@@ -130,7 +130,7 @@ impl Decode for AuthChangeNode {
             return Err(Custom("Inconsistent size"));
         }
 
-        if ticks_length >= 32 {
+        if ticks_length > 32 {
             return Err(Custom("Too large ticks length"));
         }
 
@@ -163,5 +163,158 @@ impl Decode for AuthChangeNode {
             ticks,
             avail_bitmap,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lvmt::types::test_utils::{self, bytes32_strategy};
+
+    use super::*;
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+    use proptest::sample::SizeRange;
+
+    fn leaves_strategy(size: impl Into<SizeRange>) -> impl Strategy<Value = Vec<H256>> {
+        vec(bytes32_strategy(), size).prop_filter_map("duplicated item", |mut x| {
+            x.sort();
+            if x.len() > 0 {
+                for i in 0..(x.len() - 1) {
+                    if x[i + 1] == x[i] {
+                        return None;
+                    }
+                }
+            }
+            Some(x)
+        })
+    }
+
+    fn leave_node_strategy() -> impl Strategy<Value = AuthChangeNode> {
+        leaves_strategy(1..8).prop_map(|x| AuthChangeNode::from_leaves(&x))
+    }
+
+    fn inner_node_strategy() -> impl Strategy<Value = AuthChangeNode> {
+        vec(4usize..=8, 2..=8).prop_flat_map(|size_list| {
+            let num_leaves: usize = size_list.iter().sum();
+            let num_nodes = size_list.len();
+            let size_list: ArrayVec<[usize; 8]> = size_list[..].try_into().unwrap();
+
+            (
+                leaves_strategy(num_leaves),
+                leaves_strategy(num_nodes - 1),
+                0usize..32,
+            )
+                .prop_map(move |(mut leaves, ticks, shared_prefix_len)| {
+                    leaves.sort();
+
+                    let mut rest = &leaves[..];
+                    let mut leaf_nodes = vec![];
+                    for size in size_list {
+                        let head;
+                        (head, rest) = rest.split_at(size);
+                        leaf_nodes.push(AuthChangeNode::from_leaves(head));
+                    }
+
+                    AuthChangeNode::from_nodes(&leaf_nodes, ticks, shared_prefix_len)
+                })
+        })
+    }
+
+    impl Arbitrary for AuthChangeNode {
+        type Parameters = bool;
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with(all_valid_bitmap: bool) -> Self::Strategy {
+            let new_node_strategy = prop_oneof![leave_node_strategy(), inner_node_strategy()];
+
+            (new_node_strategy, any::<u8>())
+                .prop_map(move |(mut node, alter_bitmap)| {
+                    if !all_valid_bitmap {
+                        node.avail_bitmap &= alter_bitmap;
+                    }
+                    node
+                })
+                .boxed()
+        }
+    }
+
+    fn f(a: H256, b: H256) -> H256 {
+        blake2s_tuple(&a, &b)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+        #[test]
+        fn test_serde(data in any::<AuthChangeNode>()) {
+            test_utils::test_serde(data)
+        }
+
+        #[test]
+        fn test_consistent_len(data in any::<AuthChangeNode>()) {
+            if data.ticks.as_ref().map_or(true, |x|x.is_empty()) {
+                return Ok(());
+            }
+
+            let ticks = data.ticks.unwrap();
+            let prefix_len = ticks[0].len();
+            prop_assert!(ticks[1..].iter().all(|x| x.len() == prefix_len));
+        }
+
+        #[test]
+        fn test_leaves_length_1(l in leaves_strategy(1)) {
+            let actual_hash = AuthChangeNode::from_leaves(&l[..]).hash();
+            let expect_hash = l[0];
+            prop_assert_eq!(actual_hash, expect_hash);
+        }
+
+        #[test]
+        fn test_leaves_length_2(l in leaves_strategy(2)) {
+            let actual_hash = AuthChangeNode::from_leaves(&l[..]).hash();
+            let expect_hash = f(l[0], l[1]);
+            prop_assert_eq!(actual_hash, expect_hash);
+        }
+
+        #[test]
+        fn test_leaves_length_3(l in leaves_strategy(3)) {
+            let actual_hash = AuthChangeNode::from_leaves(&l[..]).hash();
+            let expect_hash = f(f(l[0], l[1]), l[2]);
+            prop_assert_eq!(actual_hash, expect_hash);
+        }
+
+        #[test]
+        fn test_leaves_length_4(l in leaves_strategy(4)) {
+            let actual_hash = AuthChangeNode::from_leaves(&l[..]).hash();
+            let expect_hash = f(f(l[0], l[1]), f(l[2], l[3]));
+            prop_assert_eq!(actual_hash, expect_hash);
+        }
+
+        #[test]
+        fn test_leaves_length_5(l in leaves_strategy(5)) {
+            let actual_hash = AuthChangeNode::from_leaves(&l[..]).hash();
+            let expect_hash = f(f(f(l[0], l[1]), l[2]), f(l[3], l[4]));
+            prop_assert_eq!(actual_hash, expect_hash);
+        }
+
+        #[test]
+        fn test_leaves_length_6(l in leaves_strategy(6)) {
+            let actual_hash = AuthChangeNode::from_leaves(&l[..]).hash();
+            let expect_hash = f(f(f(l[0], l[1]), f(l[2], l[3])), f(l[4], l[5]));
+            prop_assert_eq!(actual_hash, expect_hash);
+        }
+
+        #[test]
+        fn test_leaves_length_7(l in leaves_strategy(7)) {
+            let actual_hash = AuthChangeNode::from_leaves(&l[..]).hash();
+            let expect_hash = f(f(f(l[0], l[1]), f(l[2], l[3])), f(f(l[4], l[5]), l[6]));
+            prop_assert_eq!(actual_hash, expect_hash);
+        }
+
+        #[test]
+        fn test_leaves_length_8(l in leaves_strategy(8)) {
+            let actual_hash = AuthChangeNode::from_leaves(&l[..]).hash();
+            let expect_hash = f(f(f(l[0], l[1]), f(l[2], l[3])), f(f(l[4], l[5]), f(l[6], l[7])));
+            prop_assert_eq!(actual_hash, expect_hash);
+        }
     }
 }

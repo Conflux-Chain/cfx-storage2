@@ -19,6 +19,14 @@ pub enum CurvePoint {
     Affine(G1Aff),
 }
 
+impl PartialEq for CurvePoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.affine() == other.affine()
+    }
+}
+
+impl Eq for CurvePoint {}
+
 impl Default for CurvePoint {
     fn default() -> Self {
         Self::Affine(Default::default())
@@ -84,7 +92,7 @@ pub fn batch_normalize<'a>(
         .for_each(|(pointer, affine)| *pointer = CurvePoint::Affine(affine))
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CurvePointWithVersion {
     pub(in crate::lvmt) version: u64,
     pub(in crate::lvmt) point: CurvePoint,
@@ -117,5 +125,92 @@ impl Decode for CurvePointWithVersion {
             version,
             point: CurvePoint::Affine(affine_point),
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lvmt::crypto::Fq;
+    use crate::lvmt::types::test_utils::{self, version_strategy};
+    use ark_ec::AffineRepr;
+    use ark_ff::{BigInt, BigInteger, PrimeField};
+    use proptest::array::uniform;
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+
+    fn fq_strategy() -> impl Strategy<Value = Fq> {
+        const NUM_LIMBS: usize = <<Fq as PrimeField>::BigInt as BigInteger>::NUM_LIMBS;
+        uniform::<_, NUM_LIMBS>(0u64..=255).prop_filter_map("Fq out of range", |raw| {
+            let big_int = BigInt(raw);
+            Fq::from_bigint(big_int)
+        })
+    }
+    fn g1aff_strategy() -> impl Strategy<Value = G1Aff> {
+        (fq_strategy(), any::<bool>()).prop_filter_map("not on curve", |(x, greatest)| {
+            G1Aff::get_point_from_x_unchecked(x, greatest).map(|p| p.mul_by_cofactor())
+        })
+    }
+
+    fn g1_strategy() -> impl Strategy<Value = G1> {
+        prop_oneof![
+            g1aff_strategy().prop_map(|x| x.into()),
+            (g1aff_strategy(), g1aff_strategy()).prop_map(|(x, y)| x + y)
+        ]
+    }
+
+    impl Arbitrary for CurvePoint {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with(args: Self::Parameters) -> Self::Strategy {
+            prop_oneof![
+                g1aff_strategy().prop_map(|x| CurvePoint::Affine(x)),
+                g1_strategy().prop_map(|x| CurvePoint::Projective(x)),
+            ]
+            .boxed()
+        }
+    }
+
+    impl Arbitrary for CurvePointWithVersion {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with(args: Self::Parameters) -> Self::Strategy {
+            (any::<CurvePoint>(), version_strategy())
+                .prop_map(|(point, version)| CurvePointWithVersion { point, version })
+                .boxed()
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_add(a in any::<CurvePoint>(), b in g1_strategy()) {
+            let c = a + b;
+            let d = c + (-b);
+            prop_assert_eq!(a, d);
+
+            let mut e = a;
+            e += b;
+            e += -b;
+            prop_assert_eq!(a, e);
+        }
+
+        #[test]
+        fn test_serde(point in any::<CurvePointWithVersion>()) {
+            test_utils::test_serde(point)
+        }
+
+        #[test]
+        fn test_normalize(input in vec(any::<CurvePoint>(), 0..100)) {
+            let mut output = input.clone();
+            batch_normalize(output.iter_mut());
+
+            let all_affine = output.iter().all(|x|matches!(x, CurvePoint::Affine(_)));
+            prop_assert!(all_affine);
+
+            let all_equal = input.into_iter().zip(output.into_iter()).all(|(a, b)| a.hash() == b.hash() && a == b);
+            prop_assert!(all_equal);
+        }
     }
 }
