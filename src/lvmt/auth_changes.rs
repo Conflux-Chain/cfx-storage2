@@ -118,3 +118,50 @@ fn process_subtree(
 fn shared_prefix_len<T: PartialEq>(a: &[T], b: &[T]) -> usize {
     a.iter().zip(b).take_while(|(x, y)| x == y).count()
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::lvmt::types::test_utils::bytes32_strategy;
+
+    use super::*;
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+
+    fn leaf_node_size() -> impl Strategy<Value = usize> {
+        (1usize..=12).prop_map(|h| 1usize << h)
+    }
+
+    fn tmp() -> impl Strategy<Value = Vec<Vec<H256>>> {
+        leaf_node_size()
+            .prop_flat_map(|size| {
+                let non_full_node_index = 0..size;
+                let non_full_node_size = 4usize..=8;
+                (non_full_node_index, non_full_node_size).prop_flat_map(
+                    move |(node_index, node_size)| {
+                        let size_map = |i| {
+                            if i < node_index {
+                                8
+                            } else if i > node_index {
+                                4
+                            } else {
+                                node_size
+                            }
+                        };
+                        (0..size)
+                            .map(|i| vec(bytes32_strategy(), size_map(i)))
+                            .collect::<Vec<_>>()
+                    },
+                )
+            })
+            .prop_map(|mut x| {
+                let pointers: Vec<_> = x.iter_mut().flat_map(|y| y.iter_mut()).collect();
+                let mut cloned_hash: Vec<H256> = pointers.iter().map(|x| **x).collect();
+                cloned_hash.sort();
+                pointers
+                    .into_iter()
+                    .zip(cloned_hash.into_iter())
+                    .for_each(|(pointer, value)| *pointer = value);
+                x
+            })
+    }
+}

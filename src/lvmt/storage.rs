@@ -9,7 +9,7 @@ use super::{
 use crate::{
     backends::WriteSchemaTrait,
     errors::Result,
-    lvmt::types::{amt_node_id, AllocationInfo, KEY_SLOT_SIZE},
+    lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::table_schema::KeyValueSnapshotRead,
 };
 use crate::{
@@ -48,7 +48,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                 (old_value.allocation, old_value.version + 1)
             } else {
                 let allocation = allocate_version_slot(&*key, &slot_alloc_view)?;
-                allocations.push(AllocationInfo::new(allocation.slot_index, key.clone()));
+                allocations.push(AllocationKeyInfo::new(allocation.slot_index, key.clone()));
                 (allocation, 0)
             };
 
@@ -93,7 +93,7 @@ fn allocate_version_slot(
 
     let mut depth = 1;
     loop {
-        let amt_node_id = amt_node_id(key_digest, depth);
+        let amt_node_id = compute_amt_node_id(key_digest, depth);
         let slot_alloc = db.get(&amt_node_id)?;
         let next_index = match slot_alloc {
             None => 0,
@@ -106,7 +106,6 @@ fn allocate_version_slot(
 
         return Ok(AllocatePosition {
             depth: depth as u8,
-            node_index: amt_node_id.last().cloned().unwrap(),
             slot_index: next_index as u8,
         });
     }

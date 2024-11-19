@@ -1,5 +1,3 @@
-#[cfg(feature = "deprecated")]
-mod item;
 mod key;
 mod node;
 
