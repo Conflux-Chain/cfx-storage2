@@ -20,7 +20,7 @@ impl Storage {
         }
     }
 
-    pub fn as_manager<'a>(&'a mut self) -> Result<VersionedStore<'a, 'a, FlatKeyValue>> {
+    pub fn as_manager(&mut self) -> Result<VersionedStore<'_, '_, FlatKeyValue>> {
         VersionedStore::new(&self.backend, &mut self.cache)
     }
 }

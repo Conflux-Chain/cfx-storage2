@@ -28,7 +28,7 @@ const AMT_CHANGE_FLAG: u8 = 1;
 
 pub fn amt_change_hash(amt_id: &AmtId, curve_point: &CurvePointWithVersion) -> H256 {
     let mut hasher = Blake2s::new();
-    hasher.update(&[AMT_CHANGE_FLAG]);
+    hasher.update([AMT_CHANGE_FLAG]);
     hasher.update(amt_id.encode().as_ref());
     hasher.update(curve_point.encode().as_ref());
     H256(hasher.finalize().into())
@@ -36,7 +36,7 @@ pub fn amt_change_hash(amt_id: &AmtId, curve_point: &CurvePointWithVersion) -> H
 
 pub fn key_value_hash(key: &[u8], value: &LvmtValue) -> H256 {
     let mut hasher = Blake2s::new();
-    hasher.update(&[KEY_VALUE_CHANGE_FLAG]);
+    hasher.update([KEY_VALUE_CHANGE_FLAG]);
     hasher.update((key.len() as u32).to_le_bytes());
     hasher.update(key.encode().as_ref());
     hasher.update(value.encode().as_ref());
@@ -178,7 +178,7 @@ mod tests {
                 cloned_hash.sort();
                 pointers
                     .into_iter()
-                    .zip(cloned_hash.into_iter())
+                    .zip(cloned_hash)
                     .for_each(|(pointer, value)| *pointer = value);
                 x
             })

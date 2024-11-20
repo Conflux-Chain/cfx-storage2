@@ -36,7 +36,7 @@ pub mod test_utils {
     }
 
     pub fn bytes32_strategy() -> impl Strategy<Value = H256> {
-        any::<[u8; 32]>().prop_map(|x| H256(x))
+        any::<[u8; 32]>().prop_map(H256)
     }
 
     pub fn test_serde<T: Encode + Decode + Debug + Eq + ToOwned<Owned = T>>(data: T) {
