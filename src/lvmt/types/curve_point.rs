@@ -73,12 +73,12 @@ impl CurvePoint {
 }
 
 pub fn batch_normalize<'a>(
-    mut curve_point_iter_mut: impl Iterator<Item = &'a mut CurvePoint> + ExactSizeIterator,
+    curve_point_iter_mut: impl Iterator<Item = &'a mut CurvePoint> + ExactSizeIterator,
 ) {
     let mut pointers = Vec::with_capacity(curve_point_iter_mut.len());
     let mut proj_points = Vec::with_capacity(curve_point_iter_mut.len());
 
-    while let Some(curve_point) = curve_point_iter_mut.next() {
+    for curve_point in curve_point_iter_mut {
         if let CurvePoint::Projective(proj_point) = curve_point {
             proj_points.push(*proj_point);
             pointers.push(curve_point);
@@ -88,7 +88,7 @@ pub fn batch_normalize<'a>(
     let affine_points = G1::normalize_batch(&proj_points);
     pointers
         .into_iter()
-        .zip(affine_points.into_iter())
+        .zip(affine_points)
         .for_each(|(pointer, affine)| *pointer = CurvePoint::Affine(affine))
 }
 
@@ -165,8 +165,8 @@ mod tests {
 
         fn arbitrary_with(args: Self::Parameters) -> Self::Strategy {
             prop_oneof![
-                g1aff_strategy().prop_map(|x| CurvePoint::Affine(x)),
-                g1_strategy().prop_map(|x| CurvePoint::Projective(x)),
+                g1aff_strategy().prop_map(CurvePoint::Affine),
+                g1_strategy().prop_map(CurvePoint::Projective),
             ]
             .boxed()
         }

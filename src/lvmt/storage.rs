@@ -47,12 +47,12 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
                 (old_value.allocation, old_value.version + 1)
             } else {
-                let allocation = allocate_version_slot(&*key, &slot_alloc_view)?;
+                let allocation = allocate_version_slot(&key, &slot_alloc_view)?;
                 allocations.push(AllocationKeyInfo::new(allocation.slot_index, key.clone()));
                 (allocation, 0)
             };
 
-            amt_change_manager.record_with_allocation(allocation, &*key);
+            amt_change_manager.record_with_allocation(allocation, &key);
 
             key_value_changes.push((
                 key,
@@ -68,9 +68,10 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
         // Update auth changes
         let auth_changes = {
-            let auth_change_iter = amt_changes.iter().filter_map(|(amt_id, curve_point)| {
-                (amt_id.len() > 0).then(|| amt_change_hash(amt_id, curve_point))
-            });
+            let auth_change_iter = amt_changes
+                .iter()
+                .filter(|&(amt_id, curve_point)| (amt_id.len() > 0))
+                .map(|(amt_id, curve_point)| amt_change_hash(amt_id, curve_point));
             let key_value_iter = key_value_changes
                 .iter()
                 .map(|(key, value)| key_value_hash(key, value));
@@ -89,7 +90,7 @@ fn allocate_version_slot(
     key: &[u8],
     db: &KeyValueSnapshotRead<SlotAllocations>,
 ) -> Result<AllocatePosition> {
-    let key_digest = blake2s(&*key);
+    let key_digest = blake2s(key);
 
     let mut depth = 1;
     loop {

@@ -23,7 +23,7 @@ impl AllocatePosition {
 
 impl Encode for AllocatePosition {
     fn encode(&self) -> std::borrow::Cow<[u8]> {
-        let meta = (self.depth as u8 & 0x1f) | ((self.slot_index as u8) << 5);
+        let meta = (self.depth & 0x1f) | (self.slot_index << 5);
         Cow::Owned(vec![meta])
     }
 }

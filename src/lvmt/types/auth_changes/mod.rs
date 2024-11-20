@@ -29,7 +29,7 @@ fn test_log2() {
     assert_eq!(log2_ceil(3), 2);
     assert_eq!(log2_ceil(4), 2);
     for d in 3..=8 {
-        for i in (1 << (d - 1) + 1)..=(1 << d) {
+        for i in (1 << ((d - 1) + 1))..=(1 << d) {
             assert_eq!(log2_ceil(i), d);
         }
     }
