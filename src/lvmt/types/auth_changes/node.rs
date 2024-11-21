@@ -1,5 +1,6 @@
-use super::{tree_height, MAX_NODE_SIZE};
+use super::{log2_ceil, MAX_NODE_SIZE};
 use crate::errors::{DecResult, DecodeError};
+use crate::lvmt::types::auth_changes::bit_ones;
 use crate::{
     backends::serde::{Decode, Encode},
     utils::hash::blake2s_tuple,
@@ -24,7 +25,7 @@ impl AuthChangeNode {
         assert!(size <= MAX_NODE_SIZE);
 
         let hashes = ArrayVec::try_from(leaves).unwrap();
-        let avail_bitmap = (1u8 << size).overflowing_sub(1).0;
+        let avail_bitmap = bit_ones(size);
         Self {
             hashes,
             ticks: None,
@@ -40,7 +41,7 @@ impl AuthChangeNode {
         assert_eq!(size - 1, ticks.len());
 
         let hashes: ArrayVec<_> = nodes.iter().map(Self::hash).collect();
-        let avail_bitmap = (1 << size) - 1;
+        let avail_bitmap = bit_ones(size);
         let ticks = ticks
             .into_iter()
             .map(|x| ArrayVec::from_array_len(x.0, shared_prefix_len + 1))
@@ -53,12 +54,12 @@ impl AuthChangeNode {
         }
     }
 
-    fn hash(&self) -> H256 {
+    pub fn hash(&self) -> H256 {
         if self.hashes.len() == 1 {
             return self.hashes[0];
         }
-        let height = tree_height(self.hashes.len());
-        let pairs = self.hashes.len() - (1 << (height - 2));
+        let height = log2_ceil(self.hashes.len());
+        let pairs = self.hashes.len() - (1 << (height - 1));
 
         let mut hashes: Vec<_> = self
             .hashes
@@ -78,7 +79,7 @@ impl AuthChangeNode {
         hashes[0]
     }
 
-    fn is_leaf(&self) -> bool {
+    pub fn is_leaf(&self) -> bool {
         self.ticks.is_none()
     }
 }
@@ -178,7 +179,7 @@ mod tests {
     fn leaves_strategy(size: impl Into<SizeRange>) -> impl Strategy<Value = Vec<H256>> {
         vec(bytes32_strategy(), size).prop_filter_map("duplicated item", |mut x| {
             x.sort();
-            if x.len() > 0 {
+            if !x.is_empty() {
                 for i in 0..(x.len() - 1) {
                     if x[i + 1] == x[i] {
                         return None;

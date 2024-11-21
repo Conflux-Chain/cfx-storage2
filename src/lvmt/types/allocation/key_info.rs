@@ -16,7 +16,7 @@ impl AllocationKeyInfo {
 
 impl Encode for AllocationKeyInfo {
     fn encode(&self) -> Cow<[u8]> {
-        let mut raw = vec![self.index as u8];
+        let mut raw = vec![self.index];
         raw.extend(self.key.as_ref());
         Cow::Owned(raw)
     }
@@ -24,7 +24,7 @@ impl Encode for AllocationKeyInfo {
 
 impl Decode for AllocationKeyInfo {
     fn decode(input: &[u8]) -> DecResult<Cow<Self>> {
-        if input.len() == 0 {
+        if input.is_empty() {
             return Err(DecodeError::IncorrectLength);
         }
         let index = input[0];

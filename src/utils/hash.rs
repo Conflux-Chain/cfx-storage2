@@ -17,7 +17,7 @@ pub fn amt_id_hash(input: &[u16]) -> H256 {
 
 pub fn blake2s_tuple(a: &H256, b: &H256) -> H256 {
     let mut hasher = Blake2s256::new();
-    hasher.update(&a.0);
-    hasher.update(&b.0);
+    hasher.update(a.0);
+    hasher.update(b.0);
     H256(hasher.finalize().into())
 }

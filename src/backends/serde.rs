@@ -151,7 +151,7 @@ impl Decode for [H256; 4] {
 macro_rules! subkey_not_support {
     ($($t:ty),+) => {
         $(
-            impl crate::backends::serde::EncodeSubKey for $t {
+            impl $crate::backends::serde::EncodeSubKey for $t {
                 const HAVE_SUBKEY: bool = false;
 
                 fn encode_subkey(&self) -> (std::borrow::Cow<[u8]>, std::borrow::Cow<[u8]>) {
