@@ -13,7 +13,6 @@ use crate::{
     deferred_verification::DeferredVerifier,
     ec_algebra::{FftField, Field, Fr, G1Aff, G1},
     proofs::{AllProofs, AmtProofError, Proof},
-    prove_params::AMTProofs,
     utils::{bitreverse, change_matrix_direction, index_reverse},
     AMTParams, AMTVerifyParams, PowerTau,
 };
@@ -33,7 +32,6 @@ impl<
         const LOG_COL: usize,
         const LOG_ROW: usize,
     > EncoderParams<PE, COSET_N, LOG_COL, LOG_ROW>
-where AMTParams<PE>: AMTProofs<PE = PE>
 {
     pub fn new(amt_list: [AMTParams<PE>; COSET_N]) -> Self {
         Self::assert_validity();
@@ -160,11 +158,10 @@ pub struct HalfBlob<PE: Pairing, const LOG_COL: usize, const LOG_ROW: usize> {
 
 impl<PE: Pairing, const LOG_COL: usize, const LOG_ROW: usize>
     HalfBlob<PE, LOG_COL, LOG_ROW>
-where AMTParams<PE>: AMTProofs<PE = PE>
 {
     fn generate(mut points: Vec<Fr<PE>>, amt: &AMTParams<PE>) -> Self {
         index_reverse(&mut points);
-        let (commitment, proofs) = amt.gen_amt_proofs(&points);
+        let (commitment, proofs) = amt.gen_all_proofs(&points);
 
         index_reverse(&mut points);
         change_matrix_direction(&mut points, LOG_ROW, LOG_COL);

@@ -1,7 +1,6 @@
 #[cfg(not(feature = "bls12-381"))]
 pub mod fast_serde_bn254;
 mod generate;
-mod interfaces;
 mod prove;
 mod serde;
 mod verify;
@@ -10,8 +9,6 @@ mod verify;
 pub mod tests;
 
 use crate::ec_algebra::{G1Aff, G2Aff, G2};
-
-pub use interfaces::AMTProofs;
 
 use ark_ec::{pairing::Pairing, CurveGroup};
 
