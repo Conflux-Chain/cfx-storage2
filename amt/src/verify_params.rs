@@ -6,7 +6,7 @@ use crate::{
     error, AMTParams,
 };
 
-use crate::ec_algebra::{Fr, G1Aff, G2Aff, Pairing, G1};
+use crate::ec_algebra::{Fr, G1Aff, G2Aff, G1};
 
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -14,7 +14,7 @@ use tracing::{debug, info, instrument};
 
 use crate::proofs::{AmtProofError, Proof};
 
-use ark_ec::{AffineRepr, VariableBaseMSM};
+use ark_ec::{pairing::Pairing, AffineRepr, VariableBaseMSM};
 
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;

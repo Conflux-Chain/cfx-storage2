@@ -1,7 +1,8 @@
 use crate::{
-    ec_algebra::{CanonicalDeserialize, CanonicalSerialize, Pairing},
+    ec_algebra::{CanonicalDeserialize, CanonicalSerialize},
     AMTParams,
 };
+use ark_ec::pairing::Pairing;
 use ark_serialize::{SerializationError, Valid, Validate};
 
 impl<PE: Pairing> CanonicalDeserialize for AMTParams<PE> {

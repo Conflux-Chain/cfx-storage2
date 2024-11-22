@@ -1,11 +1,11 @@
-use ark_ec::{pairing::PairingOutput, CurveGroup, VariableBaseMSM};
+use ark_ec::{pairing::{Pairing, PairingOutput}, CurveGroup, VariableBaseMSM};
 use ark_ff::Field;
 use ark_std::{cfg_into_iter, cfg_iter, UniformRand, Zero};
 use rand::rngs::OsRng;
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    ec_algebra::{Fr, FrInt, G1Aff, G2Aff, Pairing, G1},
+    ec_algebra::{Fr, FrInt, G1Aff, G2Aff, G1},
     AmtProofError,
 };
 

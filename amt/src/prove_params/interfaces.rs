@@ -1,5 +1,7 @@
+use ark_ec::pairing::Pairing;
+
 use crate::{
-    ec_algebra::{Fr, Pairing, G1},
+    ec_algebra::{Fr, G1},
     proofs::AllProofs,
     AMTParams,
 };

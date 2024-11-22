@@ -9,11 +9,11 @@ mod verify;
 #[cfg(test)]
 pub mod tests;
 
-use crate::ec_algebra::{G1Aff, G2Aff, Pairing, G2};
+use crate::ec_algebra::{G1Aff, G2Aff, G2};
 
 pub use interfaces::AMTProofs;
 
-use ark_ec::CurveGroup;
+use ark_ec::{pairing::Pairing, CurveGroup};
 
 pub struct AMTParams<PE: Pairing> {
     pub basis: Vec<G1Aff<PE>>,

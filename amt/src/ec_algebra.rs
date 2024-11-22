@@ -30,19 +30,3 @@ pub type Fq<PE> = <PE as ark_ec::pairing::Pairing>::BaseField;
 pub type FrInt<PE> = <Fr<PE> as PrimeField>::BigInt;
 pub type FqInt<PE> = <Fq<PE> as PrimeField>::BigInt;
 pub type Fq2<PE> = <G2Aff<PE> as AffineRepr>::BaseField;
-
-pub trait Pairing: ark_ec::pairing::Pairing {
-    fn fast_fft(
-        fft_domain: &Radix2EvaluationDomain<Fr<Self>>, input: &[G1<Self>],
-    ) -> Vec<G1<Self>> {
-        fft_domain.fft(input)
-    }
-
-    fn fast_ifft(
-        fft_domain: &Radix2EvaluationDomain<Fr<Self>>, input: &[G1<Self>],
-    ) -> Vec<G1<Self>> {
-        fft_domain.ifft(input)
-    }
-}
-
-impl<PE: ark_ec::pairing::Pairing> Pairing for PE {}

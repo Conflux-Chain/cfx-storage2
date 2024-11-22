@@ -1,12 +1,13 @@
 use crate::{
     ec_algebra::{
         AffineRepr, CanonicalDeserialize, CanonicalSerialize, CurveGroup, Fr,
-        G1Aff, G2Aff, Pairing, UniformRand, G1, G2,
+        G1Aff, G2Aff, UniformRand, G1, G2,
     },
     error, ptau_file_name,
 };
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
+use ark_ec::pairing::Pairing;
 use ark_ff::{utils::k_adicity, Field};
 use ark_std::cfg_into_iter;
 #[cfg(feature = "parallel")]

@@ -1,12 +1,12 @@
 use std::collections::VecDeque;
 
 use crate::{
-    ec_algebra::{AffineRepr, Fr, G1Aff, Pairing, G1},
+    ec_algebra::{AffineRepr, Fr, G1Aff, G1},
     proofs::AllProofs,
 };
 
 use super::AMTParams;
-use ark_ec::{CurveGroup, VariableBaseMSM};
+use ark_ec::{pairing::Pairing, CurveGroup, VariableBaseMSM};
 use tracing::instrument;
 
 impl<PE: Pairing> AMTParams<PE>

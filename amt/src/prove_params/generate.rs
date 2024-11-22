@@ -4,7 +4,7 @@ use super::AMTParams;
 use crate::{
     ec_algebra::{
         k_adicity, CanonicalDeserialize, CanonicalSerialize, EvaluationDomain,
-        Field, Fr, G1Aff, G2Aff, One, Pairing, Radix2EvaluationDomain, Zero,
+        Field, Fr, G1Aff, G2Aff, One, Radix2EvaluationDomain, Zero,
         G1, G2,
     },
     error,
@@ -15,7 +15,7 @@ use crate::{
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
 
-use ark_ec::CurveGroup;
+use ark_ec::{pairing::Pairing, CurveGroup};
 use ark_ff::FftField;
 use ark_std::cfg_iter_mut;
 #[cfg(feature = "parallel")]
@@ -198,8 +198,7 @@ impl<PE: Pairing> AMTParams<PE> {
         g1pp: &[G1<PE>], fft_domain: &Radix2EvaluationDomain<Fr<PE>>,
     ) -> Vec<G1<PE>> {
         debug!("Generate basis");
-        // fft_domain.ifft(g1pp)
-        PE::fast_ifft(fft_domain, g1pp)
+        fft_domain.ifft(g1pp)
     }
 
     fn gen_quotients(
@@ -223,9 +222,8 @@ impl<PE: Pairing> AMTParams<PE> {
             coeff[i] = g1pp[max_coeff - i];
         }
 
-        // let mut answer = fft_domain.fft(&coeff);
-        let mut answer = PE::fast_fft(fft_domain, &coeff);
-
+        let mut answer = fft_domain.fft(&coeff);
+        
         cfg_iter_mut!(answer, 1024)
             .for_each(|val: &mut G1<PE>| *val *= fft_domain.size_inv);
         answer

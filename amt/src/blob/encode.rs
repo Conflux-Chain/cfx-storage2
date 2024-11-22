@@ -3,7 +3,7 @@ use std::path::Path;
 
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
-use ark_ec::CurveGroup;
+use ark_ec::{pairing::Pairing, CurveGroup};
 use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "parallel")]
@@ -11,7 +11,7 @@ use rayon::prelude::*;
 
 use crate::{
     deferred_verification::DeferredVerifier,
-    ec_algebra::{FftField, Field, Fr, G1Aff, Pairing, G1},
+    ec_algebra::{FftField, Field, Fr, G1Aff, G1},
     proofs::{AllProofs, AmtProofError, Proof},
     prove_params::AMTProofs,
     utils::{bitreverse, change_matrix_direction, index_reverse},

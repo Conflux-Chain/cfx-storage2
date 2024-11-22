@@ -1,10 +1,10 @@
 use crate::{
-    ec_algebra::{Fr, G1Aff, Pairing, G1},
+    ec_algebra::{Fr, G1Aff, G1},
     proofs::{AmtProofError, Proof},
     verify_params::verify_amt_proof,
 };
 
-use ark_ec::VariableBaseMSM;
+use ark_ec::{pairing::Pairing, VariableBaseMSM};
 
 use super::AMTParams;
 

@@ -2,8 +2,10 @@ use std::path::Path;
 
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
+use ark_ec::pairing::Pairing;
 
-use crate::{ec_algebra::Pairing, verify_params::AMTVerifyParams};
+
+use crate::verify_params::AMTVerifyParams;
 
 pub struct VerifierParams<
     PE: Pairing,
