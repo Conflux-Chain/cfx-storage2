@@ -13,10 +13,10 @@ use crate::ec_algebra::{G1Aff, G2Aff, G2};
 use ark_ec::{pairing::Pairing, CurveGroup};
 
 pub struct AMTParams<PE: Pairing> {
-    pub basis: Vec<G1Aff<PE>>,
-    pub quotients: Vec<Vec<G1Aff<PE>>>,
-    pub vanishes: Vec<Vec<G2Aff<PE>>>,
-    pub g2: G2Aff<PE>,
+    pub(super) basis: Vec<G1Aff<PE>>,
+    pub(super) quotients: Vec<Vec<G1Aff<PE>>>,
+    pub(super) vanishes: Vec<Vec<G2Aff<PE>>>,
+    pub(super) g2: G2Aff<PE>,
 }
 
 impl<PE: Pairing> AMTParams<PE> {
