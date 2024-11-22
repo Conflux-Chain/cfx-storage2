@@ -1,3 +1,4 @@
+use amt::{ec_algebra::Pairing, AMTParams};
 use ethereum_types::H256;
 
 use super::{
@@ -27,12 +28,13 @@ pub struct LvmtStore<'cache, 'db> {
 }
 
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
-    fn commit(
+    fn commit<PE: Pairing>(
         &self,
         old_commit: H256,
         new_commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
+        pp: &AMTParams<PE>,
     ) -> Result<()> {
         let amt_node_view = self.amt_node_store.get_versioned_store(&old_commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&old_commit)?;
@@ -64,7 +66,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             ));
         }
 
-        let amt_changes = amt_change_manager.compute_amt_changes(&amt_node_view)?;
+        let amt_changes = amt_change_manager.compute_amt_changes(&amt_node_view, pp)?;
 
         // Update auth changes
         let auth_changes = {

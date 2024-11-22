@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use amt::{ec_algebra::Pairing, AMTParams};
+
 use super::{
     crypto::G1,
     table_schema::AmtNodes,
@@ -43,15 +45,16 @@ impl AmtChangeManager {
         self.record(amt_id, node_index, (SLOT_SIZE - 1) as u8);
     }
 
-    pub fn compute_amt_changes(
+    pub fn compute_amt_changes<PE: Pairing>(
         &self,
         db: &KeyValueSnapshotRead<'_, AmtNodes>,
+        pp: &AMTParams<PE>,
     ) -> Result<Vec<(AmtId, CurvePointWithVersion)>> {
         let mut result = vec![];
 
         for (key, value) in self.0.iter() {
             let mut curve_point = db.get(key)?.unwrap_or_default();
-            curve_point.point += commitment_diff(value);
+            curve_point.point += commitment_diff(value, pp);
             curve_point.version += 1;
             result.push((*key, curve_point));
         }
@@ -63,6 +66,6 @@ impl AmtChangeManager {
     }
 }
 
-pub fn commitment_diff(change: &AmtChange) -> G1 {
+pub fn commitment_diff<PE: Pairing>(change: &AmtChange, pp: &AMTParams<PE>) -> G1 {
     todo!()
 }
