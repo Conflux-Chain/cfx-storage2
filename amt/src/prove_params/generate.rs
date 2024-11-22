@@ -3,41 +3,38 @@ use std::{fs::File, io::BufReader, path::Path};
 use super::AMTParams;
 use crate::{
     ec_algebra::{
-        k_adicity, CanonicalDeserialize, CanonicalSerialize, EvaluationDomain, Field, Fr, G1Aff,
-        G2Aff, One, Radix2EvaluationDomain, Zero, G1, G2,
+        k_adicity, CanonicalDeserialize, CanonicalSerialize, EvaluationDomain, Fr, G1Aff, G2Aff,
+        Radix2EvaluationDomain, Zero, G1, G2,
     },
     error,
     power_tau::PowerTau,
-    utils::{amtp_file_name, bitreverse, index_reverse},
+    utils::{amtp_file_name, index_reverse},
 };
 
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
 
 use ark_ec::{pairing::Pairing, CurveGroup};
-use ark_ff::FftField;
 use ark_std::cfg_iter_mut;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[cfg(not(feature = "bls12-381"))]
 impl AMTParams<Bn254> {
-    #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth, coset=coset))]
+    #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth))]
     pub fn from_dir_mont(
         dir: impl AsRef<Path>,
         depth: usize,
         prove_depth: usize,
-        coset: usize,
         create_mode: bool,
         pp: Option<&PowerTau<Bn254>>,
     ) -> Self {
         debug!(
             depth = depth,
             prove_depth = prove_depth,
-            coset,
             "Load AMT params (mont format)"
         );
-        let file_name = amtp_file_name::<Bn254>(depth, prove_depth, coset, true);
+        let file_name = amtp_file_name::<Bn254>(depth, prove_depth, true);
         let path = dir.as_ref().join(file_name);
 
         match Self::load_cached_mont(&path) {
@@ -55,7 +52,7 @@ impl AMTParams<Bn254> {
 
         info!("Recover from unmont format");
 
-        let params = Self::from_dir(dir, depth, prove_depth, coset, create_mode, pp);
+        let params = Self::from_dir(dir, depth, prove_depth, create_mode, pp);
 
         let writer = File::create(&*path).unwrap();
 
@@ -72,18 +69,17 @@ impl AMTParams<Bn254> {
 }
 
 impl<PE: Pairing> AMTParams<PE> {
-    #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth, coset=coset))]
+    #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth))]
     pub fn from_dir(
         dir: impl AsRef<Path>,
         depth: usize,
         prove_depth: usize,
-        coset: usize,
         create_mode: bool,
         pp: Option<&PowerTau<PE>>,
     ) -> Self {
-        debug!(depth, prove_depth, coset, "Load AMT params (unmont format)");
+        debug!(depth, prove_depth, "Load AMT params (unmont format)");
 
-        let file_name = amtp_file_name::<PE>(depth, prove_depth, coset, false);
+        let file_name = amtp_file_name::<PE>(depth, prove_depth, false);
         let path = dir.as_ref().join(file_name);
 
         if let Ok(params) = Self::load_cached(&path) {
@@ -104,7 +100,7 @@ impl<PE: Pairing> AMTParams<PE> {
             PowerTau::<PE>::from_dir(dir, depth, create_mode)
         };
 
-        let params = Self::from_pp(pp, prove_depth, coset);
+        let params = Self::from_pp(pp, prove_depth);
         let buffer = File::create(&path).unwrap();
 
         info!(file = ?path, "Save generated AMT params (unmont format)");
@@ -134,21 +130,10 @@ impl<PE: Pairing> AMTParams<PE> {
         affine
     }
 
-    pub fn coset_factor(length: usize, idx: usize) -> Fr<PE> {
-        assert!(length.is_power_of_two());
-        let depth = ark_std::log2(length) as usize;
-        let two_adicity: usize = <Fr<PE> as FftField>::TWO_ADICITY as usize;
-        assert!(depth <= two_adicity);
-        assert!(idx < 1 << (two_adicity - depth));
-        let pow = bitreverse(idx, two_adicity - depth);
-
-        <Fr<PE> as FftField>::TWO_ADIC_ROOT_OF_UNITY.pow([pow as u64])
-    }
-
-    pub fn from_pp(pp: PowerTau<PE>, prove_depth: usize, coset: usize) -> Self {
+    pub fn from_pp(pp: PowerTau<PE>, prove_depth: usize) -> Self {
         info!("Generate AMT params from powers of tau");
 
-        let (mut g1pp, mut g2pp, mut high_g1pp, mut high_g2pp) = pp.into_projective();
+        let (g1pp, g2pp, high_g1pp, high_g2pp) = pp.into_projective();
 
         assert_eq!(high_g2pp.len(), 1);
         assert_eq!(g1pp.len(), high_g1pp.len());
@@ -156,26 +141,6 @@ impl<PE: Pairing> AMTParams<PE> {
         assert!(g1pp.len().is_power_of_two());
         let length = g1pp.len();
         assert!(length >= 1 << prove_depth);
-
-        if coset > 0 {
-            debug!(coset, "Adjust powers of tau according to coset index");
-
-            let w = Fr::<PE>::one() / Self::coset_factor(length, coset);
-            cfg_iter_mut!(g1pp)
-                .enumerate()
-                .for_each(|(idx, x): (_, &mut G1<PE>)| *x *= w.pow([idx as u64]));
-            cfg_iter_mut!(g2pp)
-                .enumerate()
-                .for_each(|(idx, x): (_, &mut G2<PE>)| *x *= w.pow([idx as u64]));
-
-            debug!(coset, "Adjust ldt params according to coset index");
-            cfg_iter_mut!(high_g1pp)
-                .enumerate()
-                .for_each(|(idx, x): (_, &mut G1<PE>)| *x *= w.pow([idx as u64]));
-            cfg_iter_mut!(high_g2pp)
-                .enumerate()
-                .for_each(|(idx, x): (_, &mut G2<PE>)| *x *= w.pow([idx as u64]));
-        }
 
         let fft_domain = Radix2EvaluationDomain::<Fr<PE>>::new(length).unwrap();
 

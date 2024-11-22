@@ -31,26 +31,13 @@ pub fn ptau_file_name<PE: Pairing>(depth: usize, mont: bool) -> String {
     file_name::<PE>(&prefix, depth, None)
 }
 
-pub fn amtp_file_name<PE: Pairing>(
-    depth: usize,
-    prove_depth: usize,
-    coset: usize,
-    mont: bool,
-) -> String {
-    let prefix = format!(
-        "amt-prove-coset{}{}",
-        coset,
-        if mont { "-mont" } else { "" }
-    );
+pub fn amtp_file_name<PE: Pairing>(depth: usize, prove_depth: usize, mont: bool) -> String {
+    let prefix = format!("amt-prove-{}", if mont { "-mont" } else { "" });
     file_name::<PE>(&prefix, depth, Some(prove_depth))
 }
 
-pub fn amtp_verify_file_name<PE: Pairing>(
-    depth: usize,
-    verify_depth: usize,
-    coset: usize,
-) -> String {
-    let prefix = format!("amt-verify-coset{}", coset);
+pub fn amtp_verify_file_name<PE: Pairing>(depth: usize, verify_depth: usize) -> String {
+    let prefix = format!("amt-verify");
     file_name::<PE>(&prefix, depth, Some(verify_depth))
 }
 
