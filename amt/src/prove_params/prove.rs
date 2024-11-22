@@ -55,10 +55,6 @@ where
         (last_layer[0], answer.into())
     }
 
-    pub fn gen_high_commitment(&self, ri_data: &[Fr<PE>]) -> G1<PE> {
-        VariableBaseMSM::msm(&self.high_basis, ri_data).unwrap()
-    }
-
     pub fn gen_prove_tree(&self, ri_data: &[Fr<PE>], batch_size: usize) -> Vec<Vec<G1Aff<PE>>> {
         assert!(batch_size.is_power_of_two());
         assert!(batch_size < self.len());
@@ -87,13 +83,11 @@ where
         let batch_size = self.len() / (1 << self.quotients.len());
         let proofs = self.gen_prove_tree(ri_data, batch_size);
         let (commitment, commitments) = self.gen_commitment_tree(ri_data, batch_size);
-        let high_commitment = self.gen_high_commitment(ri_data).into_affine();
         let all_proofs = AllProofs {
             commitments,
             proofs,
             input_len: self.len(),
             batch_size,
-            high_commitment,
         };
         (commitment.into_group(), all_proofs)
     }
@@ -154,9 +148,8 @@ mod tests {
                 .gen_all_proofs(ri_data)
                 .1;
             for (index, data) in ri_data.chunks_exact(batch).enumerate() {
-                let (proof, high_commitment) = all_proofs.get_proof(index);
-                AMT.verify_proof(&data, index, &proof, high_commitment.into(), commitment)
-                    .unwrap();
+                let proof = all_proofs.get_proof(index);
+                AMT.verify_proof(&data, index, &proof, commitment).unwrap();
             }
         }
     }

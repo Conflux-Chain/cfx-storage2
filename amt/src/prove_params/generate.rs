@@ -133,10 +133,8 @@ impl<PE: Pairing> AMTParams<PE> {
     pub fn from_pp(pp: PowerTau<PE>, prove_depth: usize) -> Self {
         info!("Generate AMT params from powers of tau");
 
-        let (g1pp, g2pp, high_g1pp, high_g2pp) = pp.into_projective();
+        let (g1pp, g2pp) = pp.into_projective();
 
-        assert_eq!(high_g2pp.len(), 1);
-        assert_eq!(g1pp.len(), high_g1pp.len());
         assert_eq!(g1pp.len(), g2pp.len());
         assert!(g1pp.len().is_power_of_two());
         let length = g1pp.len();
@@ -151,16 +149,8 @@ impl<PE: Pairing> AMTParams<PE> {
         let vanishes: Vec<Vec<G2Aff<PE>>> = (1..=prove_depth)
             .map(|d| Self::enact(Self::gen_vanishes(&g2pp[..], d)))
             .collect();
-        let high_basis: Vec<G1Aff<PE>> = Self::enact(Self::gen_basis(&high_g1pp[..], &fft_domain));
 
-        Self::new(
-            basis,
-            quotients,
-            vanishes,
-            g2pp[0],
-            high_basis,
-            high_g2pp[0],
-        )
+        Self::new(basis, quotients, vanishes, g2pp[0])
     }
 
     fn gen_basis(g1pp: &[G1<PE>], fft_domain: &Radix2EvaluationDomain<Fr<PE>>) -> Vec<G1<PE>> {

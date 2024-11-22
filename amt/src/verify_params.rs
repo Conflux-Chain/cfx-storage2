@@ -24,7 +24,6 @@ pub struct AMTVerifyParams<PE: Pairing> {
     pub basis: Vec<G1Aff<PE>>,
     pub vanishes: Vec<Vec<G2Aff<PE>>>,
     pub g2: G2Aff<PE>,
-    pub high_g2: G2Aff<PE>,
 }
 
 #[cfg(not(feature = "bls12-381"))]
@@ -72,7 +71,6 @@ impl<PE: Pairing> AMTVerifyParams<PE> {
             basis: amt_params.basis.clone(),
             vanishes: amt_params.vanishes[0..verify_depth].to_vec(),
             g2: amt_params.g2,
-            high_g2: amt_params.high_g2,
         };
 
         let buffer = File::create(&path).unwrap();
@@ -100,7 +98,6 @@ where
         ri_data: &[Fr<PE>],
         batch_index: usize,
         proof: &Proof<PE>,
-        high_commitment: G1<PE>,
         commitment: G1<PE>,
         deferred_verifier: Option<DeferredVerifier<PE>>,
     ) -> Result<(), AmtProofError> {
@@ -112,8 +109,6 @@ where
             proof,
             commitment,
             &self.g2,
-            high_commitment,
-            &self.high_g2,
             deferred_verifier,
         )
     }
@@ -128,8 +123,6 @@ pub fn verify_amt_proof<PE: Pairing>(
     proof: &Proof<PE>,
     commitment: G1<PE>,
     g2: &G2Aff<PE>,
-    high_commitment: G1<PE>,
-    high_g2: &G2Aff<PE>,
     deferred_verifier: Option<DeferredVerifier<PE>>,
 ) -> Result<(), AmtProofError>
 where
@@ -174,15 +167,6 @@ where
     if acc_commitment + self_commitment != commitment {
         return Err(InconsistentCommitment);
     }
-
-    pairing_check::<PE>(
-        &mut task_collector,
-        high_commitment,
-        *g2,
-        commitment,
-        *high_g2,
-        FailedLowDegreeTest,
-    )?;
 
     if let Some(verifier) = deferred_verifier {
         verifier.record_pairing(task_collector.unwrap());

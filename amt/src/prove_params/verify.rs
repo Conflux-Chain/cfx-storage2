@@ -17,7 +17,6 @@ where
         ri_data: &[Fr<PE>],
         batch_index: usize,
         proof: &Proof<PE>,
-        high_commitment: G1<PE>,
         commitment: G1<PE>,
     ) -> Result<(), AmtProofError> {
         verify_amt_proof(
@@ -28,8 +27,6 @@ where
             proof,
             commitment,
             &self.g2,
-            high_commitment,
-            &self.high_g2,
             None,
         )
     }

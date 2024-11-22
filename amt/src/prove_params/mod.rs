@@ -17,8 +17,6 @@ pub struct AMTParams<PE: Pairing> {
     pub quotients: Vec<Vec<G1Aff<PE>>>,
     pub vanishes: Vec<Vec<G2Aff<PE>>>,
     pub g2: G2Aff<PE>,
-    pub high_basis: Vec<G1Aff<PE>>,
-    pub high_g2: G2Aff<PE>,
 }
 
 impl<PE: Pairing> AMTParams<PE> {
@@ -27,16 +25,12 @@ impl<PE: Pairing> AMTParams<PE> {
         quotients: Vec<Vec<G1Aff<PE>>>,
         vanishes: Vec<Vec<G2Aff<PE>>>,
         g2: G2<PE>,
-        high_basis: Vec<G1Aff<PE>>,
-        high_g2: G2<PE>,
     ) -> Self {
         Self {
             basis,
             quotients,
             vanishes,
             g2: g2.into_affine(),
-            high_basis,
-            high_g2: high_g2.into_affine(),
         }
     }
 
@@ -46,8 +40,6 @@ impl<PE: Pairing> AMTParams<PE> {
             self.quotients[..depth].to_vec(),
             self.vanishes[..depth].to_vec(),
             self.g2.into(),
-            self.high_basis.clone(),
-            self.high_g2.into(),
         )
     }
 }
@@ -58,8 +50,6 @@ impl<PE: Pairing> PartialEq for AMTParams<PE> {
             && self.quotients == other.quotients
             && self.vanishes == other.vanishes
             && self.g2 == other.g2
-            && self.high_basis == other.high_basis
-            && self.high_g2 == other.high_g2
     }
 }
 

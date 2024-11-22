@@ -27,7 +27,6 @@ pub fn write_amt_params<W: Write>(params: &AMTParams<PE>, mut writer: W) -> Resu
     sub_degree.serialize_uncompressed(&mut writer)?;
 
     params.g2.serialize_uncompressed(&mut writer)?;
-    params.high_g2.serialize_uncompressed(&mut writer)?;
 
     for b in &params.basis {
         write_g1(b, &mut writer)?;
@@ -45,10 +44,6 @@ pub fn write_amt_params<W: Write>(params: &AMTParams<PE>, mut writer: W) -> Resu
         }
     }
 
-    for b in &params.high_basis {
-        write_g1(b, &mut writer)?;
-    }
-
     Ok(())
 }
 
@@ -63,8 +58,6 @@ pub fn read_amt_params<R: Read>(mut reader: R) -> Result<AMTParams<PE>> {
 
     let g2 = G2::<PE>::deserialize_uncompressed(&mut reader)?;
 
-    let high_g2 = G2::<PE>::deserialize_uncompressed(&mut reader)?;
-
     let basis = read_amt_g1_line(&mut reader, 1 << degree)?;
 
     let mut quotients = vec![];
@@ -77,11 +70,7 @@ pub fn read_amt_params<R: Read>(mut reader: R) -> Result<AMTParams<PE>> {
         vanishes.push(read_amt_g2_line(&mut reader, 1 << (d + 1))?);
     }
 
-    let high_basis = read_amt_g1_line(&mut reader, 1 << degree)?;
-
-    Ok(AMTParams::new(
-        basis, quotients, vanishes, g2, high_basis, high_g2,
-    ))
+    Ok(AMTParams::new(basis, quotients, vanishes, g2))
 }
 
 pub fn write_power_tau<W: Write>(params: &PowerTau<PE>, mut writer: W) -> Result<()> {
@@ -90,18 +79,12 @@ pub fn write_power_tau<W: Write>(params: &PowerTau<PE>, mut writer: W) -> Result
     let degree = ark_std::log2(params.g1pp.len()) as u8;
     degree.serialize_uncompressed(&mut writer)?;
 
-    params.high_g2.serialize_uncompressed(&mut writer)?;
-
     for b in &params.g1pp {
         write_g1(b, &mut writer)?;
     }
 
     for b in &params.g2pp {
         write_g2(b, &mut writer)?;
-    }
-
-    for b in &params.high_g1pp {
-        write_g1(b, &mut writer)?;
     }
 
     Ok(())
@@ -115,20 +98,11 @@ pub fn read_power_tau<R: Read>(mut reader: R) -> Result<PowerTau<PE>> {
 
     let degree = u8::deserialize_uncompressed_unchecked(&mut reader)? as usize;
 
-    let high_g2 = G2::<PE>::deserialize_uncompressed(&mut reader)?;
-
     let g1pp = read_amt_g1_line(&mut reader, 1 << degree)?;
 
     let g2pp = read_amt_g2_line(&mut reader, 1 << degree)?;
 
-    let high_g1pp = read_amt_g1_line(&mut reader, 1 << degree)?;
-
-    Ok(PowerTau {
-        g1pp,
-        g2pp,
-        high_g1pp,
-        high_g2,
-    })
+    Ok(PowerTau { g1pp, g2pp })
 }
 
 #[inline]
