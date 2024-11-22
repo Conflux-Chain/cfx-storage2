@@ -1,20 +1,20 @@
-use std::{fs::File, io::BufReader, path::Path};
+use std::{fs::File, io::BufReader, ops::Mul, path::Path};
 
 use super::AMTParams;
 use crate::{
     ec_algebra::{
-        k_adicity, CanonicalDeserialize, CanonicalSerialize, EvaluationDomain, Fr, G1Aff, G2Aff,
-        Radix2EvaluationDomain, Zero, G1, G2,
+        k_adicity, BigInteger, CanonicalDeserialize, CanonicalSerialize, CurveGroup,
+        EvaluationDomain, Fr, FrInt, G1Aff, G2Aff, Pairing, Radix2EvaluationDomain, Zero, G1, G2,
     },
     error,
     power_tau::PowerTau,
+    prove_params::SLOT_SIZE_MINUS_1,
     utils::{amtp_file_name, index_reverse},
 };
 
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
 
-use ark_ec::{pairing::Pairing, CurveGroup};
 use ark_std::cfg_iter_mut;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -130,6 +130,40 @@ impl<PE: Pairing> AMTParams<PE> {
         affine
     }
 
+    pub(super) fn gen_basis_power_by_basis(
+        basis: &[G1Aff<PE>],
+    ) -> Vec<[G1Aff<PE>; SLOT_SIZE_MINUS_1]> {
+        let mut vec_fr = vec![];
+        let mut fr_int = FrInt::<PE>::from(1u64);
+        for _ in 0..SLOT_SIZE_MINUS_1 {
+            fr_int.muln(40);
+            vec_fr.push(Fr::<PE>::from(fr_int));
+        }
+
+        // todo: mul_bigint
+        // PE = Bn254, affine.into_group(), group.mul_bigint() is Ok
+        // But how about PE: Pairing?
+        let basis_power: Vec<G1<PE>> = basis
+            .iter()
+            .map(|b| {
+                let point: G1<PE> = b.clone().into();
+                let vec: Vec<G1<PE>> = vec_fr.iter().map(|fr| point.mul(fr)).collect();
+                vec
+            })
+            .flatten()
+            .collect();
+        let basis_power = CurveGroup::normalize_batch(basis_power.as_slice());
+        let basis_power = basis_power
+            .chunks_exact(SLOT_SIZE_MINUS_1)
+            .map(|slice| {
+                slice
+                    .try_into()
+                    .expect(&format!("Slice length must be {}", SLOT_SIZE_MINUS_1))
+            })
+            .collect();
+        basis_power
+    }
+
     pub fn from_pp(pp: PowerTau<PE>, prove_depth: usize) -> Self {
         info!("Generate AMT params from powers of tau");
 
@@ -150,7 +184,9 @@ impl<PE: Pairing> AMTParams<PE> {
             .map(|d| Self::enact(Self::gen_vanishes(&g2pp[..], d)))
             .collect();
 
-        Self::new(basis, quotients, vanishes, g2pp[0])
+        let basis_power = Self::gen_basis_power_by_basis(&basis);
+
+        Self::new(basis, quotients, vanishes, g2pp[0], basis_power)
     }
 
     fn gen_basis(g1pp: &[G1<PE>], fft_domain: &Radix2EvaluationDomain<Fr<PE>>) -> Vec<G1<PE>> {

@@ -13,6 +13,8 @@ use ark_std::cfg_chunks_mut;
 use rayon::prelude::*;
 use std::marker::PhantomData;
 
+use super::SLOT_SIZE_MINUS_1;
+
 const HEADER: [u8; 4] = *b"bamt";
 const HEADERPWT: [u8; 4] = *b"ptau";
 type PE = Bn254;
@@ -44,6 +46,12 @@ pub fn write_amt_params<W: Write>(params: &AMTParams<PE>, mut writer: W) -> Resu
         }
     }
 
+    for slice in &params.basis_power {
+        for b in slice {
+            write_g1(b, &mut writer)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -70,7 +78,23 @@ pub fn read_amt_params<R: Read>(mut reader: R) -> Result<AMTParams<PE>> {
         vanishes.push(read_amt_g2_line(&mut reader, 1 << (d + 1))?);
     }
 
-    Ok(AMTParams::new(basis, quotients, vanishes, g2))
+    let basis_power = read_amt_g1_line(&mut reader, (1 << degree) * SLOT_SIZE_MINUS_1)?;
+    let basis_power = basis_power
+        .chunks_exact(SLOT_SIZE_MINUS_1)
+        .map(|slice| {
+            slice
+                .try_into()
+                .expect(&format!("Slice length must be {}", SLOT_SIZE_MINUS_1))
+        })
+        .collect();
+    if cfg!(test) {
+        assert_eq!(
+            basis_power,
+            AMTParams::<PE>::gen_basis_power_by_basis(&basis)
+        );
+    }
+
+    Ok(AMTParams::new(basis, quotients, vanishes, g2, basis_power))
 }
 
 pub fn write_power_tau<W: Write>(params: &PowerTau<PE>, mut writer: W) -> Result<()> {

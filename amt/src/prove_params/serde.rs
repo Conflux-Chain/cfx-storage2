@@ -5,6 +5,8 @@ use crate::{
 use ark_ec::pairing::Pairing;
 use ark_serialize::{SerializationError, Valid, Validate};
 
+use super::SLOT_SIZE_MINUS_1;
+
 impl<PE: Pairing> CanonicalDeserialize for AMTParams<PE> {
     fn deserialize_with_mode<R: ark_serialize::Read>(
         mut reader: R,
@@ -17,7 +19,17 @@ impl<PE: Pairing> CanonicalDeserialize for AMTParams<PE> {
         let vanishes =
             CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
         let g2 = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-        Ok(AMTParams::new(basis, quotients, vanishes, g2))
+        let basis_power: Vec<_> =
+            CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let basis_power = basis_power
+            .chunks_exact(SLOT_SIZE_MINUS_1)
+            .map(|slice| {
+                slice
+                    .try_into()
+                    .expect(&format!("Slice length must be {}", SLOT_SIZE_MINUS_1))
+            })
+            .collect();
+        Ok(AMTParams::new(basis, quotients, vanishes, g2, basis_power))
     }
 }
 
