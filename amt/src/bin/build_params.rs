@@ -40,14 +40,7 @@ fn main() {
     let pp = PowerTau::from_dir(&dir, depth, create_mode);
 
     for coset_index in 0..coset {
-        AMTParams::from_dir_mont(
-            &dir,
-            depth,
-            verify_depth,
-            coset_index,
-            true,
-            Some(&pp),
-        );
+        AMTParams::from_dir_mont(&dir, depth, verify_depth, coset_index, true, Some(&pp));
         AMTVerifyParams::from_dir_mont(&dir, depth, verify_depth, coset_index);
     }
 }

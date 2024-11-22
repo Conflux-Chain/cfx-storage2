@@ -8,13 +8,9 @@
 // one place and all its usage for this
 // repo should import from here.
 
-pub use ark_ec::{
-    pairing::Pairing, AffineRepr, CurveGroup, Group,
-    VariableBaseMSM,
-};
+pub use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, Group, VariableBaseMSM};
 pub use ark_ff::{
-    utils::k_adicity, BigInt, BigInteger, FftField, Field, One, PrimeField,
-    UniformRand, Zero,
+    utils::k_adicity, BigInt, BigInteger, FftField, Field, One, PrimeField, UniformRand, Zero,
 };
 pub use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 pub use ark_serialize::{

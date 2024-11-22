@@ -35,13 +35,17 @@ impl<PE: Pairing> AllProofs<PE> {
 pub struct Proof<PE: Pairing>(Vec<(G1Aff<PE>, G1Aff<PE>)>);
 
 impl<PE: Pairing> PartialEq for Proof<PE> {
-    fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
 }
 
 impl<PE: Pairing> Deref for Proof<PE> {
     type Target = Vec<(G1Aff<PE>, G1Aff<PE>)>;
 
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

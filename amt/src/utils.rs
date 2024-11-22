@@ -17,9 +17,7 @@ pub(crate) fn type_hash<T: Any>() -> String {
     BASE64_STANDARD.encode(s.finish().to_be_bytes())
 }
 
-fn file_name<PE: Pairing>(
-    prefix: &str, depth: usize, sub_depth: Option<usize>,
-) -> String {
+fn file_name<PE: Pairing>(prefix: &str, depth: usize, sub_depth: Option<usize>) -> String {
     let suffix = if let Some(x) = sub_depth {
         format!("{:02}-{:02}.bin", x, depth)
     } else {
@@ -34,7 +32,10 @@ pub fn ptau_file_name<PE: Pairing>(depth: usize, mont: bool) -> String {
 }
 
 pub fn amtp_file_name<PE: Pairing>(
-    depth: usize, prove_depth: usize, coset: usize, mont: bool,
+    depth: usize,
+    prove_depth: usize,
+    coset: usize,
+    mont: bool,
 ) -> String {
     let prefix = format!(
         "amt-prove-coset{}{}",
@@ -45,7 +46,9 @@ pub fn amtp_file_name<PE: Pairing>(
 }
 
 pub fn amtp_verify_file_name<PE: Pairing>(
-    depth: usize, verify_depth: usize, coset: usize,
+    depth: usize,
+    verify_depth: usize,
+    coset: usize,
 ) -> String {
     let prefix = format!("amt-verify-coset{}", coset);
     file_name::<PE>(&prefix, depth, Some(verify_depth))
@@ -87,9 +90,7 @@ pub fn index_reverse<T: Sync>(input: &mut [T]) {
     })
 }
 
-pub fn change_matrix_direction<T: Clone>(
-    input: &mut Vec<T>, log_current: usize, log_next: usize,
-) {
+pub fn change_matrix_direction<T: Clone>(input: &mut Vec<T>, log_current: usize, log_next: usize) {
     let n = input.len();
     assert_eq!(n, 1 << (log_current + log_next));
     if log_current == log_next {

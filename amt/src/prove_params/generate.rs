@@ -3,9 +3,8 @@ use std::{fs::File, io::BufReader, path::Path};
 use super::AMTParams;
 use crate::{
     ec_algebra::{
-        k_adicity, CanonicalDeserialize, CanonicalSerialize, EvaluationDomain,
-        Field, Fr, G1Aff, G2Aff, One, Radix2EvaluationDomain, Zero,
-        G1, G2,
+        k_adicity, CanonicalDeserialize, CanonicalSerialize, EvaluationDomain, Field, Fr, G1Aff,
+        G2Aff, One, Radix2EvaluationDomain, Zero, G1, G2,
     },
     error,
     power_tau::PowerTau,
@@ -25,8 +24,12 @@ use rayon::prelude::*;
 impl AMTParams<Bn254> {
     #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth, coset=coset))]
     pub fn from_dir_mont(
-        dir: impl AsRef<Path>, depth: usize, prove_depth: usize, coset: usize,
-        create_mode: bool, pp: Option<&PowerTau<Bn254>>,
+        dir: impl AsRef<Path>,
+        depth: usize,
+        prove_depth: usize,
+        coset: usize,
+        create_mode: bool,
+        pp: Option<&PowerTau<Bn254>>,
     ) -> Self {
         debug!(
             depth = depth,
@@ -34,8 +37,7 @@ impl AMTParams<Bn254> {
             coset,
             "Load AMT params (mont format)"
         );
-        let file_name =
-            amtp_file_name::<Bn254>(depth, prove_depth, coset, true);
+        let file_name = amtp_file_name::<Bn254>(depth, prove_depth, coset, true);
         let path = dir.as_ref().join(file_name);
 
         match Self::load_cached_mont(&path) {
@@ -53,8 +55,7 @@ impl AMTParams<Bn254> {
 
         info!("Recover from unmont format");
 
-        let params =
-            Self::from_dir(dir, depth, prove_depth, coset, create_mode, pp);
+        let params = Self::from_dir(dir, depth, prove_depth, coset, create_mode, pp);
 
         let writer = File::create(&*path).unwrap();
 
@@ -73,8 +74,12 @@ impl AMTParams<Bn254> {
 impl<PE: Pairing> AMTParams<PE> {
     #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth, coset=coset))]
     pub fn from_dir(
-        dir: impl AsRef<Path>, depth: usize, prove_depth: usize, coset: usize,
-        create_mode: bool, pp: Option<&PowerTau<PE>>,
+        dir: impl AsRef<Path>,
+        depth: usize,
+        prove_depth: usize,
+        coset: usize,
+        create_mode: bool,
+        pp: Option<&PowerTau<PE>>,
     ) -> Self {
         debug!(depth, prove_depth, coset, "Load AMT params (unmont format)");
 
@@ -115,9 +120,13 @@ impl<PE: Pairing> AMTParams<PE> {
         )?)
     }
 
-    pub fn is_empty(&self) -> bool { self.basis.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.basis.is_empty()
+    }
 
-    pub fn len(&self) -> usize { self.basis.len() }
+    pub fn len(&self) -> usize {
+        self.basis.len()
+    }
 
     fn enact<T: CurveGroup>(input: Vec<T>) -> Vec<<T as CurveGroup>::Affine> {
         let mut affine = CurveGroup::normalize_batch(input.as_slice());
@@ -139,8 +148,7 @@ impl<PE: Pairing> AMTParams<PE> {
     pub fn from_pp(pp: PowerTau<PE>, prove_depth: usize, coset: usize) -> Self {
         info!("Generate AMT params from powers of tau");
 
-        let (mut g1pp, mut g2pp, mut high_g1pp, mut high_g2pp) =
-            pp.into_projective();
+        let (mut g1pp, mut g2pp, mut high_g1pp, mut high_g2pp) = pp.into_projective();
 
         assert_eq!(high_g2pp.len(), 1);
         assert_eq!(g1pp.len(), high_g1pp.len());
@@ -153,36 +161,32 @@ impl<PE: Pairing> AMTParams<PE> {
             debug!(coset, "Adjust powers of tau according to coset index");
 
             let w = Fr::<PE>::one() / Self::coset_factor(length, coset);
-            cfg_iter_mut!(g1pp).enumerate().for_each(
-                |(idx, x): (_, &mut G1<PE>)| *x *= w.pow([idx as u64]),
-            );
-            cfg_iter_mut!(g2pp).enumerate().for_each(
-                |(idx, x): (_, &mut G2<PE>)| *x *= w.pow([idx as u64]),
-            );
+            cfg_iter_mut!(g1pp)
+                .enumerate()
+                .for_each(|(idx, x): (_, &mut G1<PE>)| *x *= w.pow([idx as u64]));
+            cfg_iter_mut!(g2pp)
+                .enumerate()
+                .for_each(|(idx, x): (_, &mut G2<PE>)| *x *= w.pow([idx as u64]));
 
             debug!(coset, "Adjust ldt params according to coset index");
-            cfg_iter_mut!(high_g1pp).enumerate().for_each(
-                |(idx, x): (_, &mut G1<PE>)| *x *= w.pow([idx as u64]),
-            );
-            cfg_iter_mut!(high_g2pp).enumerate().for_each(
-                |(idx, x): (_, &mut G2<PE>)| *x *= w.pow([idx as u64]),
-            );
+            cfg_iter_mut!(high_g1pp)
+                .enumerate()
+                .for_each(|(idx, x): (_, &mut G1<PE>)| *x *= w.pow([idx as u64]));
+            cfg_iter_mut!(high_g2pp)
+                .enumerate()
+                .for_each(|(idx, x): (_, &mut G2<PE>)| *x *= w.pow([idx as u64]));
         }
 
         let fft_domain = Radix2EvaluationDomain::<Fr<PE>>::new(length).unwrap();
 
-        let basis: Vec<G1Aff<PE>> =
-            Self::enact(Self::gen_basis(&g1pp[..], &fft_domain));
+        let basis: Vec<G1Aff<PE>> = Self::enact(Self::gen_basis(&g1pp[..], &fft_domain));
         let quotients: Vec<Vec<G1Aff<PE>>> = (1..=prove_depth)
-            .map(|d| {
-                Self::enact(Self::gen_quotients(&g1pp[..], &fft_domain, d))
-            })
+            .map(|d| Self::enact(Self::gen_quotients(&g1pp[..], &fft_domain, d)))
             .collect();
         let vanishes: Vec<Vec<G2Aff<PE>>> = (1..=prove_depth)
             .map(|d| Self::enact(Self::gen_vanishes(&g2pp[..], d)))
             .collect();
-        let high_basis: Vec<G1Aff<PE>> =
-            Self::enact(Self::gen_basis(&high_g1pp[..], &fft_domain));
+        let high_basis: Vec<G1Aff<PE>> = Self::enact(Self::gen_basis(&high_g1pp[..], &fft_domain));
 
         Self::new(
             basis,
@@ -194,15 +198,14 @@ impl<PE: Pairing> AMTParams<PE> {
         )
     }
 
-    fn gen_basis(
-        g1pp: &[G1<PE>], fft_domain: &Radix2EvaluationDomain<Fr<PE>>,
-    ) -> Vec<G1<PE>> {
+    fn gen_basis(g1pp: &[G1<PE>], fft_domain: &Radix2EvaluationDomain<Fr<PE>>) -> Vec<G1<PE>> {
         debug!("Generate basis");
         fft_domain.ifft(g1pp)
     }
 
     fn gen_quotients(
-        g1pp: &[G1<PE>], fft_domain: &Radix2EvaluationDomain<Fr<PE>>,
+        g1pp: &[G1<PE>],
+        fft_domain: &Radix2EvaluationDomain<Fr<PE>>,
         depth: usize,
     ) -> Vec<G1<PE>> {
         debug!(depth, "Generate quotients");
@@ -223,9 +226,8 @@ impl<PE: Pairing> AMTParams<PE> {
         }
 
         let mut answer = fft_domain.fft(&coeff);
-        
-        cfg_iter_mut!(answer, 1024)
-            .for_each(|val: &mut G1<PE>| *val *= fft_domain.size_inv);
+
+        cfg_iter_mut!(answer, 1024).for_each(|val: &mut G1<PE>| *val *= fft_domain.size_inv);
         answer
     }
 
@@ -243,8 +245,7 @@ impl<PE: Pairing> AMTParams<PE> {
 
         let height = max_depth - depth;
         let step = 1 << height;
-        let mut fft_domain =
-            Radix2EvaluationDomain::<Fr<PE>>::new(1 << depth).unwrap();
+        let mut fft_domain = Radix2EvaluationDomain::<Fr<PE>>::new(1 << depth).unwrap();
 
         let mut coeff = vec![G2::<PE>::zero(); 1 << depth];
 
@@ -253,22 +254,16 @@ impl<PE: Pairing> AMTParams<PE> {
             coeff[i] = g2pp[(i - 1) * step]
         }
 
-        std::mem::swap(
-            &mut fft_domain.group_gen,
-            &mut fft_domain.group_gen_inv,
-        );
+        std::mem::swap(&mut fft_domain.group_gen, &mut fft_domain.group_gen_inv);
         fft_domain.fft(&coeff)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{
-        TestParams, DOMAIN, G1PP, G2PP, PE, PP, TEST_LENGTH, TEST_LEVEL, W,
-    };
+    use super::super::tests::{TestParams, DOMAIN, G1PP, G2PP, PE, PP, TEST_LENGTH, TEST_LEVEL, W};
     use crate::ec_algebra::{
-        EvaluationDomain, Field, Fr, One, VariableBaseMSM, Zero,
-        G1, G2, Pairing
+        EvaluationDomain, Field, Fr, One, Pairing, VariableBaseMSM, Zero, G1, G2,
     };
 
     fn simple_gen_basis(index: usize) -> G1<PE> {
@@ -325,10 +320,7 @@ mod tests {
         for depth in (1..=TEST_LEVEL).rev() {
             let vanishes = TestParams::gen_vanishes(&G2PP, depth);
             for t in 0..TEST_LENGTH {
-                assert_eq!(
-                    vanishes[t % (1 << depth)],
-                    simple_gen_vanishes(t, depth)
-                );
+                assert_eq!(vanishes[t % (1 << depth)], simple_gen_vanishes(t, depth));
             }
         }
     }

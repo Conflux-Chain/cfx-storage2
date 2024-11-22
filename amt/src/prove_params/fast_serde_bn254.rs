@@ -1,7 +1,7 @@
 use crate::{
     ec_algebra::{
-        BigInt, BigInteger, CanonicalDeserialize, CanonicalSerialize, Fq, Fq2,
-        G1Aff, G2Aff, PrimeField, Read, Write, G2,
+        BigInt, BigInteger, CanonicalDeserialize, CanonicalSerialize, Fq, Fq2, G1Aff, G2Aff,
+        PrimeField, Read, Write, G2,
     },
     error::Result,
     AMTParams, PowerTau,
@@ -17,9 +17,7 @@ const HEADER: [u8; 4] = *b"bamt";
 const HEADERPWT: [u8; 4] = *b"ptau";
 type PE = Bn254;
 
-pub fn write_amt_params<W: Write>(
-    params: &AMTParams<PE>, mut writer: W,
-) -> Result<()> {
+pub fn write_amt_params<W: Write>(params: &AMTParams<PE>, mut writer: W) -> Result<()> {
     writer.write_all(&HEADER)?;
 
     let degree = ark_std::log2(params.basis.len()) as u8;
@@ -61,8 +59,7 @@ pub fn read_amt_params<R: Read>(mut reader: R) -> Result<AMTParams<PE>> {
     }
 
     let degree = u8::deserialize_uncompressed_unchecked(&mut reader)? as usize;
-    let sub_degree =
-        u8::deserialize_uncompressed_unchecked(&mut reader)? as usize;
+    let sub_degree = u8::deserialize_uncompressed_unchecked(&mut reader)? as usize;
 
     let g2 = G2::<PE>::deserialize_uncompressed(&mut reader)?;
 
@@ -87,9 +84,7 @@ pub fn read_amt_params<R: Read>(mut reader: R) -> Result<AMTParams<PE>> {
     ))
 }
 
-pub fn write_power_tau<W: Write>(
-    params: &PowerTau<PE>, mut writer: W,
-) -> Result<()> {
+pub fn write_power_tau<W: Write>(params: &PowerTau<PE>, mut writer: W) -> Result<()> {
     writer.write_all(&HEADERPWT)?;
 
     let degree = ark_std::log2(params.g1pp.len()) as u8;
@@ -158,12 +153,9 @@ pub fn write_g2<W: Write>(b: &G2Aff<PE>, mut writer: W) -> Result<()> {
     Ok(())
 }
 
-const BASE_SIZE: usize =
-    <<Fq<PE> as PrimeField>::BigInt as BigInteger>::NUM_LIMBS;
+const BASE_SIZE: usize = <<Fq<PE> as PrimeField>::BigInt as BigInteger>::NUM_LIMBS;
 const BASE_BYTES: usize = BASE_SIZE * 8;
-fn read_amt_g1_line<R: Read>(
-    mut reader: R, length: usize,
-) -> Result<Vec<G1Aff<PE>>> {
+fn read_amt_g1_line<R: Read>(mut reader: R, length: usize) -> Result<Vec<G1Aff<PE>>> {
     let mut buffer = vec![0u8; BASE_BYTES * length * 2];
     reader.read_exact(&mut buffer)?;
     cfg_chunks_mut!(buffer, BASE_BYTES * 2)
@@ -186,9 +178,7 @@ pub fn read_mont_base(raw: &[u8]) -> Result<Fq<PE>> {
     ))
 }
 
-fn read_amt_g2_line<R: Read>(
-    mut reader: R, length: usize,
-) -> Result<Vec<G2Aff<PE>>> {
+fn read_amt_g2_line<R: Read>(mut reader: R, length: usize) -> Result<Vec<G2Aff<PE>>> {
     let mut buffer = vec![0u8; BASE_BYTES * length * 4];
     reader.read_exact(&mut buffer)?;
     cfg_chunks_mut!(buffer, BASE_BYTES * 4)

@@ -10,7 +10,8 @@ use ark_ec::{pairing::Pairing, CurveGroup, VariableBaseMSM};
 use tracing::instrument;
 
 impl<PE: Pairing> AMTParams<PE>
-where G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>
+where
+    G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>,
 {
     #[allow(unused)]
     pub(crate) fn commitment(&self, ri_data: &[Fr<PE>]) -> G1<PE> {
@@ -18,7 +19,9 @@ where G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>
     }
 
     pub fn gen_commitment_tree(
-        &self, ri_data: &[Fr<PE>], batch_size: usize,
+        &self,
+        ri_data: &[Fr<PE>],
+        batch_size: usize,
     ) -> (G1Aff<PE>, Vec<Vec<G1Aff<PE>>>) {
         assert!(batch_size.is_power_of_two());
         assert!(batch_size <= self.len());
@@ -35,7 +38,8 @@ where G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>
     }
 
     pub(crate) fn build_commitment_tree(
-        &self, last_layer: &[G1<PE>],
+        &self,
+        last_layer: &[G1<PE>],
     ) -> (G1Aff<PE>, Vec<Vec<G1Aff<PE>>>) {
         let mut answer = VecDeque::new();
         let mut last_layer = CurveGroup::normalize_batch(last_layer);
@@ -55,9 +59,7 @@ where G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>
         VariableBaseMSM::msm(&self.high_basis, ri_data).unwrap()
     }
 
-    pub fn gen_prove_tree(
-        &self, ri_data: &[Fr<PE>], batch_size: usize,
-    ) -> Vec<Vec<G1Aff<PE>>> {
+    pub fn gen_prove_tree(&self, ri_data: &[Fr<PE>], batch_size: usize) -> Vec<Vec<G1Aff<PE>>> {
         assert!(batch_size.is_power_of_two());
         assert!(batch_size < self.len());
         assert_eq!(ri_data.len(), self.len());
@@ -73,9 +75,7 @@ where G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>
             let quotients = self.quotients[depth - 1]
                 .chunks_exact(chunk_size)
                 .zip(scalars)
-                .map(|(base, scalar)| {
-                    VariableBaseMSM::msm(base, scalar).unwrap()
-                })
+                .map(|(base, scalar)| VariableBaseMSM::msm(base, scalar).unwrap())
                 .collect::<Vec<G1<PE>>>();
             answer.push(CurveGroup::normalize_batch(quotients.as_slice()))
         }
@@ -83,13 +83,10 @@ where G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>
     }
 
     #[instrument(skip_all, name = "gen_amt_proofs", level = 2)]
-    pub fn gen_all_proofs(
-        &self, ri_data: &[Fr<PE>],
-    ) -> (G1<PE>, AllProofs<PE>) {
+    pub fn gen_all_proofs(&self, ri_data: &[Fr<PE>]) -> (G1<PE>, AllProofs<PE>) {
         let batch_size = self.len() / (1 << self.quotients.len());
         let proofs = self.gen_prove_tree(ri_data, batch_size);
-        let (commitment, commitments) =
-            self.gen_commitment_tree(ri_data, batch_size);
+        let (commitment, commitments) = self.gen_commitment_tree(ri_data, batch_size);
         let high_commitment = self.gen_high_commitment(ri_data).into_affine();
         let all_proofs = AllProofs {
             commitments,
@@ -104,9 +101,7 @@ where G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{
-        random_scalars, AMT, G2PP, PE, TEST_LENGTH, TEST_LEVEL,
-    };
+    use super::super::tests::{random_scalars, AMT, G2PP, PE, TEST_LENGTH, TEST_LEVEL};
     use crate::ec_algebra::{AffineRepr, Fr, Pairing};
 
     #[test]
@@ -160,14 +155,8 @@ mod tests {
                 .1;
             for (index, data) in ri_data.chunks_exact(batch).enumerate() {
                 let (proof, high_commitment) = all_proofs.get_proof(index);
-                AMT.verify_proof(
-                    &data,
-                    index,
-                    &proof,
-                    high_commitment.into(),
-                    commitment,
-                )
-                .unwrap();
+                AMT.verify_proof(&data, index, &proof, high_commitment.into(), commitment)
+                    .unwrap();
             }
         }
     }

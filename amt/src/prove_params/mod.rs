@@ -23,8 +23,11 @@ pub struct AMTParams<PE: Pairing> {
 
 impl<PE: Pairing> AMTParams<PE> {
     pub fn new(
-        basis: Vec<G1Aff<PE>>, quotients: Vec<Vec<G1Aff<PE>>>,
-        vanishes: Vec<Vec<G2Aff<PE>>>, g2: G2<PE>, high_basis: Vec<G1Aff<PE>>,
+        basis: Vec<G1Aff<PE>>,
+        quotients: Vec<Vec<G1Aff<PE>>>,
+        vanishes: Vec<Vec<G2Aff<PE>>>,
+        g2: G2<PE>,
+        high_basis: Vec<G1Aff<PE>>,
         high_g2: G2<PE>,
     ) -> Self {
         Self {

@@ -30,50 +30,43 @@ pub struct AMTVerifyParams<PE: Pairing> {
 #[cfg(not(feature = "bls12-381"))]
 impl AMTVerifyParams<Bn254> {
     pub fn from_dir_mont(
-        dir: impl AsRef<Path>, depth: usize, verify_depth: usize, coset: usize,
+        dir: impl AsRef<Path>,
+        depth: usize,
+        verify_depth: usize,
+        coset: usize,
     ) -> Self {
         Self::from_dir_inner(&dir, depth, verify_depth, coset, || {
-            AMTParams::<Bn254>::from_dir_mont(
-                &dir,
-                depth,
-                verify_depth,
-                coset,
-                false,
-                None,
-            )
+            AMTParams::<Bn254>::from_dir_mont(&dir, depth, verify_depth, coset, false, None)
         })
     }
 }
 
 impl<PE: Pairing> AMTVerifyParams<PE> {
     pub fn from_dir(
-        dir: impl AsRef<Path>, expected_depth: usize, verify_depth: usize,
+        dir: impl AsRef<Path>,
+        expected_depth: usize,
+        verify_depth: usize,
         coset: usize,
     ) -> Self {
         Self::from_dir_inner(&dir, expected_depth, verify_depth, coset, || {
-            AMTParams::<PE>::from_dir(
-                &dir,
-                expected_depth,
-                verify_depth,
-                coset,
-                false,
-                None,
-            )
+            AMTParams::<PE>::from_dir(&dir, expected_depth, verify_depth, coset, false, None)
         })
     }
 
     #[instrument(skip_all, name = "load_amt_verify_params", level = 2, parent = None, fields(depth=expected_depth, verify_depth, coset))]
     fn from_dir_inner(
-        dir: impl AsRef<Path>, expected_depth: usize, verify_depth: usize,
-        coset: usize, make_prover_params: impl Fn() -> AMTParams<PE>,
+        dir: impl AsRef<Path>,
+        expected_depth: usize,
+        verify_depth: usize,
+        coset: usize,
+        make_prover_params: impl Fn() -> AMTParams<PE>,
     ) -> Self {
         debug!(
             depth = expected_depth,
             verify_depth, coset, "Load AMT verify params"
         );
 
-        let file_name =
-            amtp_verify_file_name::<PE>(expected_depth, verify_depth, coset);
+        let file_name = amtp_verify_file_name::<PE>(expected_depth, verify_depth, coset);
         let path = dir.as_ref().join(file_name);
 
         match Self::load_cached(&path) {
@@ -110,11 +103,16 @@ impl<PE: Pairing> AMTVerifyParams<PE> {
 }
 
 impl<PE: Pairing> AMTVerifyParams<PE>
-where G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>
+where
+    G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>,
 {
     pub fn verify_proof(
-        &self, ri_data: &[Fr<PE>], batch_index: usize, proof: &Proof<PE>,
-        high_commitment: G1<PE>, commitment: G1<PE>,
+        &self,
+        ri_data: &[Fr<PE>],
+        batch_index: usize,
+        proof: &Proof<PE>,
+        high_commitment: G1<PE>,
+        commitment: G1<PE>,
         deferred_verifier: Option<DeferredVerifier<PE>>,
     ) -> Result<(), AmtProofError> {
         verify_amt_proof(
@@ -134,9 +132,15 @@ where G1<PE>: VariableBaseMSM<MulBase = G1Aff<PE>>
 
 #[allow(clippy::too_many_arguments)]
 pub fn verify_amt_proof<PE: Pairing>(
-    basis: &[G1Aff<PE>], vanishes: &[Vec<G2Aff<PE>>], ri_data: &[Fr<PE>],
-    batch_index: usize, proof: &Proof<PE>, commitment: G1<PE>, g2: &G2Aff<PE>,
-    high_commitment: G1<PE>, high_g2: &G2Aff<PE>,
+    basis: &[G1Aff<PE>],
+    vanishes: &[Vec<G2Aff<PE>>],
+    ri_data: &[Fr<PE>],
+    batch_index: usize,
+    proof: &Proof<PE>,
+    commitment: G1<PE>,
+    g2: &G2Aff<PE>,
+    high_commitment: G1<PE>,
+    high_g2: &G2Aff<PE>,
     deferred_verifier: Option<DeferredVerifier<PE>>,
 ) -> Result<(), AmtProofError>
 where
@@ -173,7 +177,6 @@ where
         acc_commitment += commitment;
     }
 
-
     let self_commitment: G1<PE> = VariableBaseMSM::msm(
         &basis[batch_index * batch..(batch_index + 1) * batch],
         ri_data,
@@ -200,8 +203,12 @@ where
 }
 
 fn pairing_check<PE: Pairing>(
-    task_collector: &mut Option<Vec<PairingTask<PE>>>, a: G1<PE>, b: G2Aff<PE>,
-    c: G1<PE>, d: G2Aff<PE>, error: AmtProofError,
+    task_collector: &mut Option<Vec<PairingTask<PE>>>,
+    a: G1<PE>,
+    b: G2Aff<PE>,
+    c: G1<PE>,
+    d: G2Aff<PE>,
+    error: AmtProofError,
 ) -> Result<(), AmtProofError> {
     if let Some(collector) = task_collector {
         collector.push((a, b, c, d, error));

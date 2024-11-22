@@ -1,9 +1,6 @@
 use super::*;
 use crate::{
-    ec_algebra::{
-        EvaluationDomain, Field, Fr, Radix2EvaluationDomain, UniformRand, Zero,
-        G1,
-    },
+    ec_algebra::{EvaluationDomain, Field, Fr, Radix2EvaluationDomain, UniformRand, Zero, G1},
     PowerTau,
 };
 use once_cell::sync::Lazy;
@@ -31,8 +28,7 @@ pub static G1PP: Lazy<Vec<G1<PE>>> =
 pub static G2PP: Lazy<Vec<G2<PE>>> =
     Lazy::new(|| PP.g2pp.iter().copied().map(|x| G2::<PE>::from(x)).collect());
 
-pub static AMT: Lazy<AMTParams<PE>> =
-    Lazy::new(|| AMTParams::from_pp(PP.clone(), TEST_LEVEL, 0));
+pub static AMT: Lazy<AMTParams<PE>> = Lazy::new(|| AMTParams::from_pp(PP.clone(), TEST_LEVEL, 0));
 
 pub static DOMAIN: Lazy<Radix2EvaluationDomain<Fr<PE>>> =
     Lazy::new(|| Radix2EvaluationDomain::new(TEST_LENGTH).unwrap());
@@ -50,10 +46,8 @@ pub fn random_scalars(length: usize) -> Vec<Fr<PE>> {
 fn test_coset_consistency() {
     let input = random_scalars(TEST_LENGTH);
 
-    let fft_domain =
-        Radix2EvaluationDomain::<Fr<PE>>::new(TEST_LENGTH).unwrap();
-    let fft2_domain =
-        Radix2EvaluationDomain::<Fr<PE>>::new(TEST_LENGTH * 2).unwrap();
+    let fft_domain = Radix2EvaluationDomain::<Fr<PE>>::new(TEST_LENGTH).unwrap();
+    let fft2_domain = Radix2EvaluationDomain::<Fr<PE>>::new(TEST_LENGTH * 2).unwrap();
 
     let mut coeff = fft_domain.ifft(&input);
     let mut coset_coeff = coeff.clone();
