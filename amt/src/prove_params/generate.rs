@@ -267,8 +267,8 @@ mod tests {
         TestParams, DOMAIN, G1PP, G2PP, PE, PP, TEST_LENGTH, TEST_LEVEL, W,
     };
     use crate::ec_algebra::{
-        ArkPairing, EvaluationDomain, Field, Fr, One, VariableBaseMSM, Zero,
-        G1, G2,
+        EvaluationDomain, Field, Fr, One, VariableBaseMSM, Zero,
+        G1, G2, Pairing
     };
 
     fn simple_gen_basis(index: usize) -> G1<PE> {

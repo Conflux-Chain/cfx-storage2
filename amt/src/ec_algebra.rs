@@ -9,7 +9,7 @@
 // repo should import from here.
 
 pub use ark_ec::{
-    pairing::Pairing as ArkPairing, AffineRepr, CurveGroup, Group,
+    pairing::Pairing, AffineRepr, CurveGroup, Group,
     VariableBaseMSM,
 };
 pub use ark_ff::{
