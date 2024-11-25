@@ -1,8 +1,8 @@
-use super::*;
-use crate::{
+use super::super::{
     ec_algebra::{EvaluationDomain, Fr, Radix2EvaluationDomain, UniformRand, G1},
     PowerTau,
 };
+use super::*;
 use once_cell::sync::Lazy;
 
 pub const TEST_LEVEL: usize = 4;

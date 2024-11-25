@@ -1,16 +1,16 @@
 use std::{fs::File, io::BufReader, ops::Mul, path::Path};
 
-use super::AMTParams;
-use crate::{
+use super::super::{
     ec_algebra::{
-        k_adicity, BigInteger, CanonicalDeserialize, CanonicalSerialize, CurveGroup,
-        EvaluationDomain, Fr, FrInt, G1Aff, G2Aff, Pairing, Radix2EvaluationDomain, Zero, G1, G2,
+        k_adicity, CanonicalDeserialize, CanonicalSerialize, CurveGroup, EvaluationDomain, Fr,
+        FrInt, G1Aff, G2Aff, Pairing, Radix2EvaluationDomain, Zero, G1, G2,
     },
     error,
     power_tau::PowerTau,
     prove_params::SLOT_SIZE_MINUS_1,
     utils::{amtp_file_name, index_reverse},
 };
+use super::AMTParams;
 
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
@@ -57,14 +57,14 @@ impl AMTParams<Bn254> {
         let writer = File::create(&*path).unwrap();
 
         info!(file = ?path, "Save generated AMT params (mont format)");
-        crate::fast_serde_bn254::write_amt_params(&params, writer).unwrap();
+        super::fast_serde_bn254::write_amt_params(&params, writer).unwrap();
 
         params
     }
 
     fn load_cached_mont(file: impl AsRef<Path>) -> Result<Self, error::Error> {
         let buffer = BufReader::new(File::open(file)?);
-        crate::fast_serde_bn254::read_amt_params(buffer)
+        super::fast_serde_bn254::read_amt_params(buffer)
     }
 }
 
@@ -136,7 +136,7 @@ impl<PE: Pairing> AMTParams<PE> {
         let mut vec_fr = vec![];
         let mut fr_int = FrInt::<PE>::from(1u64);
         for _ in 0..SLOT_SIZE_MINUS_1 {
-            fr_int.muln(40);
+            fr_int <<= 40;
             vec_fr.push(Fr::<PE>::from(fr_int));
         }
 
@@ -252,10 +252,10 @@ impl<PE: Pairing> AMTParams<PE> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{TestParams, DOMAIN, G1PP, G2PP, PE, PP, TEST_LENGTH, TEST_LEVEL, W};
-    use crate::ec_algebra::{
+    use super::super::super::ec_algebra::{
         EvaluationDomain, Field, Fr, One, Pairing, VariableBaseMSM, Zero, G1, G2,
     };
+    use super::super::tests::{TestParams, DOMAIN, G1PP, G2PP, PE, PP, TEST_LENGTH, TEST_LEVEL, W};
 
     fn simple_gen_basis(index: usize) -> G1<PE> {
         let mut points = vec![Fr::<PE>::zero(); TEST_LENGTH];

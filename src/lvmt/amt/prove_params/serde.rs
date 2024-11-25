@@ -1,4 +1,4 @@
-use crate::{
+use super::super::{
     ec_algebra::{CanonicalDeserialize, CanonicalSerialize},
     AMTParams,
 };

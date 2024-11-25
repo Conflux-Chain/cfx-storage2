@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::{
+use super::super::{
     ec_algebra::{AffineRepr, Fr, G1Aff, G1},
     proofs::AllProofs,
 };
@@ -95,8 +95,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::ec_algebra::{AffineRepr, Fr, Pairing};
     use super::super::tests::{random_scalars, AMT, G2PP, PE, TEST_LENGTH, TEST_LEVEL};
-    use crate::ec_algebra::{AffineRepr, Fr, Pairing};
 
     #[test]
     fn test_commitment_tree() {

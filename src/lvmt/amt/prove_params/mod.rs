@@ -8,11 +8,13 @@ mod verify;
 #[cfg(test)]
 pub mod tests;
 
-use crate::ec_algebra::{G1Aff, G2Aff, G2};
+use crate::lvmt::types::SLOT_SIZE;
+
+use super::ec_algebra::{G1Aff, G2Aff, G2};
 
 use ark_ec::{pairing::Pairing, CurveGroup};
 
-const SLOT_SIZE_MINUS_1: usize = 5;
+const SLOT_SIZE_MINUS_1: usize = SLOT_SIZE - 1;
 
 pub struct AMTParams<PE: Pairing> {
     pub(super) basis: Vec<G1Aff<PE>>,
@@ -52,8 +54,8 @@ impl<PE: Pairing> AMTParams<PE> {
 }
 
 impl<PE: Pairing> AMTParams<PE> {
-    pub fn get_basis_power_at(&self, idx: usize) -> [G1Aff<PE>; SLOT_SIZE_MINUS_1 + 1] {
-        let mut basis_power: [G1Aff<PE>; SLOT_SIZE_MINUS_1 + 1] = Default::default();
+    pub fn get_basis_power_at(&self, idx: usize) -> [G1Aff<PE>; SLOT_SIZE] {
+        let mut basis_power: [G1Aff<PE>; SLOT_SIZE] = Default::default();
         basis_power[0] = self.basis[idx];
         basis_power[1..].copy_from_slice(&self.basis_power[idx]);
         // todo if cfg!(test)

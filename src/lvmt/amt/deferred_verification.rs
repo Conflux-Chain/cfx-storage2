@@ -7,7 +7,7 @@ use ark_std::{cfg_into_iter, cfg_iter, UniformRand, Zero};
 use rand::rngs::OsRng;
 use std::sync::{Arc, Mutex};
 
-use crate::{
+use super::{
     ec_algebra::{Fr, FrInt, G1Aff, G2Aff, G1},
     AmtProofError,
 };

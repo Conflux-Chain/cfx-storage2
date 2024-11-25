@@ -1,5 +1,8 @@
 #![allow(dead_code, unused_variables)]
 
+#[macro_use]
+extern crate tracing;
+
 pub mod backends;
 pub mod errors;
 mod example;

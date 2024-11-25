@@ -1,18 +1,18 @@
 use std::{fs::File, io::BufReader, path::Path};
 
-use crate::{
+use super::{
     amtp_verify_file_name,
     deferred_verification::{DeferredVerifier, PairingTask},
     error, AMTParams,
 };
 
-use crate::ec_algebra::{Fr, G1Aff, G2Aff, G1};
+use super::ec_algebra::{Fr, G1Aff, G2Aff, G1};
 
 use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use tracing::{debug, info, instrument};
 
-use crate::proofs::{AmtProofError, Proof};
+use super::proofs::{AmtProofError, Proof};
 
 use ark_ec::{pairing::Pairing, AffineRepr, VariableBaseMSM};
 

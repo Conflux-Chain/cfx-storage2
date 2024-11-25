@@ -3,7 +3,7 @@ use std::ops::Deref;
 use ark_ec::pairing::Pairing;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::ec_algebra::G1Aff;
+use super::ec_algebra::G1Aff;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct AllProofs<PE: Pairing> {

@@ -8,14 +8,15 @@
 // one place and all its usage for this
 // repo should import from here.
 
-pub use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, Group, VariableBaseMSM};
-pub use ark_ff::{
-    utils::k_adicity, BigInt, BigInteger, FftField, Field, One, PrimeField, UniformRand, Zero,
-};
+#[cfg(test)]
+pub use ark_ec::VariableBaseMSM;
+#[cfg(test)]
+pub use ark_ff::{Field, One};
+
+pub use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
+pub use ark_ff::{utils::k_adicity, BigInt, BigInteger, PrimeField, UniformRand, Zero};
 pub use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
-pub use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Read, SerializationError, Write,
-};
+pub use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Read, Write};
 
 pub type G1<PE> = <PE as ark_ec::pairing::Pairing>::G1;
 pub type G1Aff<PE> = <PE as ark_ec::pairing::Pairing>::G1Affine;

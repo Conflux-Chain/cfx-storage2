@@ -1,4 +1,4 @@
-use crate::{
+use super::super::{
     ec_algebra::{
         BigInt, BigInteger, CanonicalDeserialize, CanonicalSerialize, Fq, Fq2, G1Aff, G2Aff,
         PrimeField, Read, Write, G2,

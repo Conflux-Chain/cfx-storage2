@@ -1,4 +1,4 @@
-use crate::{
+use super::super::{
     ec_algebra::{Fr, G1Aff, G1},
     proofs::{AmtProofError, Proof},
     verify_params::verify_amt_proof,

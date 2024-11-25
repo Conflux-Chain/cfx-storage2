@@ -1,4 +1,4 @@
-use crate::{
+use super::{
     ec_algebra::{
         AffineRepr, CanonicalDeserialize, CanonicalSerialize, CurveGroup, Fr, G1Aff, G2Aff,
         UniformRand, G1, G2,
@@ -160,14 +160,14 @@ impl PowerTau<Bn254> {
         let writer = File::create(&*path).unwrap();
 
         info!(file = ?path, "Save generated AMT params (mont format)");
-        crate::fast_serde_bn254::write_power_tau(&pp, writer).unwrap();
+        super::fast_serde_bn254::write_power_tau(&pp, writer).unwrap();
 
         pp
     }
 
     fn load_cached_mont(file: impl AsRef<Path>) -> Result<Self, error::Error> {
         let buffer = File::open(file)?;
-        crate::fast_serde_bn254::read_power_tau(buffer)
+        super::fast_serde_bn254::read_power_tau(buffer)
     }
 }
 
@@ -194,7 +194,7 @@ fn test_partial_load() {
 
 #[test]
 fn test_parallel_build() {
-    use crate::ec_algebra::CurveGroup;
+    use super::ec_algebra::CurveGroup;
 
     const DEPTH: usize = 13;
     type PE = ark_bn254::Bn254;
