@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use amt::{ec_algebra::Pairing, AMTParams};
 use ethereum_types::H256;
 
@@ -35,7 +37,11 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AMTParams<PE>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        <PE as amt::ec_algebra::Pairing>::G1Affine:
+            Borrow<ark_ec::short_weierstrass::Affine<ark_bls12_381::g1::Config>>,
+    {
         let amt_node_view = self.amt_node_store.get_versioned_store(&old_commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&old_commit)?;
         let key_value_view = self.key_value_store.get_versioned_store(&old_commit)?;

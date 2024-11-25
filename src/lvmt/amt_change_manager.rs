@@ -1,4 +1,6 @@
-use std::collections::BTreeMap;
+use std::{borrow::Borrow, collections::BTreeMap};
+
+use ark_ff::Zero;
 
 use amt::{ec_algebra::Pairing, AMTParams};
 
@@ -49,7 +51,11 @@ impl AmtChangeManager {
         &self,
         db: &KeyValueSnapshotRead<'_, AmtNodes>,
         pp: &AMTParams<PE>,
-    ) -> Result<Vec<(AmtId, CurvePointWithVersion)>> {
+    ) -> Result<Vec<(AmtId, CurvePointWithVersion)>>
+    where
+        <PE as amt::ec_algebra::Pairing>::G1Affine:
+            Borrow<ark_ec::short_weierstrass::Affine<ark_bls12_381::g1::Config>>,
+    {
         let mut result = vec![];
 
         for (key, value) in self.0.iter() {
@@ -66,6 +72,20 @@ impl AmtChangeManager {
     }
 }
 
-pub fn commitment_diff<PE: Pairing>(change: &AmtChange, pp: &AMTParams<PE>) -> G1 {
-    todo!()
+pub fn commitment_diff<PE: Pairing>(change: &AmtChange, pp: &AMTParams<PE>) -> G1
+where
+    <PE as amt::ec_algebra::Pairing>::G1Affine:
+        Borrow<ark_ec::short_weierstrass::Affine<ark_bls12_381::g1::Config>>,
+{
+    let mut diff_sum = G1::zero();
+    for (idx, diff) in change.iter() {
+        let basis_power = pp.get_basis_power_at(*idx as usize);
+        assert_eq!(diff.len(), basis_power.len()); // todo: move amt into crate; use the same SLOT_SIZE
+        for (i_diff, i_basis_power) in diff.iter().zip(basis_power.into_iter()) {
+            if *i_diff {
+                diff_sum += i_basis_power;
+            }
+        }
+    }
+    diff_sum
 }

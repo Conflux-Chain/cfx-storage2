@@ -51,6 +51,16 @@ impl<PE: Pairing> AMTParams<PE> {
     }
 }
 
+impl<PE: Pairing> AMTParams<PE> {
+    pub fn get_basis_power_at(&self, idx: usize) -> [G1Aff<PE>; SLOT_SIZE_MINUS_1 + 1] {
+        let mut basis_power: [G1Aff<PE>; SLOT_SIZE_MINUS_1 + 1] = Default::default();
+        basis_power[0] = self.basis[idx];
+        basis_power[1..].copy_from_slice(&self.basis_power[idx]);
+        // todo if cfg!(test)
+        basis_power
+    }
+}
+
 impl<PE: Pairing> PartialEq for AMTParams<PE> {
     fn eq(&self, other: &Self) -> bool {
         self.basis == other.basis
