@@ -5,7 +5,7 @@ use super::super::{
 use super::*;
 use once_cell::sync::Lazy;
 
-pub const TEST_LEVEL: usize = 4;
+pub const TEST_LEVEL: usize = 5;
 pub const TEST_LENGTH: usize = 1 << TEST_LEVEL;
 
 #[cfg(not(feature = "bls12-381"))]

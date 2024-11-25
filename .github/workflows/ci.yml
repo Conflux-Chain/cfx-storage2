@@ -1,0 +1,44 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.4.0-devel-ubuntu22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y curl wget
+
+      - name: Install protobuf-compiler
+        run: apt-get install -y protobuf-compiler
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set up Rust fmt version
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly-2024-02-04-x86_64-unknown-linux-gnu
+
+      - name: Install rustfmt
+        run: rustup component add --toolchain nightly-2024-02-04-x86_64-unknown-linux-gnu rustfmt
+
+      - name: Install dependencies
+        run: rustup target add x86_64-unknown-linux-gnu
+
+      - name: Run tests
+        run: bash ./dev_support/test.sh
