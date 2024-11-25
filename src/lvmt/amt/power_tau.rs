@@ -203,12 +203,11 @@ fn test_parallel_build() {
     let gen1 = G1Aff::<PE>::generator();
     let g1pp_ans = power_tau(&gen1, &tau, 1 << DEPTH);
 
-    let mut g1pp: Vec<G1Aff<PE>> = vec![];
-    g1pp.reserve(1 << DEPTH);
+    let mut g1pp: Vec<G1Aff<PE>> = Vec::with_capacity(1 << DEPTH);
     let mut gen1 = gen1.into_group();
     for _ in 0..1 << DEPTH {
         g1pp.push(gen1.into_affine());
-        gen1 *= tau.clone();
+        gen1 *= tau;
     }
     assert_eq!(g1pp, g1pp_ans)
 }

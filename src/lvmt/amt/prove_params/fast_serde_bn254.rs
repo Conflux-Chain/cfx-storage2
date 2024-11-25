@@ -84,7 +84,7 @@ pub fn read_amt_params<R: Read>(mut reader: R) -> Result<AMTParams<PE>> {
         .map(|slice| {
             slice
                 .try_into()
-                .expect(&format!("Slice length must be {}", SLOT_SIZE_MINUS_1))
+                .unwrap_or_else(|_| panic!("Slice length must be {}", SLOT_SIZE_MINUS_1))
         })
         .collect();
     if cfg!(test) {

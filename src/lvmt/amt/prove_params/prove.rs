@@ -149,7 +149,7 @@ mod tests {
                 .1;
             for (index, data) in ri_data.chunks_exact(batch).enumerate() {
                 let proof = all_proofs.get_proof(index);
-                AMT.verify_proof(&data, index, &proof, commitment).unwrap();
+                AMT.verify_proof(data, index, &proof, commitment).unwrap();
             }
         }
     }

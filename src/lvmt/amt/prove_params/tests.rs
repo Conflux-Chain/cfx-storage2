@@ -23,10 +23,10 @@ pub static PP: Lazy<PowerTau<PE>> =
     Lazy::new(|| PowerTau::<PE>::from_dir("./pp", TEST_LEVEL, true));
 
 pub static G1PP: Lazy<Vec<G1<PE>>> =
-    Lazy::new(|| PP.g1pp.iter().copied().map(|x| G1::<PE>::from(x)).collect());
+    Lazy::new(|| PP.g1pp.iter().copied().map(G1::<PE>::from).collect());
 
 pub static G2PP: Lazy<Vec<G2<PE>>> =
-    Lazy::new(|| PP.g2pp.iter().copied().map(|x| G2::<PE>::from(x)).collect());
+    Lazy::new(|| PP.g2pp.iter().copied().map(G2::<PE>::from).collect());
 
 pub static AMT: Lazy<AMTParams<PE>> = Lazy::new(|| AMTParams::from_pp(PP.clone(), TEST_LEVEL));
 

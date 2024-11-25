@@ -26,7 +26,7 @@ impl<PE: Pairing> CanonicalDeserialize for AMTParams<PE> {
             .map(|slice| {
                 slice
                     .try_into()
-                    .expect(&format!("Slice length must be {}", SLOT_SIZE_MINUS_1))
+                    .unwrap_or_else(|_| panic!("Slice length must be {}", SLOT_SIZE_MINUS_1))
             })
             .collect();
         Ok(AMTParams::new(basis, quotients, vanishes, g2, basis_power))

@@ -145,12 +145,11 @@ impl<PE: Pairing> AMTParams<PE> {
         // But how about PE: Pairing?
         let basis_power: Vec<G1<PE>> = basis
             .iter()
-            .map(|b| {
-                let point: G1<PE> = b.clone().into();
+            .flat_map(|b| {
+                let point: G1<PE> = (*b).into();
                 let vec: Vec<G1<PE>> = vec_fr.iter().map(|fr| point.mul(fr)).collect();
                 vec
             })
-            .flatten()
             .collect();
         let basis_power = CurveGroup::normalize_batch(basis_power.as_slice());
         let basis_power = basis_power
@@ -158,7 +157,7 @@ impl<PE: Pairing> AMTParams<PE> {
             .map(|slice| {
                 slice
                     .try_into()
-                    .expect(&format!("Slice length must be {}", SLOT_SIZE_MINUS_1))
+                    .unwrap_or_else(|_| panic!("Slice length must be {}", SLOT_SIZE_MINUS_1))
             })
             .collect();
         basis_power
@@ -266,6 +265,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::needless_range_loop)]
     fn test_gen_basis() {
         let indents = TestParams::gen_basis(&G1PP, &*DOMAIN);
         for t in 0..TEST_LENGTH {
@@ -277,15 +277,16 @@ mod tests {
         let size = TEST_LENGTH / (1 << depth);
         (0..size)
             .rev()
-            .map(|j| W.pow(&[(index * j) as u64]))
+            .map(|j| W.pow([(index * j) as u64]))
             .zip(PP.g1pp[0..size].iter())
             .map(|(exp, base)| *base * exp)
             .sum::<G1<PE>>()
             * DOMAIN.size_inv
-            * W.pow(&[index as u64])
+            * W.pow([index as u64])
     }
 
     #[test]
+    #[allow(clippy::needless_range_loop)]
     fn test_gen_quotients() {
         for depth in (1..=TEST_LEVEL).rev() {
             let quotients = TestParams::gen_quotients(&G1PP, &DOMAIN, depth);
@@ -300,7 +301,7 @@ mod tests {
         let size = 1 << depth;
         (0..size)
             .rev()
-            .map(|j| W.pow(&[(index * step * j) as u64]))
+            .map(|j| W.pow([(index * step * j) as u64]))
             .zip(PP.g2pp.iter().step_by(step))
             .map(|(exp, base)| *base * exp)
             .sum()

@@ -37,7 +37,7 @@ pub fn amtp_file_name<PE: Pairing>(depth: usize, prove_depth: usize, mont: bool)
 }
 
 pub fn amtp_verify_file_name<PE: Pairing>(depth: usize, verify_depth: usize) -> String {
-    let prefix = format!("amt-verify");
+    let prefix = "amt-verify".to_string();
     file_name::<PE>(&prefix, depth, Some(verify_depth))
 }
 
