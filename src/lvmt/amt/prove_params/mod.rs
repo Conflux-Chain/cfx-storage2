@@ -1,5 +1,9 @@
+#[cfg(feature = "bls12-381")]
+pub mod fast_serde_bls12_381;
+
 #[cfg(not(feature = "bls12-381"))]
 pub mod fast_serde_bn254;
+
 mod generate;
 mod prove;
 mod serde;

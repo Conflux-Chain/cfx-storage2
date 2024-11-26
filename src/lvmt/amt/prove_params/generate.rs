@@ -12,6 +12,9 @@ use super::super::{
 };
 use super::AMTParams;
 
+#[cfg(feature = "bls12-381")]
+use ark_bls12_381::Bls12_381;
+
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
 
@@ -65,6 +68,55 @@ impl AMTParams<Bn254> {
     fn load_cached_mont(file: impl AsRef<Path>) -> Result<Self, error::Error> {
         let buffer = BufReader::new(File::open(file)?);
         super::fast_serde_bn254::read_amt_params(buffer)
+    }
+}
+
+#[cfg(feature = "bls12-381")]
+impl AMTParams<Bls12_381> {
+    #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth))]
+    pub fn from_dir_mont(
+        dir: impl AsRef<Path>,
+        depth: usize,
+        prove_depth: usize,
+        create_mode: bool,
+        pp: Option<&PowerTau<Bls12_381>>,
+    ) -> Self {
+        debug!(
+            depth = depth,
+            prove_depth = prove_depth,
+            "Load AMT params (mont format)"
+        );
+        let file_name = amtp_file_name::<Bls12_381>(depth, prove_depth, true);
+        let path = dir.as_ref().join(file_name);
+
+        match Self::load_cached_mont(&path) {
+            Ok(loaded) => {
+                return loaded;
+            }
+            Err(e) => {
+                info!(?path, error = ?e, "Fail to load AMT params (mont format)");
+            }
+        }
+
+        if !create_mode {
+            panic!("Fail to load amt params in mont from {:?}", path);
+        }
+
+        info!("Recover from unmont format");
+
+        let params = Self::from_dir(dir, depth, prove_depth, create_mode, pp);
+
+        let writer = File::create(&*path).unwrap();
+
+        info!(file = ?path, "Save generated AMT params (mont format)");
+        super::fast_serde_bls12_381::write_amt_params(&params, writer).unwrap();
+
+        params
+    }
+
+    fn load_cached_mont(file: impl AsRef<Path>) -> Result<Self, error::Error> {
+        let buffer = BufReader::new(File::open(file)?);
+        super::fast_serde_bls12_381::read_amt_params(buffer)
     }
 }
 

@@ -20,7 +20,7 @@ pub static PP: Lazy<PowerTau<PE>> =
     Lazy::new(|| PowerTau::<PE>::from_dir_mont("./pp", TEST_LEVEL, true));
 #[cfg(feature = "bls12-381")]
 pub static PP: Lazy<PowerTau<PE>> =
-    Lazy::new(|| PowerTau::<PE>::from_dir("./pp", TEST_LEVEL, true));
+    Lazy::new(|| PowerTau::<PE>::from_dir_mont("./pp", TEST_LEVEL, true));
 
 pub static G1PP: Lazy<Vec<G1<PE>>> =
     Lazy::new(|| PP.g1pp.iter().copied().map(G1::<PE>::from).collect());

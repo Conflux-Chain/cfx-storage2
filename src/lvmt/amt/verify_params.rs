@@ -16,6 +16,9 @@ use super::proofs::{AmtProofError, Proof};
 
 use ark_ec::{pairing::Pairing, AffineRepr, VariableBaseMSM};
 
+#[cfg(feature = "bls12-381")]
+use ark_bls12_381::Bls12_381;
+
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
 
@@ -31,6 +34,15 @@ impl AMTVerifyParams<Bn254> {
     pub fn from_dir_mont(dir: impl AsRef<Path>, depth: usize, verify_depth: usize) -> Self {
         Self::from_dir_inner(&dir, depth, verify_depth, || {
             AMTParams::<Bn254>::from_dir_mont(&dir, depth, verify_depth, false, None)
+        })
+    }
+}
+
+#[cfg(feature = "bls12-381")]
+impl AMTVerifyParams<Bls12_381> {
+    pub fn from_dir_mont(dir: impl AsRef<Path>, depth: usize, verify_depth: usize) -> Self {
+        Self::from_dir_inner(&dir, depth, verify_depth, || {
+            AMTParams::<Bls12_381>::from_dir_mont(&dir, depth, verify_depth, false, None)
         })
     }
 }

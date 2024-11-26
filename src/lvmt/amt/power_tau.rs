@@ -5,6 +5,8 @@ use super::{
     },
     error, ptau_file_name,
 };
+#[cfg(feature = "bls12-381")]
+use ark_bls12_381::Bls12_381;
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
 use ark_ec::pairing::Pairing;
@@ -168,6 +170,49 @@ impl PowerTau<Bn254> {
     fn load_cached_mont(file: impl AsRef<Path>) -> Result<Self, error::Error> {
         let buffer = File::open(file)?;
         super::fast_serde_bn254::read_power_tau(buffer)
+    }
+}
+
+#[cfg(feature = "bls12-381")]
+impl PowerTau<Bls12_381> {
+    pub fn from_dir_mont(dir: impl AsRef<Path>, expected_depth: usize, create_mode: bool) -> Self {
+        debug!("Load powers of tau (mont format)");
+
+        let path = dir
+            .as_ref()
+            .join(ptau_file_name::<Bls12_381>(expected_depth, true));
+
+        match Self::load_cached_mont(&path) {
+            Ok(loaded) => {
+                return loaded;
+            }
+            Err(e) => {
+                info!(?path, error = ?e, "Fail to load powers of tau (mont format)");
+            }
+        }
+
+        if !create_mode {
+            panic!(
+                "Fail to load public parameters for {} at depth {}",
+                std::any::type_name::<Bls12_381>(),
+                expected_depth
+            );
+        }
+
+        info!("Recover from unmont format");
+
+        let pp = Self::from_dir(dir, expected_depth, create_mode);
+        let writer = File::create(&*path).unwrap();
+
+        info!(file = ?path, "Save generated AMT params (mont format)");
+        super::fast_serde_bls12_381::write_power_tau(&pp, writer).unwrap();
+
+        pp
+    }
+
+    fn load_cached_mont(file: impl AsRef<Path>) -> Result<Self, error::Error> {
+        let buffer = File::open(file)?;
+        super::fast_serde_bls12_381::read_power_tau(buffer)
     }
 }
 

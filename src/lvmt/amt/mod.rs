@@ -14,3 +14,6 @@ pub use utils::{amtp_verify_file_name, ptau_file_name};
 
 #[cfg(not(feature = "bls12-381"))]
 pub use prove_params::fast_serde_bn254;
+
+#[cfg(feature = "bls12-381")]
+pub use prove_params::fast_serde_bls12_381;
