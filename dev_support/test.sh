@@ -36,7 +36,7 @@ cargo clippy
 echoStep "Check clippy (parallel)"
 cargo clippy --features parallel
 
-rm -rf "./crates/amt/pp/*-05.bin"
+rm -rf ./pp/*-05.bin
 
 echoStep "Test"
 cargo test -r --all
@@ -44,7 +44,7 @@ cargo test -r --all
 echoStep "Test amt, use previous pp"
 cargo test -r -- lvmt::amt
 
-rm -rf "./crates/amt/pp/*-05.bin"
+rm -rf ./pp/*-05.bin
 
 echoStep "Test (parallel)"
 cargo test -r --all --features parallel
@@ -52,7 +52,7 @@ cargo test -r --all --features parallel
 echoStep "Test amt (parallel), use previous pp"
 cargo test -r --features parallel -- lvmt::amt
 
-rm -rf "./crates/amt/pp/*-05.bin"
+rm -rf ./pp/*-05.bin
 
 echoStep "Test amt (bn254)"
 cargo test -r --features parallel,bn254 -- lvmt::amt
@@ -60,7 +60,7 @@ cargo test -r --features parallel,bn254 -- lvmt::amt
 echoStep "Test amt (bn254), use previous pp"
 cargo test -r --features parallel,bn254 -- lvmt::amt
 
-rm -rf "./crates/amt/pp/*-05.bin"
+rm -rf ./pp/*-05.bin
 
 echoStep "Test amt (bls12-381)"
 cargo test -r --features parallel,bls12-381 -- lvmt::amt
