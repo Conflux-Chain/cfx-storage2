@@ -15,10 +15,6 @@ pub type PE = ark_bls12_381::Bls12_381;
 
 pub type TestParams = AMTParams<PE>;
 
-#[cfg(not(feature = "bls12-381"))]
-pub static PP: Lazy<PowerTau<PE>> =
-    Lazy::new(|| PowerTau::<PE>::from_dir_mont("./pp", TEST_LEVEL, true));
-#[cfg(feature = "bls12-381")]
 pub static PP: Lazy<PowerTau<PE>> =
     Lazy::new(|| PowerTau::<PE>::from_dir_mont("./pp", TEST_LEVEL, true));
 
