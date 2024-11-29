@@ -36,25 +36,9 @@ pub fn amtp_file_name<PE: Pairing>(depth: usize, prove_depth: usize, mont: bool)
     file_name::<PE>(&prefix, depth, Some(prove_depth))
 }
 
-pub fn amtp_verify_file_name<PE: Pairing>(depth: usize, verify_depth: usize) -> String {
-    let prefix = "amt-verify".to_string();
-    file_name::<PE>(&prefix, depth, Some(verify_depth))
-}
-
 #[inline]
 pub fn bitreverse(n: usize, l: usize) -> usize {
     n.reverse_bits() >> (usize::BITS as usize - l)
-}
-
-/// Swap the lowest `lo` bits with the
-/// next `hi` bits in a given number,
-/// and clear the rest part.
-#[inline]
-pub fn swap_bits(n: usize, lo: usize, hi: usize) -> usize {
-    let lowest = n & ((1 << lo) - 1);
-    let next = (n >> lo) & ((1 << hi) - 1);
-
-    (lowest << hi) | next
 }
 
 pub fn index_reverse<T: Sync>(input: &mut [T]) {
@@ -75,30 +59,4 @@ pub fn index_reverse<T: Sync>(input: &mut [T]) {
             }
         }
     })
-}
-
-pub fn change_matrix_direction<T: Clone>(input: &mut Vec<T>, log_current: usize, log_next: usize) {
-    let n = input.len();
-    assert_eq!(n, 1 << (log_current + log_next));
-    if log_current == log_next {
-        return transpose_square_matrix(input, log_current);
-    }
-
-    let mut output = input.clone();
-
-    #[allow(clippy::needless_range_loop)]
-    for i in 0..input.len() {
-        let ri = swap_bits(i, log_current, log_next);
-        output[ri] = input[i].clone();
-    }
-    std::mem::swap(input, &mut output);
-}
-
-fn transpose_square_matrix<T>(input: &mut [T], k: usize) {
-    for i in 0..input.len() {
-        let ri = swap_bits(i, k, k);
-        if i < ri {
-            input.swap(i, ri);
-        }
-    }
 }

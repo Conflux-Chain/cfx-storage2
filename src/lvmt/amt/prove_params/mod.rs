@@ -5,9 +5,7 @@ pub mod fast_serde_bls12_381;
 pub mod fast_serde_bn254;
 
 mod generate;
-mod prove;
 mod serde;
-mod verify;
 
 #[cfg(test)]
 pub mod tests;
