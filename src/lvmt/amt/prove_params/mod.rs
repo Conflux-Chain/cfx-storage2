@@ -10,6 +10,8 @@ mod serde;
 #[cfg(test)]
 pub mod tests;
 
+pub use generate::CreateMode;
+
 use crate::lvmt::types::SLOT_SIZE;
 
 use super::ec_algebra::{G1Aff, G2Aff, G2};

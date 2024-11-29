@@ -5,3 +5,5 @@ pub mod crypto;
 mod storage;
 pub mod table_schema;
 pub mod types;
+
+pub use amt::{AmtParams, CreateMode, PowerTau};

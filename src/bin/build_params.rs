@@ -1,5 +1,5 @@
-use amt::{AmtParams, PowerTau};
 use anyhow::{bail, Result};
+use cfx_storage2::{AmtParams, CreateMode, PowerTau};
 use tracing::Level;
 
 fn parse_param() -> Result<(usize, usize, Option<String>)> {
@@ -39,5 +39,5 @@ fn main() {
     let dir = ptau_dir.unwrap_or("./params/test".into());
     let pp = PowerTau::from_dir(&dir, depth, create_mode);
 
-    AmtParams::from_dir_mont(&dir, depth, verify_depth, true, Some(&pp));
+    AmtParams::from_dir_mont(&dir, depth, verify_depth, CreateMode::AmtOnly, Some(&pp));
 }

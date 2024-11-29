@@ -54,3 +54,8 @@ default = []
 parallel = ["ark-poly/parallel", "ark-ec/parallel", "ark-std/parallel", "rayon"]
 bn254 = []
 bls12-381 = []
+
+[[bin]]
+name = "build_params"
+test = false
+bench = false
