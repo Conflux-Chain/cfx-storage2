@@ -22,6 +22,33 @@ use ark_std::cfg_iter_mut;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+pub enum CreateMode {
+    /// neither AMT nor PP can be created
+    Neither,
+    /// AMT can be created from PP, but PP cannot be created
+    AmtOnly,
+    /// both AMT and PP can be created
+    Both,
+}
+
+impl CreateMode {
+    fn amt_can_be_created(&self) -> bool {
+        match self {
+            CreateMode::Neither => false,
+            CreateMode::AmtOnly => true,
+            CreateMode::Both => true,
+        }
+    }
+
+    fn pp_can_be_created(&self) -> bool {
+        match self {
+            CreateMode::Neither => false,
+            CreateMode::AmtOnly => false,
+            CreateMode::Both => true,
+        }
+    }
+}
+
 #[cfg(not(feature = "bls12-381"))]
 impl AmtParams<Bn254> {
     #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth))]
@@ -29,7 +56,7 @@ impl AmtParams<Bn254> {
         dir: impl AsRef<Path>,
         depth: usize,
         prove_depth: usize,
-        create_mode: bool,
+        create_mode: CreateMode,
         pp: Option<&PowerTau<Bn254>>,
     ) -> Self {
         debug!(
@@ -49,7 +76,7 @@ impl AmtParams<Bn254> {
             }
         }
 
-        if !create_mode {
+        if !create_mode.amt_can_be_created() {
             panic!("Fail to load amt params in mont from {:?}", path);
         }
 
@@ -78,7 +105,7 @@ impl AmtParams<Bls12_381> {
         dir: impl AsRef<Path>,
         depth: usize,
         prove_depth: usize,
-        create_mode: bool,
+        create_mode: CreateMode,
         pp: Option<&PowerTau<Bls12_381>>,
     ) -> Self {
         debug!(
@@ -98,7 +125,7 @@ impl AmtParams<Bls12_381> {
             }
         }
 
-        if !create_mode {
+        if !create_mode.amt_can_be_created() {
             panic!("Fail to load amt params in mont from {:?}", path);
         }
 
@@ -126,7 +153,7 @@ impl<PE: Pairing> AmtParams<PE> {
         dir: impl AsRef<Path>,
         depth: usize,
         prove_depth: usize,
-        create_mode: bool,
+        create_mode: CreateMode,
         pp: Option<&PowerTau<PE>>,
     ) -> Self {
         debug!(depth, prove_depth, "Load AMT params (unmont format)");
@@ -140,7 +167,7 @@ impl<PE: Pairing> AmtParams<PE> {
 
         info!(?path, "Fail to load AMT params (unmont format)");
 
-        if !create_mode {
+        if !create_mode.amt_can_be_created() {
             panic!("Fail to load amt params from {:?}", path);
         }
 
@@ -149,7 +176,7 @@ impl<PE: Pairing> AmtParams<PE> {
             pp.clone()
         } else {
             info!("Recover AMT parameters by loading default pp");
-            PowerTau::<PE>::from_dir(dir, depth, create_mode)
+            PowerTau::<PE>::from_dir(dir, depth, create_mode.pp_can_be_created())
         };
 
         let params = Self::from_pp(pp, prove_depth);
