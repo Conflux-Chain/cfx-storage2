@@ -8,6 +8,9 @@ echoStep() {
 
 set -e
 
+echoStep "Clean"
+cargo clean
+
 echoStep "Check fmt"
 ./cargo_fmt.sh -- --check
 
