@@ -1,6 +1,9 @@
 use std::borrow::Borrow;
 
-use super::amt::{ec_algebra::Pairing, AmtParams};
+use super::{
+    amt::{ec_algebra::Pairing, AmtParams},
+    crypto::G1Config,
+};
 use ethereum_types::H256;
 
 use super::{
@@ -40,7 +43,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
     ) -> Result<()>
     where
         <PE as super::amt::ec_algebra::Pairing>::G1Affine:
-            Borrow<ark_ec::short_weierstrass::Affine<ark_bls12_381::g1::Config>>,
+            Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
     {
         let amt_node_view = self.amt_node_store.get_versioned_store(&old_commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&old_commit)?;

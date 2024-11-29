@@ -9,7 +9,15 @@ pub use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Read, SerializationError, Write,
 };
 
+#[cfg(not(feature = "bls12-381"))]
+pub type PE = ark_bn254::Bn254;
+#[cfg(feature = "bls12-381")]
 pub type PE = ark_bls12_381::Bls12_381;
+
+#[cfg(not(feature = "bls12-381"))]
+pub type G1Config = ark_bn254::g1::Config;
+#[cfg(feature = "bls12-381")]
+pub type G1Config = ark_bls12_381::g1::Config;
 
 pub type G1 = <PE as Pairing>::G1;
 pub type G1Aff = <PE as Pairing>::G1Affine;

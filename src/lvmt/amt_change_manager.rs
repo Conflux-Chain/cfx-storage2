@@ -5,7 +5,7 @@ use ark_ff::Zero;
 use super::amt::{ec_algebra::Pairing, AmtParams};
 
 use super::{
-    crypto::G1,
+    crypto::{G1Config, G1},
     table_schema::AmtNodes,
     types::{batch_normalize, AllocatePosition, AmtId, CurvePointWithVersion, SLOT_SIZE},
 };
@@ -54,7 +54,7 @@ impl AmtChangeManager {
     ) -> Result<Vec<(AmtId, CurvePointWithVersion)>>
     where
         <PE as super::amt::ec_algebra::Pairing>::G1Affine:
-            Borrow<ark_ec::short_weierstrass::Affine<ark_bls12_381::g1::Config>>,
+            Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
     {
         let mut result = vec![];
 
@@ -75,7 +75,7 @@ impl AmtChangeManager {
 pub fn commitment_diff<PE: Pairing>(change: &AmtChange, pp: &AmtParams<PE>) -> G1
 where
     <PE as super::amt::ec_algebra::Pairing>::G1Affine:
-        Borrow<ark_ec::short_weierstrass::Affine<ark_bls12_381::g1::Config>>,
+        Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
 {
     let mut diff_sum = G1::zero();
     for (idx, diff) in change.iter() {
