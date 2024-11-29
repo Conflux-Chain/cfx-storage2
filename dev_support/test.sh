@@ -60,13 +60,11 @@ rm -rf ./pp/*-05.bin
 echoStep "Test amt (bn254)"
 cargo test -r --features parallel,bn254 -- lvmt::amt
 
-echoStep "Test amt (bn254), use previous pp"
-cargo test -r --features parallel,bn254 -- lvmt::amt
-
-rm -rf ./pp/*-05.bin
-
 echoStep "Test amt (bls12-381)"
 cargo test -r --features parallel,bls12-381 -- lvmt::amt
+
+echoStep "Test amt (bn254), use previous pp"
+cargo test -r --features parallel,bn254 -- lvmt::amt
 
 echoStep "Test amt (bls12-381), use previous pp"
 cargo test -r --features parallel,bls12-381 -- lvmt::amt

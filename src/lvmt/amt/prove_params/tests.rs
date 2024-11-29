@@ -1,3 +1,5 @@
+use self::generate::CreateMode;
+
 use super::super::{
     ec_algebra::{EvaluationDomain, Fr, Radix2EvaluationDomain, UniformRand, G1},
     PowerTau,
@@ -24,7 +26,15 @@ pub static G1PP: Lazy<Vec<G1<PE>>> =
 pub static G2PP: Lazy<Vec<G2<PE>>> =
     Lazy::new(|| PP.g2pp.iter().copied().map(G2::<PE>::from).collect());
 
-pub static AMT: Lazy<AmtParams<PE>> = Lazy::new(|| AmtParams::from_pp(PP.clone(), TEST_LEVEL));
+pub static AMT: Lazy<AmtParams<PE>> = Lazy::new(|| {
+    AmtParams::from_dir_mont(
+        "./pp",
+        TEST_LEVEL,
+        TEST_LEVEL,
+        CreateMode::AmtOnly,
+        Some(&PP),
+    )
+});
 
 pub static DOMAIN: Lazy<Radix2EvaluationDomain<Fr<PE>>> =
     Lazy::new(|| Radix2EvaluationDomain::new(TEST_LENGTH).unwrap());
