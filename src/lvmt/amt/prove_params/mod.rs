@@ -18,7 +18,7 @@ use ark_ec::{pairing::Pairing, CurveGroup};
 
 const SLOT_SIZE_MINUS_1: usize = SLOT_SIZE - 1;
 
-pub struct AMTParams<PE: Pairing> {
+pub struct AmtParams<PE: Pairing> {
     pub(super) basis: Vec<G1Aff<PE>>,
     pub(super) quotients: Vec<Vec<G1Aff<PE>>>,
     pub(super) vanishes: Vec<Vec<G2Aff<PE>>>,
@@ -27,7 +27,7 @@ pub struct AMTParams<PE: Pairing> {
     basis_power: Vec<[G1Aff<PE>; SLOT_SIZE_MINUS_1]>,
 }
 
-impl<PE: Pairing> AMTParams<PE> {
+impl<PE: Pairing> AmtParams<PE> {
     pub fn new(
         basis: Vec<G1Aff<PE>>,
         quotients: Vec<Vec<G1Aff<PE>>>,
@@ -55,7 +55,7 @@ impl<PE: Pairing> AMTParams<PE> {
     }
 }
 
-impl<PE: Pairing> AMTParams<PE> {
+impl<PE: Pairing> AmtParams<PE> {
     pub fn get_basis_power_at(&self, idx: usize) -> [G1Aff<PE>; SLOT_SIZE] {
         let mut basis_power: [G1Aff<PE>; SLOT_SIZE] = Default::default();
         basis_power[0] = self.basis[idx];
@@ -65,7 +65,7 @@ impl<PE: Pairing> AMTParams<PE> {
     }
 }
 
-impl<PE: Pairing> PartialEq for AMTParams<PE> {
+impl<PE: Pairing> PartialEq for AmtParams<PE> {
     fn eq(&self, other: &Self) -> bool {
         self.basis == other.basis
             && self.quotients == other.quotients
@@ -74,4 +74,4 @@ impl<PE: Pairing> PartialEq for AMTParams<PE> {
     }
 }
 
-impl<PE: Pairing> Eq for AMTParams<PE> {}
+impl<PE: Pairing> Eq for AmtParams<PE> {}

@@ -8,7 +8,7 @@ mod utils;
 
 pub use power_tau::PowerTau;
 pub use proofs::AmtProofError;
-pub use prove_params::AMTParams;
+pub use prove_params::AmtParams;
 pub use utils::ptau_file_name;
 
 #[cfg(not(feature = "bls12-381"))]

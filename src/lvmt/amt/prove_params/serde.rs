@@ -1,13 +1,13 @@
 use super::super::{
     ec_algebra::{CanonicalDeserialize, CanonicalSerialize},
-    AMTParams,
+    AmtParams,
 };
 use ark_ec::pairing::Pairing;
 use ark_serialize::{SerializationError, Valid, Validate};
 
 use super::SLOT_SIZE_MINUS_1;
 
-impl<PE: Pairing> CanonicalDeserialize for AMTParams<PE> {
+impl<PE: Pairing> CanonicalDeserialize for AmtParams<PE> {
     fn deserialize_with_mode<R: ark_serialize::Read>(
         mut reader: R,
         compress: ark_serialize::Compress,
@@ -29,11 +29,11 @@ impl<PE: Pairing> CanonicalDeserialize for AMTParams<PE> {
                     .unwrap_or_else(|_| panic!("Slice length must be {}", SLOT_SIZE_MINUS_1))
             })
             .collect();
-        Ok(AMTParams::new(basis, quotients, vanishes, g2, basis_power))
+        Ok(AmtParams::new(basis, quotients, vanishes, g2, basis_power))
     }
 }
 
-impl<PE: Pairing> Valid for AMTParams<PE> {
+impl<PE: Pairing> Valid for AmtParams<PE> {
     fn check(&self) -> Result<(), SerializationError> {
         Valid::check(&self.basis)?;
         Valid::check(&self.quotients)?;
@@ -56,7 +56,7 @@ impl<PE: Pairing> Valid for AMTParams<PE> {
         Ok(())
     }
 }
-impl<PE: Pairing> ark_serialize::CanonicalSerialize for AMTParams<PE> {
+impl<PE: Pairing> ark_serialize::CanonicalSerialize for AmtParams<PE> {
     fn serialize_with_mode<W: ark_serialize::Write>(
         &self,
         mut writer: W,

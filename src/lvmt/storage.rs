@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 
-use super::amt::{ec_algebra::Pairing, AMTParams};
+use super::amt::{ec_algebra::Pairing, AmtParams};
 use ethereum_types::H256;
 
 use super::{
@@ -36,7 +36,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         new_commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
-        pp: &AMTParams<PE>,
+        pp: &AmtParams<PE>,
     ) -> Result<()>
     where
         <PE as super::amt::ec_algebra::Pairing>::G1Affine:

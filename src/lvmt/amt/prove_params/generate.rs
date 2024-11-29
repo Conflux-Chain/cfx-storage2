@@ -10,7 +10,7 @@ use super::super::{
     prove_params::SLOT_SIZE_MINUS_1,
     utils::{amtp_file_name, index_reverse},
 };
-use super::AMTParams;
+use super::AmtParams;
 
 #[cfg(feature = "bls12-381")]
 use ark_bls12_381::Bls12_381;
@@ -23,7 +23,7 @@ use ark_std::cfg_iter_mut;
 use rayon::prelude::*;
 
 #[cfg(not(feature = "bls12-381"))]
-impl AMTParams<Bn254> {
+impl AmtParams<Bn254> {
     #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth))]
     pub fn from_dir_mont(
         dir: impl AsRef<Path>,
@@ -72,7 +72,7 @@ impl AMTParams<Bn254> {
 }
 
 #[cfg(feature = "bls12-381")]
-impl AMTParams<Bls12_381> {
+impl AmtParams<Bls12_381> {
     #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth))]
     pub fn from_dir_mont(
         dir: impl AsRef<Path>,
@@ -120,7 +120,7 @@ impl AMTParams<Bls12_381> {
     }
 }
 
-impl<PE: Pairing> AMTParams<PE> {
+impl<PE: Pairing> AmtParams<PE> {
     #[instrument(skip_all, name = "load_amt_params", level = 2, parent = None, fields(depth=depth, prove_depth=prove_depth))]
     pub fn from_dir(
         dir: impl AsRef<Path>,

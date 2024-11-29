@@ -2,7 +2,7 @@ use std::{borrow::Borrow, collections::BTreeMap};
 
 use ark_ff::Zero;
 
-use super::amt::{ec_algebra::Pairing, AMTParams};
+use super::amt::{ec_algebra::Pairing, AmtParams};
 
 use super::{
     crypto::G1,
@@ -50,7 +50,7 @@ impl AmtChangeManager {
     pub fn compute_amt_changes<PE: Pairing>(
         &self,
         db: &KeyValueSnapshotRead<'_, AmtNodes>,
-        pp: &AMTParams<PE>,
+        pp: &AmtParams<PE>,
     ) -> Result<Vec<(AmtId, CurvePointWithVersion)>>
     where
         <PE as super::amt::ec_algebra::Pairing>::G1Affine:
@@ -72,7 +72,7 @@ impl AmtChangeManager {
     }
 }
 
-pub fn commitment_diff<PE: Pairing>(change: &AmtChange, pp: &AMTParams<PE>) -> G1
+pub fn commitment_diff<PE: Pairing>(change: &AmtChange, pp: &AmtParams<PE>) -> G1
 where
     <PE as super::amt::ec_algebra::Pairing>::G1Affine:
         Borrow<ark_ec::short_weierstrass::Affine<ark_bls12_381::g1::Config>>,

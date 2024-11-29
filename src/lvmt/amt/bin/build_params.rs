@@ -1,4 +1,4 @@
-use amt::{AMTParams, AMTVerifyParams, PowerTau};
+use amt::{AmtParams, PowerTau};
 use anyhow::{bail, Result};
 use tracing::Level;
 
@@ -39,6 +39,5 @@ fn main() {
     let dir = ptau_dir.unwrap_or("./params/test".into());
     let pp = PowerTau::from_dir(&dir, depth, create_mode);
 
-    AMTParams::from_dir_mont(&dir, depth, verify_depth, true, Some(&pp));
-    AMTVerifyParams::from_dir_mont(&dir, depth, verify_depth);
+    AmtParams::from_dir_mont(&dir, depth, verify_depth, true, Some(&pp));
 }

@@ -4,7 +4,7 @@ use super::super::{
         PrimeField, Read, Write, G2,
     },
     error::Result,
-    AMTParams, PowerTau,
+    AmtParams, PowerTau,
 };
 
 use ark_bn254::Bn254;
@@ -19,7 +19,7 @@ const HEADER: [u8; 4] = *b"bamt";
 const HEADERPWT: [u8; 4] = *b"ptau";
 type PE = Bn254;
 
-pub fn write_amt_params<W: Write>(params: &AMTParams<PE>, mut writer: W) -> Result<()> {
+pub fn write_amt_params<W: Write>(params: &AmtParams<PE>, mut writer: W) -> Result<()> {
     writer.write_all(&HEADER)?;
 
     let degree = ark_std::log2(params.basis.len()) as u8;
@@ -55,7 +55,7 @@ pub fn write_amt_params<W: Write>(params: &AMTParams<PE>, mut writer: W) -> Resu
     Ok(())
 }
 
-pub fn read_amt_params<R: Read>(mut reader: R) -> Result<AMTParams<PE>> {
+pub fn read_amt_params<R: Read>(mut reader: R) -> Result<AmtParams<PE>> {
     let header = <[u8; 4]>::deserialize_uncompressed_unchecked(&mut reader)?;
     if header != HEADER {
         return Err("Incorrect format".into());
@@ -90,11 +90,11 @@ pub fn read_amt_params<R: Read>(mut reader: R) -> Result<AMTParams<PE>> {
     if cfg!(test) {
         assert_eq!(
             basis_power,
-            AMTParams::<PE>::gen_basis_power_by_basis(&basis)
+            AmtParams::<PE>::gen_basis_power_by_basis(&basis)
         );
     }
 
-    Ok(AMTParams::new(basis, quotients, vanishes, g2, basis_power))
+    Ok(AmtParams::new(basis, quotients, vanishes, g2, basis_power))
 }
 
 pub fn write_power_tau<W: Write>(params: &PowerTau<PE>, mut writer: W) -> Result<()> {
