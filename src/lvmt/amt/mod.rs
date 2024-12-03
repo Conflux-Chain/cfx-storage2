@@ -5,6 +5,7 @@ mod power_tau;
 mod proofs;
 mod prove_params;
 mod utils;
+mod ppot2ark;
 
 pub use power_tau::PowerTau;
 pub use proofs::AmtProofError;
