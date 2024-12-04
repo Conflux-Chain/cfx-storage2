@@ -3,7 +3,13 @@ name = "cfx-storage2"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = [
+    "ppot",
+]
+
 [dependencies]
+ppot = { path = "ppot" }
 thiserror = "1"
 auto_impl = "1.2"
 kvdb-rocksdb = "0.19"

@@ -1,0 +1,26 @@
+[package]
+name = "ppot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand = "0.4"
+pairing_ce = { git = "https://github.com/kobigurk/phase2-bn254", rev = "dd6b966"}
+powersoftau = { git = "https://github.com/kobigurk/phase2-bn254", rev = "dd6b966"}
+ff = { package = "ff_ce", version = "0.7", features = ["derive"] }
+memmap = "0.7.0"
+exitcode = "1.1.2"
+byteorder = "1.1.0"
+blake2 = "0.8.1"
+# `blake2:0.8.1` uses `crypto-mac:0.7.0` which uses `generic-array:0.12.3` version. So we cannot update `generic-array` to the latest version.
+generic-array = "0.12.3"
+
+[[bin]]
+name = "compute_constrained_bls"
+test = false
+bench = false
+
+[[bin]]
+name = "new_constrained_bls"
+test = false
+bench = false

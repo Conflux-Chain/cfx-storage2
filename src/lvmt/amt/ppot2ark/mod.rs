@@ -234,7 +234,7 @@ mod tests {
         let target_file = format!("{}/{}", data_path(), ty.file_name(degree));
         dbg!(crate_path());
         dbg!(&target_file);
-        let script = format!("{}/gen_test_ppot.sh", crate_path());
+        let script = format!("{}/dev_support/gen_test_ppot.sh", crate_path());
         dbg!(&script);
 
         if std::fs::metadata(target_file.clone()).is_ok() {
