@@ -1,10 +1,10 @@
 mod adapter;
-// mod adapter_bls;
+mod adapter_bls;
 
 pub use adapter::Adapter;
 
 use super::{ec_algebra::CanonicalSerialize, ptau_file_name};
-pub use pairing_ce::bn256::Bn256;
+
 pub use powersoftau::{
     batched_accumulator::BatchedAccumulator,
     parameters::{CeremonyParams, CheckForCorrectness, UseCompression},
@@ -17,7 +17,16 @@ use std::{
 };
 
 use ark_bn254::Bn254;
+pub use pairing_ce::bn256::Bn256;
 type PowerTau = super::PowerTau<Bn254>;
+type PePpot = Bn256;
+type PeArk = Bn254;
+
+// pub use pairing_ce::bls12_381::Bls12;
+// use ark_bls12_381::Bls12_381;
+// type PowerTau = super::PowerTau<Bls12_381>;
+// type PePpot = Bls12;
+// type PeArk = Bls12_381;
 
 #[derive(Debug, Clone, Copy)]
 pub enum InputType {
@@ -45,7 +54,7 @@ fn from_ppot_file_inner(
     read_from: usize,
     read_size_pow: usize,
     chunk_size_pow: usize,
-    parameters: &CeremonyParams<Bn256>,
+    parameters: &CeremonyParams<PePpot>,
 ) -> Result<PowerTau, String> {
     use ark_std::cfg_iter;
     #[cfg(feature = "parallel")]
@@ -72,7 +81,7 @@ fn from_ppot_file_inner(
             .map_err(|e| format!("unable to create a memory map for input, detail: {}", e))?
     };
 
-    let mut accumulator = BatchedAccumulator::<Bn256>::empty(parameters);
+    let mut accumulator = BatchedAccumulator::<PePpot>::empty(parameters);
     let use_compression = if let InputType::Response = input_type {
         UseCompression::Yes
     } else {
@@ -123,7 +132,7 @@ pub fn from_ppot_file(
     read_size_pow: usize,
     chunk_size_pow: usize,
 ) -> Result<PowerTau, String> {
-    let params = CeremonyParams::<Bn256>::new(file_size_pow, file_size_pow);
+    let params = CeremonyParams::<PePpot>::new(file_size_pow, file_size_pow);
     from_ppot_file_inner(
         input_path,
         input_type,
@@ -154,7 +163,7 @@ pub fn load_save_power_tau(
     )?;
     let path = &*dir
         .as_ref()
-        .join(ptau_file_name::<Bn254>(target_size_pow, false));
+        .join(ptau_file_name::<PeArk>(target_size_pow, false));
     std::fs::create_dir_all(Path::new(path).parent().unwrap()).unwrap();
     let writer = File::create(path).unwrap();
     power_tau.serialize_compressed(writer).unwrap();
@@ -283,8 +292,8 @@ mod tests {
         .unwrap();
         assert_eq!(pot.g1pp.len(), 1 << read_size_pow);
         assert_eq!(
-            Bn254::pairing(pot.g1pp[0], pot.g2pp[4]),
-            Bn254::pairing(pot.g1pp[1], pot.g2pp[3])
+            PeArk::pairing(pot.g1pp[0], pot.g2pp[4]),
+            PeArk::pairing(pot.g1pp[1], pot.g2pp[3])
         );
     }
 
@@ -333,8 +342,8 @@ mod tests {
         println!("powers length: {}", pot.g1pp.len());
         assert_eq!(pot.g1pp.len(), 1 << read_size_pow);
         assert_eq!(
-            Bn254::pairing(pot.g1pp[0], pot.g2pp[4]),
-            Bn254::pairing(pot.g1pp[1], pot.g2pp[3])
+            PeArk::pairing(pot.g1pp[0], pot.g2pp[4]),
+            PeArk::pairing(pot.g1pp[1], pot.g2pp[3])
         );
     }
 }
