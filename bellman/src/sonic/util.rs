@@ -1,7 +1,7 @@
-use crate::SynthesisError;
+use super::srs::SRS;
 use crate::pairing::ff::{Field, PrimeField, PrimeFieldRepr, ScalarEngine};
 use crate::pairing::{CurveAffine, CurveProjective, Engine};
-use super::srs::SRS;
+use crate::SynthesisError;
 
 pub trait ChainExt: Iterator {
     fn chain_ext<U>(self, other: U) -> Chain<Self, U::IntoIter>
@@ -72,88 +72,77 @@ where
     }
 }
 
-pub fn polynomial_commitment<
-        'a,
-        E: Engine,
-        IS: IntoIterator<Item = &'a E::Fr>,
-    >(
-        max: usize,
-        largest_negative_power: usize,
-        largest_positive_power: usize,
-        srs: &'a SRS<E>,
-        s: IS,
-    ) -> E::G1Affine
-    where
-        IS::IntoIter: ExactSizeIterator,
-    {
-        // smallest power is d - max - largest_negative_power; It should either be 0 for use of positive powers only,
-        // of we should use part of the negative powers
-        let d = srs.d;
-        assert!(max >= largest_positive_power);
-        // use both positive and negative powers for commitment
-        if d < max + largest_negative_power + 1 {
-            let min_power = largest_negative_power + max - d;
-            let max_power = d + largest_positive_power - max;
-            // need to use negative powers to make a proper commitment
-            return multiexp(
-                srs.g_negative_x_alpha[0..min_power].iter().rev()
+pub fn polynomial_commitment<'a, E: Engine, IS: IntoIterator<Item = &'a E::Fr>>(
+    max: usize,
+    largest_negative_power: usize,
+    largest_positive_power: usize,
+    srs: &'a SRS<E>,
+    s: IS,
+) -> E::G1Affine
+where
+    IS::IntoIter: ExactSizeIterator,
+{
+    // smallest power is d - max - largest_negative_power; It should either be 0 for use of positive powers only,
+    // of we should use part of the negative powers
+    let d = srs.d;
+    assert!(max >= largest_positive_power);
+    // use both positive and negative powers for commitment
+    if d < max + largest_negative_power + 1 {
+        let min_power = largest_negative_power + max - d;
+        let max_power = d + largest_positive_power - max;
+        // need to use negative powers to make a proper commitment
+        return multiexp(
+            srs.g_negative_x_alpha[0..min_power]
+                .iter()
+                .rev()
                 .chain_ext(srs.g_positive_x_alpha[..max_power].iter()),
-                s
-            ).into_affine();
-        } else {
-            return multiexp(
-                srs.g_positive_x_alpha[(srs.d - max - largest_negative_power - 1)..].iter(),
-                s
-            ).into_affine();
-        }
+            s,
+        )
+        .into_affine();
+    } else {
+        return multiexp(
+            srs.g_positive_x_alpha[(srs.d - max - largest_negative_power - 1)..].iter(),
+            s,
+        )
+        .into_affine();
     }
-
+}
 
 /// For now this function MUST take a polynomial in a form f(x) - f(z)
-pub fn polynomial_commitment_opening<
-        'a,
-        E: Engine,
-        I: IntoIterator<Item = &'a E::Fr>
-    >(
-        largest_negative_power: usize,
-        _largest_positive_power: usize,
-        polynomial_coefficients: I,
-        point: E::Fr,
-        srs: &'a SRS<E>,
-    ) -> E::G1Affine
-        where I::IntoIter: DoubleEndedIterator + ExactSizeIterator,
-    {
-        // let poly = parallel_kate_divison::<E, _>(polynomial_coefficients, point);
+pub fn polynomial_commitment_opening<'a, E: Engine, I: IntoIterator<Item = &'a E::Fr>>(
+    largest_negative_power: usize,
+    _largest_positive_power: usize,
+    polynomial_coefficients: I,
+    point: E::Fr,
+    srs: &'a SRS<E>,
+) -> E::G1Affine
+where
+    I::IntoIter: DoubleEndedIterator + ExactSizeIterator,
+{
+    // let poly = parallel_kate_divison::<E, _>(polynomial_coefficients, point);
 
-        // use std::time::Instant;
-        // let start = Instant::now();
+    // use std::time::Instant;
+    // let start = Instant::now();
 
-        let poly = kate_divison(
-            polynomial_coefficients,
-            point,
-        );
+    let poly = kate_divison(polynomial_coefficients, point);
 
-        // println!("Kate division of size {} taken {:?}", poly.len(), start.elapsed());
+    // println!("Kate division of size {} taken {:?}", poly.len(), start.elapsed());
 
-        let negative_poly = poly[0..largest_negative_power].iter().rev();
-        let positive_poly = poly[largest_negative_power..].iter();
-        multiexp(
-            srs.g_negative_x[1..(negative_poly.len() + 1)].iter().chain_ext(
-                srs.g_positive_x[0..positive_poly.len()].iter()
-            ),
-            negative_poly.chain_ext(positive_poly)
-        ).into_affine()
-    }
+    let negative_poly = poly[0..largest_negative_power].iter().rev();
+    let positive_poly = poly[largest_negative_power..].iter();
+    multiexp(
+        srs.g_negative_x[1..(negative_poly.len() + 1)]
+            .iter()
+            .chain_ext(srs.g_positive_x[0..positive_poly.len()].iter()),
+        negative_poly.chain_ext(positive_poly),
+    )
+    .into_affine()
+}
 
 extern crate crossbeam;
-use self::crossbeam::channel::{unbounded};
+use self::crossbeam::channel::unbounded;
 
-pub fn evaluate_at_consequitive_powers<'a, F: Field> (
-    coeffs: &[F],
-    first_power: F,
-    base: F
-) -> F
-    {
+pub fn evaluate_at_consequitive_powers<'a, F: Field>(coeffs: &[F], first_power: F, base: F) -> F {
     use crate::multicore::Worker;
 
     let (s, r) = unbounded();
@@ -161,11 +150,10 @@ pub fn evaluate_at_consequitive_powers<'a, F: Field> (
     let worker = Worker::new();
 
     worker.scope(coeffs.len(), |scope, chunk| {
-        for (i, coeffs) in coeffs.chunks(chunk).enumerate()
-        {
+        for (i, coeffs) in coeffs.chunks(chunk).enumerate() {
             let s = s.clone();
             scope.spawn(move |_| {
-                let mut current_power = base.pow(&[(i*chunk) as u64]);
+                let mut current_power = base.pow(&[(i * chunk) as u64]);
                 current_power.mul_assign(&first_power);
 
                 let mut acc = F::zero();
@@ -199,12 +187,11 @@ pub fn evaluate_at_consequitive_powers<'a, F: Field> (
     result
 }
 
-pub fn mut_evaluate_at_consequitive_powers<'a, F: Field> (
+pub fn mut_evaluate_at_consequitive_powers<'a, F: Field>(
     coeffs: &mut [F],
     first_power: F,
-    base: F
-) -> F
-    {
+    base: F,
+) -> F {
     use crate::multicore::Worker;
 
     let (s, r) = unbounded();
@@ -212,11 +199,10 @@ pub fn mut_evaluate_at_consequitive_powers<'a, F: Field> (
     let worker = Worker::new();
 
     worker.scope(coeffs.len(), |scope, chunk| {
-        for (i, coeffs) in coeffs.chunks_mut(chunk).enumerate()
-        {
+        for (i, coeffs) in coeffs.chunks_mut(chunk).enumerate() {
             let s = s.clone();
             scope.spawn(move |_| {
-                let mut current_power = base.pow(&[(i*chunk) as u64]);
+                let mut current_power = base.pow(&[(i * chunk) as u64]);
                 current_power.mul_assign(&first_power);
 
                 let mut acc = F::zero();
@@ -251,21 +237,15 @@ pub fn mut_evaluate_at_consequitive_powers<'a, F: Field> (
 
 /// Multiply each coefficient by some power of the base in a form
 /// `first_power * base^{i}`
-pub fn mut_distribute_consequitive_powers<'a, F: Field> (
-    coeffs: &mut [F],
-    first_power: F,
-    base: F
-)
-    {
+pub fn mut_distribute_consequitive_powers<'a, F: Field>(coeffs: &mut [F], first_power: F, base: F) {
     use crate::multicore::Worker;
 
     let worker = Worker::new();
 
     worker.scope(coeffs.len(), |scope, chunk| {
-        for (i, coeffs_chunk) in coeffs.chunks_mut(chunk).enumerate()
-        {
+        for (i, coeffs_chunk) in coeffs.chunks_mut(chunk).enumerate() {
             scope.spawn(move |_| {
-                let mut current_power = base.pow(&[(i*chunk) as u64]);
+                let mut current_power = base.pow(&[(i * chunk) as u64]);
                 current_power.mul_assign(&first_power);
 
                 for p in coeffs_chunk {
@@ -340,30 +320,29 @@ where
     use futures::Future;
     use std::sync::Arc;
 
-    let s: Vec<<G::Scalar as PrimeField>::Repr> = s.into_iter().map(|e| e.into_repr()).collect::<Vec<_>>();
+    let s: Vec<<G::Scalar as PrimeField>::Repr> =
+        s.into_iter().map(|e| e.into_repr()).collect::<Vec<_>>();
     let g: Vec<G> = g.into_iter().map(|e| *e).collect::<Vec<_>>();
 
-    assert_eq!(s.len(), g.len(), "scalars and exponents must have the same length");
+    assert_eq!(
+        s.len(),
+        g.len(),
+        "scalars and exponents must have the same length"
+    );
 
     let pool = Worker::new();
 
     // use std::time::Instant;
     // let start = Instant::now();
 
-    let result = multiexp(
-        &pool,
-        (Arc::new(g), 0),
-        FullDensity,
-        Arc::new(s)
-    ).wait().unwrap();
+    let result = multiexp(&pool, (Arc::new(g), 0), FullDensity, Arc::new(s))
+        .wait()
+        .unwrap();
 
     // println!("Multiexp taken {:?}", start.elapsed());
 
     result
 }
-
-
-
 
 pub fn multiexp_serial<
     'a,
@@ -464,7 +443,10 @@ where
 
 /// Divides polynomial `a` in `x` by `x - b` with
 /// no remainder using fft.
-pub fn parallel_kate_divison<'a, E: Engine, I: IntoIterator<Item = &'a E::Fr>>(a: I, b: E::Fr) -> Vec<E::Fr>
+pub fn parallel_kate_divison<'a, E: Engine, I: IntoIterator<Item = &'a E::Fr>>(
+    a: I,
+    b: E::Fr,
+) -> Vec<E::Fr>
 where
     I::IntoIter: DoubleEndedIterator + ExactSizeIterator,
 {
@@ -495,11 +477,11 @@ where
 }
 
 fn kate_divison_inner<E: Engine>(
-        poly: Vec<E::Fr>, 
-        divisor: Vec<E::Fr>, 
-        reciproical: Vec<E::Fr>, 
-        remainder: E::Fr
-    ) -> (Vec<E::Fr>, Vec<E::Fr>) {
+    poly: Vec<E::Fr>,
+    divisor: Vec<E::Fr>,
+    reciproical: Vec<E::Fr>,
+    remainder: E::Fr,
+) -> (Vec<E::Fr>, Vec<E::Fr>) {
     if poly.len() == 1 {
         return (vec![], poly);
     }
@@ -511,12 +493,12 @@ fn kate_divison_inner<E: Engine>(
     if poly_degree > 2 {
         let mut rec_step = poly.clone();
         mul_polynomial_by_scalar(&mut rec_step[..], remainder);
-        // truncate low order terms 
+        // truncate low order terms
         rec_step.drain(0..2);
         let (q2, _) = kate_divison_inner::<E>(rec_step, divisor.clone(), reciproical, remainder);
         // length of q2 is smaller
         add_polynomials(&mut q[..q2.len()], &q2[..]);
-    }        
+    }
 
     // although r must be zero, calculate it for now
     if q.len() == 0 {
@@ -538,7 +520,7 @@ pub fn check_polynomial_commitment<E: Engine>(
     value: &E::Fr,
     opening: &E::G1Affine,
     max: usize,
-    srs: &SRS<E>
+    srs: &SRS<E>,
 ) -> bool {
     // e(W , hα x )e(g^{v} * W{-z} , hα ) = e(F , h^{x^{−d +max}} )
     if srs.d < max {
@@ -560,16 +542,18 @@ pub fn check_polynomial_commitment<E: Engine>(
     let gv = gv.into_affine().prepare();
 
     E::final_exponentiation(&E::miller_loop(&[
-            (&w, &alpha_x_precomp),
-            (&gv, &alpha_precomp),
-            (&commitment.prepare(), &neg_x_n_minus_d_precomp),
-        ])).unwrap() == E::Fqk::one()
+        (&w, &alpha_x_precomp),
+        (&gv, &alpha_precomp),
+        (&commitment.prepare(), &neg_x_n_minus_d_precomp),
+    ]))
+    .unwrap()
+        == E::Fqk::one()
 }
 
 #[test]
 fn laurent_division() {
+    use crate::pairing::bls12_381::Fr;
     use crate::pairing::ff::PrimeField;
-    use crate::pairing::bls12_381::{Fr};
 
     let mut poly = vec![
         Fr::from_str("328947234").unwrap(),
@@ -630,8 +614,8 @@ fn laurent_division() {
 pub fn multiply_polynomials<E: Engine>(a: Vec<E::Fr>, b: Vec<E::Fr>) -> Vec<E::Fr> {
     let result_len = a.len() + b.len() - 1;
 
-    use crate::multicore::Worker;
     use crate::domain::{EvaluationDomain, Scalar};
+    use crate::multicore::Worker;
 
     let worker = Worker::new();
     let scalars_a: Vec<Scalar<E>> = a.into_iter().map(|e| Scalar::<E>(e)).collect();
@@ -655,12 +639,11 @@ pub fn multiply_polynomials<E: Engine>(a: Vec<E::Fr>, b: Vec<E::Fr>) -> Vec<E::F
     mul_result
 }
 
-
 // alternative implementation that does not require an `Evaluation domain` struct
 pub fn multiply_polynomials_fft<E: Engine>(a: Vec<E::Fr>, b: Vec<E::Fr>) -> Vec<E::Fr> {
-    use crate::multicore::Worker;
     use crate::domain::{best_fft, Scalar};
     use crate::group::Group;
+    use crate::multicore::Worker;
 
     let result_len = a.len() + b.len() - 1;
 
@@ -694,7 +677,10 @@ pub fn multiply_polynomials_fft<E: Engine>(a: Vec<E::Fr>, b: Vec<E::Fr>) -> Vec<
     }
 
     let omegainv = omega.inverse().unwrap();
-    let minv = E::Fr::from_str(&format!("{}", m)).unwrap().inverse().unwrap();
+    let minv = E::Fr::from_str(&format!("{}", m))
+        .unwrap()
+        .inverse()
+        .unwrap();
 
     let worker = Worker::new();
 
@@ -702,7 +688,6 @@ pub fn multiply_polynomials_fft<E: Engine>(a: Vec<E::Fr>, b: Vec<E::Fr>) -> Vec<
     let mut scalars_b: Vec<Scalar<E>> = b.into_iter().map(|e| Scalar::<E>(e)).collect();
     scalars_a.resize(m, Scalar::<E>(E::Fr::zero()));
     scalars_b.resize(m, Scalar::<E>(E::Fr::zero()));
-
 
     best_fft(&mut scalars_a[..], &worker, &omega, exp);
     best_fft(&mut scalars_b[..], &worker, &omega, exp);
@@ -791,37 +776,35 @@ pub fn multiply_polynomials_serial<E: Engine>(mut a: Vec<E::Fr>, mut b: Vec<E::F
 
 // add polynomails in coefficient form
 pub fn add_polynomials<F: Field>(a: &mut [F], b: &[F]) {
-        use crate::multicore::Worker;
-        use crate::domain::{EvaluationDomain, Scalar};
-
-        let worker = Worker::new();
-
-        assert_eq!(a.len(), b.len());
-
-        worker.scope(a.len(), |scope, chunk| {
-            for (a, b) in a.chunks_mut(chunk).zip(b.chunks(chunk))
-            {
-                scope.spawn(move |_| {
-                    for (a, b) in a.iter_mut().zip(b.iter()) {
-                        a.add_assign(b);
-                    }
-                });
-            }
-        });
-}
-
-// subtract polynomails in coefficient form
-pub fn sub_polynomials<F: Field>(a: &mut [F], b: &[F]) {
-    use crate::multicore::Worker;
     use crate::domain::{EvaluationDomain, Scalar};
+    use crate::multicore::Worker;
 
     let worker = Worker::new();
 
     assert_eq!(a.len(), b.len());
 
     worker.scope(a.len(), |scope, chunk| {
-        for (a, b) in a.chunks_mut(chunk).zip(b.chunks(chunk))
-        {
+        for (a, b) in a.chunks_mut(chunk).zip(b.chunks(chunk)) {
+            scope.spawn(move |_| {
+                for (a, b) in a.iter_mut().zip(b.iter()) {
+                    a.add_assign(b);
+                }
+            });
+        }
+    });
+}
+
+// subtract polynomails in coefficient form
+pub fn sub_polynomials<F: Field>(a: &mut [F], b: &[F]) {
+    use crate::domain::{EvaluationDomain, Scalar};
+    use crate::multicore::Worker;
+
+    let worker = Worker::new();
+
+    assert_eq!(a.len(), b.len());
+
+    worker.scope(a.len(), |scope, chunk| {
+        for (a, b) in a.chunks_mut(chunk).zip(b.chunks(chunk)) {
             scope.spawn(move |_| {
                 for (a, b) in a.iter_mut().zip(b.iter()) {
                     a.sub_assign(b);
@@ -833,46 +816,44 @@ pub fn sub_polynomials<F: Field>(a: &mut [F], b: &[F]) {
 
 // multiply coefficients of the polynomial by the scalar
 pub fn mul_polynomial_by_scalar<F: Field>(a: &mut [F], b: F) {
-        use crate::multicore::Worker;
-        use crate::domain::{EvaluationDomain, Scalar};
+    use crate::domain::{EvaluationDomain, Scalar};
+    use crate::multicore::Worker;
 
-        let worker = Worker::new();
+    let worker = Worker::new();
 
-        worker.scope(a.len(), |scope, chunk| {
-            for a in a.chunks_mut(chunk)
-            {
-                scope.spawn(move |_| {
-                    for a in a.iter_mut() {
-                        a.mul_assign(&b);
-                    }
-                });
-            }
-        });
+    worker.scope(a.len(), |scope, chunk| {
+        for a in a.chunks_mut(chunk) {
+            scope.spawn(move |_| {
+                for a in a.iter_mut() {
+                    a.mul_assign(&b);
+                }
+            });
+        }
+    });
 }
 
-// elementwise add coeffs of one polynomial with coeffs of other, that are 
-// first multiplied by a scalar 
+// elementwise add coeffs of one polynomial with coeffs of other, that are
+// first multiplied by a scalar
 pub fn mul_add_polynomials<F: Field>(a: &mut [F], b: &[F], c: F) {
-        use crate::multicore::Worker;
-        use crate::domain::{EvaluationDomain, Scalar};
+    use crate::domain::{EvaluationDomain, Scalar};
+    use crate::multicore::Worker;
 
-        let worker = Worker::new();
+    let worker = Worker::new();
 
-        assert_eq!(a.len(), b.len());
+    assert_eq!(a.len(), b.len());
 
-        worker.scope(a.len(), |scope, chunk| {
-            for (a, b) in a.chunks_mut(chunk).zip(b.chunks(chunk))
-            {
-                scope.spawn(move |_| {
-                    for (a, b) in a.iter_mut().zip(b.iter()) {
-                        let mut r = *b;
-                        r.mul_assign(&c);
+    worker.scope(a.len(), |scope, chunk| {
+        for (a, b) in a.chunks_mut(chunk).zip(b.chunks(chunk)) {
+            scope.spawn(move |_| {
+                for (a, b) in a.iter_mut().zip(b.iter()) {
+                    let mut r = *b;
+                    r.mul_assign(&c);
 
-                        a.add_assign(&r);
-                    }
-                });
-            }
-        });
+                    a.add_assign(&r);
+                }
+            });
+        }
+    });
 }
 
 fn serial_fft<E: Engine>(a: &mut [E::Fr], omega: &E::Fr, log_n: u32) {
@@ -934,9 +915,9 @@ impl<T> OptionExt<T> for Option<T> {
 
 #[test]
 fn test_mul() {
-    use rand::{self, Rand};
     use crate::pairing::bls12_381::Bls12;
     use crate::pairing::bls12_381::Fr;
+    use rand::{self, Rand};
 
     const SAMPLES: usize = 100;
 
@@ -953,9 +934,9 @@ fn test_mul() {
 
 #[test]
 fn test_eval_at_powers() {
-    use rand::{self, Rand, Rng};
     use crate::pairing::bls12_381::Bls12;
     use crate::pairing::bls12_381::Fr;
+    use rand::{self, Rand, Rng};
 
     const SAMPLES: usize = 100000;
 
@@ -985,9 +966,9 @@ fn test_eval_at_powers() {
 
 #[test]
 fn test_mut_eval_at_powers() {
-    use rand::{self, Rand, Rng};
     use crate::pairing::bls12_381::Bls12;
     use crate::pairing::bls12_381::Fr;
+    use rand::{self, Rand, Rng};
 
     const SAMPLES: usize = 100000;
 
@@ -1018,9 +999,9 @@ fn test_mut_eval_at_powers() {
 
 #[test]
 fn test_mut_distribute_powers() {
-    use rand::{self, Rand, Rng};
     use crate::pairing::bls12_381::Bls12;
     use crate::pairing::bls12_381::Fr;
+    use rand::{self, Rand, Rng};
 
     const SAMPLES: usize = 100000;
 
@@ -1045,11 +1026,10 @@ fn test_mut_distribute_powers() {
     assert!(a == b);
 }
 
-
 #[test]
 fn test_trivial_parallel_kate_division() {
-    use crate::pairing::ff::PrimeField;
     use crate::pairing::bls12_381::{Bls12, Fr};
+    use crate::pairing::ff::PrimeField;
 
     let mut minus_one = Fr::one();
     minus_one.negate();
@@ -1072,8 +1052,8 @@ fn test_trivial_parallel_kate_division() {
 
 #[test]
 fn test_less_trivial_parallel_kate_division() {
-    use crate::pairing::ff::PrimeField;
     use crate::pairing::bls12_381::{Bls12, Fr};
+    use crate::pairing::ff::PrimeField;
 
     let z = Fr::one();
 
@@ -1094,7 +1074,7 @@ fn test_less_trivial_parallel_kate_division() {
             acc.add_assign(&t);
             tmp.mul_assign(&point);
         }
-    
+
         acc
     }
 
@@ -1110,11 +1090,10 @@ fn test_less_trivial_parallel_kate_division() {
     assert_eq!(quotient_poly, parallel_q_poly);
 }
 
-
 #[test]
 fn test_parallel_kate_division() {
-    use crate::pairing::ff::PrimeField;
     use crate::pairing::bls12_381::{Bls12, Fr};
+    use crate::pairing::ff::PrimeField;
 
     let mut poly = vec![
         Fr::from_str("328947234").unwrap(),

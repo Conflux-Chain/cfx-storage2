@@ -2,10 +2,10 @@ mod deferred_verification;
 pub mod ec_algebra;
 mod error;
 mod power_tau;
+mod ppot2ark;
 mod proofs;
 mod prove_params;
 mod utils;
-mod ppot2ark;
 
 pub use power_tau::PowerTau;
 pub use proofs::AmtProofError;

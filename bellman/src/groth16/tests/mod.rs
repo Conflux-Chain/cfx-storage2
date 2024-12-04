@@ -1,29 +1,15 @@
-use crate::pairing::{
-    Engine
-};
+use crate::pairing::Engine;
 
-use crate::pairing::ff:: {
-    Field,
-    PrimeField,
-};
+use crate::pairing::ff::{Field, PrimeField};
 
 use super::super::tests::dummy_engine::*;
 use super::super::tests::XORDemo;
 
 use std::marker::PhantomData;
 
-use crate::{
-    Circuit,
-    ConstraintSystem,
-    SynthesisError
-};
+use crate::{Circuit, ConstraintSystem, SynthesisError};
 
-use super::{
-    generate_parameters,
-    prepare_verifying_key,
-    create_proof,
-    verify_proof
-};
+use super::{create_proof, generate_parameters, prepare_verifying_key, verify_proof};
 
 #[test]
 fn test_xordemo() {
@@ -39,19 +25,10 @@ fn test_xordemo() {
         let c = XORDemo::<DummyEngine> {
             a: None,
             b: None,
-            _marker: PhantomData
+            _marker: PhantomData,
         };
 
-        generate_parameters(
-            c,
-            g1,
-            g2,
-            alpha,
-            beta,
-            gamma,
-            delta,
-            tau
-        ).unwrap()
+        generate_parameters(c, g1, g2, alpha, beta, gamma, delta, tau).unwrap()
     };
 
     // This will synthesize the constraint system:
@@ -159,32 +136,35 @@ fn test_xordemo() {
     59158
     */
 
-    let u_i = [59158, 48317, 21767, 10402].iter().map(|e| {
-        Fr::from_str(&format!("{}", e)).unwrap()
-    }).collect::<Vec<Fr>>();
-    let v_i = [0, 0, 60619, 30791].iter().map(|e| {
-        Fr::from_str(&format!("{}", e)).unwrap()
-    }).collect::<Vec<Fr>>();
-    let w_i = [0, 23320, 41193, 41193].iter().map(|e| {
-        Fr::from_str(&format!("{}", e)).unwrap()
-    }).collect::<Vec<Fr>>();
+    let u_i = [59158, 48317, 21767, 10402]
+        .iter()
+        .map(|e| Fr::from_str(&format!("{}", e)).unwrap())
+        .collect::<Vec<Fr>>();
+    let v_i = [0, 0, 60619, 30791]
+        .iter()
+        .map(|e| Fr::from_str(&format!("{}", e)).unwrap())
+        .collect::<Vec<Fr>>();
+    let w_i = [0, 23320, 41193, 41193]
+        .iter()
+        .map(|e| Fr::from_str(&format!("{}", e)).unwrap())
+        .collect::<Vec<Fr>>();
 
-    for (u, a) in u_i.iter()
-                     .zip(&params.a[..])
-    {
+    for (u, a) in u_i.iter().zip(&params.a[..]) {
         assert_eq!(u, a);
     }
 
-    for (v, b) in v_i.iter()
-                     .filter(|&&e| e != Fr::zero())
-                     .zip(&params.b_g1[..])
+    for (v, b) in v_i
+        .iter()
+        .filter(|&&e| e != Fr::zero())
+        .zip(&params.b_g1[..])
     {
         assert_eq!(v, b);
     }
 
-    for (v, b) in v_i.iter()
-                     .filter(|&&e| e != Fr::zero())
-                     .zip(&params.b_g2[..])
+    for (v, b) in v_i
+        .iter()
+        .filter(|&&e| e != Fr::zero())
+        .zip(&params.b_g2[..])
     {
         assert_eq!(v, b);
     }
@@ -229,15 +209,10 @@ fn test_xordemo() {
         let c = XORDemo {
             a: Some(true),
             b: Some(false),
-            _marker: PhantomData
+            _marker: PhantomData,
         };
 
-        create_proof(
-            c,
-            &params,
-            r,
-            s
-        ).unwrap()
+        create_proof(c, &params, r, s).unwrap()
     };
 
     // A(x) =
@@ -253,7 +228,7 @@ fn test_xordemo() {
         expected_a.add_assign(&u_i[0]); // a_0 = 1
         expected_a.add_assign(&u_i[1]); // a_1 = 1
         expected_a.add_assign(&u_i[2]); // a_2 = 1
-        // a_3 = 0
+                                        // a_3 = 0
         assert_eq!(proof.a, expected_a);
     }
 
@@ -270,7 +245,7 @@ fn test_xordemo() {
         expected_b.add_assign(&v_i[0]); // a_0 = 1
         expected_b.add_assign(&v_i[1]); // a_1 = 1
         expected_b.add_assign(&v_i[2]); // a_2 = 1
-        // a_3 = 0
+                                        // a_3 = 0
         assert_eq!(proof.b, expected_b);
     }
 
@@ -311,7 +286,10 @@ fn test_xordemo() {
         expected_c.add_assign(&params.l[0]);
 
         // H query answer
-        for (i, coeff) in [5040, 11763, 10755, 63633, 128, 9747, 8739].iter().enumerate() {
+        for (i, coeff) in [5040, 11763, 10755, 63633, 128, 9747, 8739]
+            .iter()
+            .enumerate()
+        {
             let coeff = Fr::from_str(&format!("{}", coeff)).unwrap();
 
             let mut tmp = params.h[i];
@@ -322,9 +300,5 @@ fn test_xordemo() {
         assert_eq!(expected_c, proof.c);
     }
 
-    assert!(verify_proof(
-        &pvk,
-        &proof,
-        &[Fr::one()]
-    ).unwrap());
+    assert!(verify_proof(&pvk, &proof, &[Fr::one()]).unwrap());
 }

@@ -33,7 +33,6 @@ impl Rand for Fq6 {
 // BN256 (v^3 - ξ) where ξ = u + 9
 
 impl Fq6 {
-
     /// Multiply by cubic nonresidue v.
     pub fn mul_by_nonresidue(&mut self) {
         use std::mem::swap;

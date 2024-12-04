@@ -30,7 +30,6 @@ pub const B_COEFF_FQ2: Fq2 = Fq2 {
     ])),
 };
 
-
 // The generators of G1/G2
 
 // Generator of G1
@@ -50,11 +49,11 @@ pub const G1_GENERATOR_Y: Fq = Fq(FqRepr([
 ]));
 
 // Generator of G2
-// 
-// x = 11559732032986387107991004021392285783925812861821192530917403151452391805634*u 
+//
+// x = 11559732032986387107991004021392285783925812861821192530917403151452391805634*u
 //     + 10857046999023057135944570762232829481370756359578518086990519993285655852781
 //
-// y = 4082367875863433681332203403145435568316851327593401208105741076214120093531*u 
+// y = 4082367875863433681332203403145435568316851327593401208105741076214120093531*u
 //     + 8495653923123431417604973247489272438418190587263600148770280649306958101930
 
 pub const G2_GENERATOR_X_C0: Fq = Fq(FqRepr([
@@ -82,7 +81,6 @@ pub const G2_GENERATOR_Y_C1: Fq = Fq(FqRepr([
     0x0da4a0e693fd6482,
 ]));
 
-
 // Coefficients for the Frobenius automorphism.
 pub const FROBENIUS_COEFF_FQ2_C1: [Fq; 2] = [
     // Fq(-1)**(((q^0) - 1) / 2)
@@ -102,18 +100,18 @@ pub const FROBENIUS_COEFF_FQ2_C1: [Fq; 2] = [
     ])),
 ];
 
- // Fq2(u + 9)**(((q^1) - 1) / 2)
+// Fq2(u + 9)**(((q^1) - 1) / 2)
 pub const XI_TO_Q_MINUS_1_OVER_2: Fq2 = Fq2 {
     c0: Fq(FqRepr([
-        0xe4bbdd0c2936b629, 
-        0xbb30f162e133bacb, 
-        0x31a9d1b6f9645366, 
+        0xe4bbdd0c2936b629,
+        0xbb30f162e133bacb,
+        0x31a9d1b6f9645366,
         0x253570bea500f8dd,
     ])),
     c1: Fq(FqRepr([
-        0xa1d77ce45ffe77c7, 
-        0x07affd117826d1db, 
-        0x6d16bd27bb7edc6b, 
+        0xa1d77ce45ffe77c7,
+        0x07affd117826d1db,
+        0x6d16bd27bb7edc6b,
         0x2c87200285defecc,
     ])),
 };
@@ -137,11 +135,11 @@ pub const FROBENIUS_COEFF_FQ6_C1: [Fq2; 6] = [
             0x347f91c8a9aa6454,
             0x7a007127242e0991,
             0x1956bcd8118214ec,
-            ])),
+        ])),
         c1: Fq(FqRepr([
-            0x6e849f1ea0aa4757, 
-            0xaa1c7b6d89f89141, 
-            0xb6e713cdfae0ca3a, 
+            0x6e849f1ea0aa4757,
+            0xaa1c7b6d89f89141,
+            0xb6e713cdfae0ca3a,
             0x26694fbb4e82ebc3,
         ])),
     },
@@ -179,7 +177,7 @@ pub const FROBENIUS_COEFF_FQ6_C1: [Fq2; 6] = [
             0xaa303344d4741444,
             0x2c3b3f0d26594943,
         ])),
-        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0,])),
+        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0])),
     },
     // Fq2(u + 9)**(((q^5) - 1) / 3)
     Fq2 {
@@ -232,7 +230,7 @@ pub const FROBENIUS_COEFF_FQ6_C2: [Fq2; 6] = [
             0xaa303344d4741444,
             0x2c3b3f0d26594943,
         ])),
-        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0,])),
+        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0])),
     },
     // Fq2(u + 1)**(((2q^3) - 2) / 3)
     Fq2 {
@@ -257,7 +255,7 @@ pub const FROBENIUS_COEFF_FQ6_C2: [Fq2; 6] = [
             0x6001b4b8b615564a,
             0x2682e617020217e0,
         ])),
-        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0,])),
+        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0])),
     },
     // Fq2(u + 1)**(((2q^5) - 2) / 3)
     Fq2 {
@@ -336,7 +334,7 @@ pub const FROBENIUS_COEFF_FQ12_C1: [Fq2; 12] = [
             0x6001b4b8b615564a,
             0x2682e617020217e0,
         ])),
-        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0,])),
+        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0])),
     },
     // Fq2(u + 1)**(((q^5) - 1) / 6)
     Fq2 {
@@ -361,7 +359,7 @@ pub const FROBENIUS_COEFF_FQ12_C1: [Fq2; 12] = [
             0x51e1a24709081231,
             0x2259d6b14729c0fa,
         ])),
-        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0,])),
+        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0])),
     },
     // Fq2(u + 1)**(((q^7) - 1) / 6)
     Fq2 {
@@ -386,7 +384,7 @@ pub const FROBENIUS_COEFF_FQ12_C1: [Fq2; 12] = [
             0xaa303344d4741444,
             0x2c3b3f0d26594943,
         ])),
-        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0,])),
+        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0])),
     },
     // Fq2(u + 1)**(((q^9) - 1) / 6)
     Fq2 {
@@ -411,7 +409,7 @@ pub const FROBENIUS_COEFF_FQ12_C1: [Fq2; 12] = [
             0x584e90fdcb6c0213,
             0x09e1685bdf2f8849,
         ])),
-        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0,])),
+        c1: Fq(FqRepr([0x0, 0x0, 0x0, 0x0])),
     },
     // Fq2(u + 1)**(((q^11) - 1) / 6)
     Fq2 {
@@ -480,22 +478,20 @@ fn test_fq_is_valid() {
     a.0.sub_noborrow(&FqRepr::from(1));
     assert!(a.is_valid());
     assert!(Fq(FqRepr::from(0)).is_valid());
-    assert!(
-        Fq(FqRepr([
-            0xdf4671abd14dab3e,
-            0xe2dc0c9f534fbd33,
-            0x31ca6c880cc444a6,
-            0x257a67e70ef33359
-        ])).is_valid()
-    );
-    assert!(
-        !Fq(FqRepr([
-            0xffffffffffffffff,
-            0xffffffffffffffff,
-            0xffffffffffffffff,
-            0xffffffffffffffff,
-        ])).is_valid()
-    );
+    assert!(Fq(FqRepr([
+        0xdf4671abd14dab3e,
+        0xe2dc0c9f534fbd33,
+        0x31ca6c880cc444a6,
+        0x257a67e70ef33359
+    ]))
+    .is_valid());
+    assert!(!Fq(FqRepr([
+        0xffffffffffffffff,
+        0xffffffffffffffff,
+        0xffffffffffffffff,
+        0xffffffffffffffff,
+    ]))
+    .is_valid());
 
     let mut rng = XorShiftRng::from_seed([0x5dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
@@ -564,7 +560,7 @@ fn test_fq_sqrt_2() {
     print!("x = {}\n", x);
     if let Some(y) = x.sqrt() {
         print!("y = {}\n", y);
-            let mut y_other = y;
+        let mut y_other = y;
         y_other.negate();
         print!("y' = {}\n", y_other);
     }

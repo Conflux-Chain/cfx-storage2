@@ -5,8 +5,8 @@ use powersoftau::{
     utils::calculate_hash,
 };
 
-use pairing_ce::bn256::Bn256;
 use memmap::*;
+use pairing_ce::bn256::Bn256;
 use std::fs::OpenOptions;
 
 use std::io::{Read, Write};

@@ -4,8 +4,8 @@ extern crate futures;
 
 use std::marker::PhantomData;
 
-use self::futures::{Future, IntoFuture, Poll};
 use self::futures::future::{result, FutureResult};
+use self::futures::{Future, IntoFuture, Poll};
 
 #[derive(Clone)]
 pub struct Worker {
@@ -17,9 +17,7 @@ impl Worker {
     // all `Worker` instances have the same number of
     // CPUs configured.
     pub(crate) fn new_with_cpus(_cpus: usize) -> Worker {
-        Worker {
-            cpus: 1,
-        }
+        Worker { cpus: 1 }
     }
 
     pub fn new() -> Worker {
@@ -30,33 +28,29 @@ impl Worker {
         0u32
     }
 
-    pub fn compute<F, R>(
-        &self, f: F
-    ) -> WorkerFuture<R::Item, R::Error>
-        where F: FnOnce() -> R + Send + 'static,
-              R: IntoFuture + 'static,
-              R::Future: Send + 'static,
-              R::Item: Send + 'static,
-              R::Error: Send + 'static
+    pub fn compute<F, R>(&self, f: F) -> WorkerFuture<R::Item, R::Error>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: IntoFuture + 'static,
+        R::Future: Send + 'static,
+        R::Item: Send + 'static,
+        R::Error: Send + 'static,
     {
         let future = f().into_future();
 
         WorkerFuture {
-            future: result(future.wait())
+            future: result(future.wait()),
         }
     }
 
-    pub fn scope<'a, F, R>(
-        &self,
-        elements: usize,
-        f: F
-    ) -> R
-        where F: FnOnce(&Scope<'a>, usize) -> R
+    pub fn scope<'a, F, R>(&self, elements: usize, f: F) -> R
+    where
+        F: FnOnce(&Scope<'a>, usize) -> R,
     {
         let chunk_size = elements;
 
-        let scope = Scope{
-            _marker: PhantomData
+        let scope = Scope {
+            _marker: PhantomData,
         };
 
         f(&scope, chunk_size)
@@ -64,30 +58,27 @@ impl Worker {
 }
 #[derive(Clone)]
 pub struct Scope<'a> {
-    _marker: PhantomData<& 'a usize>
+    _marker: PhantomData<&'a usize>,
 }
 
 impl<'a> Scope<'a> {
-    pub fn spawn<F, R>(
-        &self,
-        f: F
-    ) -> R
-        where F: FnOnce(&Scope<'a>) -> R
+    pub fn spawn<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&Scope<'a>) -> R,
     {
         f(&self)
     }
 }
 
 pub struct WorkerFuture<T, E> {
-    future: FutureResult<T, E>
+    future: FutureResult<T, E>,
 }
 
 impl<T: Send + 'static, E: Send + 'static> Future for WorkerFuture<T, E> {
     type Item = T;
     type Error = E;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error>
-    {
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.future.poll()
     }
 }

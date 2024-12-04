@@ -10,22 +10,14 @@
 //! This allows us to perform polynomial operations in O(n)
 //! by performing an O(n log n) FFT over such a domain.
 
-use crate::pairing::{
-    Engine,
-    CurveProjective
-};
+use crate::pairing::{CurveProjective, Engine};
 
-use crate::pairing::ff::{
-    Field, 
-    PrimeField
-};
+use crate::pairing::ff::{Field, PrimeField};
 
-use super::{
-    SynthesisError
-};
+use super::SynthesisError;
 
-use super::worker::Worker;
 pub use super::group::*;
+use super::worker::Worker;
 
 pub struct EvaluationDomain<E: Engine, G: Group<E>> {
     coeffs: Vec<G>,
@@ -33,7 +25,7 @@ pub struct EvaluationDomain<E: Engine, G: Group<E>> {
     omega: E::Fr,
     omegainv: E::Fr,
     geninv: E::Fr,
-    minv: E::Fr
+    minv: E::Fr,
 }
 
 impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
@@ -49,8 +41,7 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
         self.coeffs
     }
 
-    pub fn from_coeffs(mut coeffs: Vec<G>) -> Result<EvaluationDomain<E, G>, SynthesisError>
-    {
+    pub fn from_coeffs(mut coeffs: Vec<G>) -> Result<EvaluationDomain<E, G>, SynthesisError> {
         use crate::pairing::ff::PrimeField;
         // Compute the size of our evaluation domain
 
@@ -64,7 +55,7 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
         let max_degree = (1 << E::Fr::S) - 1;
 
         if coeffs_len > max_degree {
-            return Err(SynthesisError::PolynomialDegreeTooLarge)
+            return Err(SynthesisError::PolynomialDegreeTooLarge);
         }
 
         while m < coeffs_len {
@@ -74,7 +65,7 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
             // The pairing-friendly curve may not be able to support
             // large enough (radix2) evaluation domains.
             if exp > E::Fr::S {
-                return Err(SynthesisError::PolynomialDegreeTooLarge)
+                return Err(SynthesisError::PolynomialDegreeTooLarge);
             }
         }
 
@@ -94,13 +85,18 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
             omega: omega,
             omegainv: omega.inverse().unwrap(),
             geninv: E::Fr::multiplicative_generator().inverse().unwrap(),
-            minv: E::Fr::from_str(&format!("{}", m)).unwrap().inverse().unwrap()
+            minv: E::Fr::from_str(&format!("{}", m))
+                .unwrap()
+                .inverse()
+                .unwrap(),
         })
     }
 
     // this one does expect coefficients to be smaller than `num_roots_of_unity/2` as we expect multiplication
-    pub fn from_coeffs_into_sized(mut coeffs: Vec<G>, size: usize) -> Result<EvaluationDomain<E, G>, SynthesisError>
-    {
+    pub fn from_coeffs_into_sized(
+        mut coeffs: Vec<G>,
+        size: usize,
+    ) -> Result<EvaluationDomain<E, G>, SynthesisError> {
         use crate::pairing::ff::PrimeField;
         // Compute the size of our evaluation domain
 
@@ -116,7 +112,7 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
         let max_degree = (1 << E::Fr::S) - 1;
 
         if coeffs_len > max_degree {
-            return Err(SynthesisError::PolynomialDegreeTooLarge)
+            return Err(SynthesisError::PolynomialDegreeTooLarge);
         }
 
         while m < coeffs_len {
@@ -126,7 +122,7 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
             // The pairing-friendly curve may not be able to support
             // large enough (radix2) evaluation domains.
             if exp > E::Fr::S {
-                return Err(SynthesisError::PolynomialDegreeTooLarge)
+                return Err(SynthesisError::PolynomialDegreeTooLarge);
             }
         }
 
@@ -146,18 +142,18 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
             omega: omega,
             omegainv: omega.inverse().unwrap(),
             geninv: E::Fr::multiplicative_generator().inverse().unwrap(),
-            minv: E::Fr::from_str(&format!("{}", m)).unwrap().inverse().unwrap()
+            minv: E::Fr::from_str(&format!("{}", m))
+                .unwrap()
+                .inverse()
+                .unwrap(),
         })
     }
 
-
-    pub fn fft(&mut self, worker: &Worker)
-    {
+    pub fn fft(&mut self, worker: &Worker) {
         best_fft(&mut self.coeffs, worker, &self.omega, self.exp);
     }
 
-    pub fn ifft(&mut self, worker: &Worker)
-    {
+    pub fn ifft(&mut self, worker: &Worker) {
         best_fft(&mut self.coeffs, worker, &self.omegainv, self.exp);
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
@@ -173,8 +169,7 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
         });
     }
 
-    pub fn distribute_powers(&mut self, worker: &Worker, g: E::Fr)
-    {
+    pub fn distribute_powers(&mut self, worker: &Worker, g: E::Fr) {
         worker.scope(self.coeffs.len(), |scope, chunk| {
             for (i, v) in self.coeffs.chunks_mut(chunk).enumerate() {
                 scope.spawn(move |_| {
@@ -188,14 +183,12 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
         });
     }
 
-    pub fn coset_fft(&mut self, worker: &Worker)
-    {
+    pub fn coset_fft(&mut self, worker: &Worker) {
         self.distribute_powers(worker, E::Fr::multiplicative_generator());
         self.fft(worker);
     }
 
-    pub fn icoset_fft(&mut self, worker: &Worker)
-    {
+    pub fn icoset_fft(&mut self, worker: &Worker) {
         let geninv = self.geninv;
 
         self.ifft(worker);
@@ -214,9 +207,11 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
     /// The target polynomial is the zero polynomial in our
     /// evaluation domain, so we must perform division over
     /// a coset.
-    pub fn divide_by_z_on_coset(&mut self, worker: &Worker)
-    {
-        let i = self.z(&E::Fr::multiplicative_generator()).inverse().unwrap();
+    pub fn divide_by_z_on_coset(&mut self, worker: &Worker) {
+        let i = self
+            .z(&E::Fr::multiplicative_generator())
+            .inverse()
+            .unwrap();
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
             for v in self.coeffs.chunks_mut(chunk) {
@@ -234,7 +229,11 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self
+                .coeffs
+                .chunks_mut(chunk)
+                .zip(other.coeffs.chunks(chunk))
+            {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         a.group_mul_assign(&b.0);
@@ -249,7 +248,11 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
         assert_eq!(self.coeffs.len(), other.coeffs.len());
 
         worker.scope(self.coeffs.len(), |scope, chunk| {
-            for (a, b) in self.coeffs.chunks_mut(chunk).zip(other.coeffs.chunks(chunk)) {
+            for (a, b) in self
+                .coeffs
+                .chunks_mut(chunk)
+                .zip(other.coeffs.chunks(chunk))
+            {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
                         a.group_sub_assign(&b);
@@ -260,8 +263,12 @@ impl<E: Engine, G: Group<E>> EvaluationDomain<E, G> {
     }
 }
 
-pub(crate) fn best_fft<E: Engine, T: Group<E>>(a: &mut [T], worker: &Worker, omega: &E::Fr, log_n: u32)
-{
+pub(crate) fn best_fft<E: Engine, T: Group<E>>(
+    a: &mut [T],
+    worker: &Worker,
+    omega: &E::Fr,
+    log_n: u32,
+) {
     let log_cpus = worker.log_num_cpus();
 
     if log_n <= log_cpus {
@@ -271,8 +278,7 @@ pub(crate) fn best_fft<E: Engine, T: Group<E>>(a: &mut [T], worker: &Worker, ome
     }
 }
 
-pub(crate) fn serial_fft<E: Engine, T: Group<E>>(a: &mut [T], omega: &E::Fr, log_n: u32)
-{
+pub(crate) fn serial_fft<E: Engine, T: Group<E>>(a: &mut [T], omega: &E::Fr, log_n: u32) {
     fn bitreverse(mut n: u32, l: u32) -> u32 {
         let mut r = 0;
         for _ in 0..l {
@@ -294,22 +300,22 @@ pub(crate) fn serial_fft<E: Engine, T: Group<E>>(a: &mut [T], omega: &E::Fr, log
 
     let mut m = 1;
     for _ in 0..log_n {
-        let w_m = omega.pow(&[(n / (2*m)) as u64]);
+        let w_m = omega.pow(&[(n / (2 * m)) as u64]);
 
         let mut k = 0;
         while k < n {
             let mut w = E::Fr::one();
             for j in 0..m {
-                let mut t = a[(k+j+m) as usize];
+                let mut t = a[(k + j + m) as usize];
                 t.group_mul_assign(&w);
-                let mut tmp = a[(k+j) as usize];
+                let mut tmp = a[(k + j) as usize];
                 tmp.group_sub_assign(&t);
-                a[(k+j+m) as usize] = tmp;
-                a[(k+j) as usize].group_add_assign(&t);
+                a[(k + j + m) as usize] = tmp;
+                a[(k + j) as usize].group_add_assign(&t);
                 w.mul_assign(&w_m);
             }
 
-            k += 2*m;
+            k += 2 * m;
         }
 
         m *= 2;
@@ -321,9 +327,8 @@ pub(crate) fn parallel_fft<E: Engine, T: Group<E>>(
     worker: &Worker,
     omega: &E::Fr,
     log_n: u32,
-    log_cpus: u32
-)
-{
+    log_cpus: u32,
+) {
     assert!(log_n >= log_cpus);
 
     let num_cpus = 1 << log_cpus;
@@ -382,14 +387,17 @@ fn polynomial_arith() {
     use crate::pairing::bls12_381::Bls12;
     use rand::{self, Rand};
 
-    fn test_mul<E: Engine, R: rand::Rng>(rng: &mut R)
-    {
+    fn test_mul<E: Engine, R: rand::Rng>(rng: &mut R) {
         let worker = Worker::new();
 
         for coeffs_a in 0..70 {
             for coeffs_b in 0..70 {
-                let mut a: Vec<_> = (0..coeffs_a).map(|_| Scalar::<E>(E::Fr::rand(rng))).collect();
-                let mut b: Vec<_> = (0..coeffs_b).map(|_| Scalar::<E>(E::Fr::rand(rng))).collect();
+                let mut a: Vec<_> = (0..coeffs_a)
+                    .map(|_| Scalar::<E>(E::Fr::rand(rng)))
+                    .collect();
+                let mut b: Vec<_> = (0..coeffs_b)
+                    .map(|_| Scalar::<E>(E::Fr::rand(rng)))
+                    .collect();
 
                 // naive evaluation
                 let mut naive = vec![Scalar(E::Fr::zero()); coeffs_a + coeffs_b];
@@ -429,8 +437,7 @@ fn fft_composition() {
     use crate::pairing::bls12_381::Bls12;
     use rand;
 
-    fn test_comp<E: Engine, R: rand::Rng>(rng: &mut R)
-    {
+    fn test_comp<E: Engine, R: rand::Rng>(rng: &mut R) {
         let worker = Worker::new();
 
         for coeffs in 0..10 {
@@ -468,19 +475,20 @@ fn parallel_fft_consistency() {
     use rand::{self, Rand};
     use std::cmp::min;
 
-    fn test_consistency<E: Engine, R: rand::Rng>(rng: &mut R)
-    {
+    fn test_consistency<E: Engine, R: rand::Rng>(rng: &mut R) {
         let worker = Worker::new();
 
         for _ in 0..5 {
             for log_d in 0..10 {
                 let d = 1 << log_d;
 
-                let v1 = (0..d).map(|_| Scalar::<E>(E::Fr::rand(rng))).collect::<Vec<_>>();
+                let v1 = (0..d)
+                    .map(|_| Scalar::<E>(E::Fr::rand(rng)))
+                    .collect::<Vec<_>>();
                 let mut v1 = EvaluationDomain::from_coeffs(v1).unwrap();
                 let mut v2 = EvaluationDomain::from_coeffs(v1.coeffs.clone()).unwrap();
 
-                for log_cpus in log_d..min(log_d+1, 3) {
+                for log_cpus in log_d..min(log_d + 1, 3) {
                     parallel_fft(&mut v1.coeffs, &worker, &v1.omega, log_d, log_cpus);
                     serial_fft(&mut v2.coeffs, &v2.omega, log_d);
 
@@ -497,17 +505,21 @@ fn parallel_fft_consistency() {
 
 #[test]
 fn test_field_element_multiplication_bn256() {
-    use rand::{self, Rand};
     use crate::pairing::bn256::Bn256;
     use crate::pairing::bn256::Fr;
     use num_cpus;
+    use rand::{self, Rand};
 
     let cpus = num_cpus::get();
     const SAMPLES: usize = 1 << 22;
 
     let rng = &mut rand::thread_rng();
-    let v1 = (0..SAMPLES).map(|_| Scalar::<Bn256>(Fr::rand(rng))).collect::<Vec<_>>();
-    let v2 = (0..SAMPLES).map(|_| Scalar::<Bn256>(Fr::rand(rng))).collect::<Vec<_>>();
+    let v1 = (0..SAMPLES)
+        .map(|_| Scalar::<Bn256>(Fr::rand(rng)))
+        .collect::<Vec<_>>();
+    let v2 = (0..SAMPLES)
+        .map(|_| Scalar::<Bn256>(Fr::rand(rng)))
+        .collect::<Vec<_>>();
 
     let mut v1 = EvaluationDomain::from_coeffs(v1).unwrap();
     let v2 = EvaluationDomain::from_coeffs(v2).unwrap();
@@ -520,22 +532,27 @@ fn test_field_element_multiplication_bn256() {
 
     let duration_ns = start.elapsed().as_nanos() as f64;
     println!("Elapsed {} ns for {} samples", duration_ns, SAMPLES);
-    let time_per_sample = duration_ns/(SAMPLES as f64);
-    println!("Tested on {} samples on {} CPUs with {} ns per field element multiplication", SAMPLES, cpus, time_per_sample);
+    let time_per_sample = duration_ns / (SAMPLES as f64);
+    println!(
+        "Tested on {} samples on {} CPUs with {} ns per field element multiplication",
+        SAMPLES, cpus, time_per_sample
+    );
 }
 
 #[test]
 fn test_fft_bn256() {
-    use rand::{self, Rand};
     use crate::pairing::bn256::Bn256;
     use crate::pairing::bn256::Fr;
     use num_cpus;
+    use rand::{self, Rand};
 
     let cpus = num_cpus::get();
     const SAMPLES: usize = 1 << 27;
 
     let rng = &mut rand::thread_rng();
-    let v1 = (0..SAMPLES).map(|_| Scalar::<Bn256>(Fr::rand(rng))).collect::<Vec<_>>();
+    let v1 = (0..SAMPLES)
+        .map(|_| Scalar::<Bn256>(Fr::rand(rng)))
+        .collect::<Vec<_>>();
 
     let mut v1 = EvaluationDomain::from_coeffs(v1).unwrap();
 
@@ -547,6 +564,9 @@ fn test_fft_bn256() {
 
     let duration_ns = start.elapsed().as_nanos() as f64;
     println!("Elapsed {} ns for {} samples", duration_ns, SAMPLES);
-    let time_per_sample = duration_ns/(SAMPLES as f64);
-    println!("Tested on {} samples on {} CPUs with {} ns per field element multiplication", SAMPLES, cpus, time_per_sample);
+    let time_per_sample = duration_ns / (SAMPLES as f64);
+    println!(
+        "Tested on {} samples on {} CPUs with {} ns per field element multiplication",
+        SAMPLES, cpus, time_per_sample
+    );
 }

@@ -4,8 +4,8 @@ use powersoftau::batched_accumulator::BatchedAccumulator;
 use powersoftau::parameters::UseCompression;
 use powersoftau::utils::{blank_hash, calculate_hash};
 
-use pairing_ce::bn256::Bn256;
 use memmap::*;
+use pairing_ce::bn256::Bn256;
 use std::fs::OpenOptions;
 use std::io::Write;
 

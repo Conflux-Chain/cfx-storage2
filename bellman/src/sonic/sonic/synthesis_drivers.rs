@@ -1,24 +1,29 @@
-use std::marker::PhantomData;
+use crate::pairing::Engine;
 use crate::sonic::cs::{Backend, SynthesisDriver};
-use crate::pairing::{Engine};
-use crate::sonic::cs::{Variable, Circuit, ConstraintSystem, LinearCombination};
+use crate::sonic::cs::{Circuit, ConstraintSystem, LinearCombination, Variable};
 use crate::SynthesisError;
+use std::marker::PhantomData;
 
-use crate::pairing::ff::{Field};
+use crate::pairing::ff::Field;
 
-use super::constraint_systems::{NonassigningSynthesizer, Synthesizer, PermutationSynthesizer};
+use super::constraint_systems::{NonassigningSynthesizer, PermutationSynthesizer, Synthesizer};
 
 pub struct Basic;
 
 impl SynthesisDriver for Basic {
-    fn synthesize<E: Engine, C: Circuit<E>, B: Backend<E>>(backend: B, circuit: &C) -> Result<(), SynthesisError> {
+    fn synthesize<E: Engine, C: Circuit<E>, B: Backend<E>>(
+        backend: B,
+        circuit: &C,
+    ) -> Result<(), SynthesisError> {
         let mut tmp: Synthesizer<E, B> = Synthesizer::new(backend);
 
-        let one = tmp.alloc_input(|| Ok(E::Fr::one())).expect("should have no issues");
+        let one = tmp
+            .alloc_input(|| Ok(E::Fr::one()))
+            .expect("should have no issues");
 
         match (one, <Synthesizer<E, B> as ConstraintSystem<E>>::ONE) {
-            (Variable::A(1), Variable::A(1)) => {},
-            _ => panic!("one variable is incorrect")
+            (Variable::A(1), Variable::A(1)) => {}
+            _ => panic!("one variable is incorrect"),
         }
 
         circuit.synthesize(&mut tmp)?;
@@ -30,14 +35,22 @@ impl SynthesisDriver for Basic {
 pub struct Nonassigning;
 
 impl SynthesisDriver for Nonassigning {
-    fn synthesize<E: Engine, C: Circuit<E>, B: Backend<E>>(backend: B, circuit: &C) -> Result<(), SynthesisError> {
+    fn synthesize<E: Engine, C: Circuit<E>, B: Backend<E>>(
+        backend: B,
+        circuit: &C,
+    ) -> Result<(), SynthesisError> {
         let mut tmp: NonassigningSynthesizer<E, B> = NonassigningSynthesizer::new(backend);
 
-        let one = tmp.alloc_input(|| Ok(E::Fr::one())).expect("should have no issues");
+        let one = tmp
+            .alloc_input(|| Ok(E::Fr::one()))
+            .expect("should have no issues");
 
-        match (one, <NonassigningSynthesizer<E, B> as ConstraintSystem<E>>::ONE) {
-            (Variable::A(1), Variable::A(1)) => {},
-            _ => panic!("one variable is incorrect")
+        match (
+            one,
+            <NonassigningSynthesizer<E, B> as ConstraintSystem<E>>::ONE,
+        ) {
+            (Variable::A(1), Variable::A(1)) => {}
+            _ => panic!("one variable is incorrect"),
         }
 
         circuit.synthesize(&mut tmp)?;
@@ -109,14 +122,22 @@ the order we create linear combinations for the ephemeral variables.
 pub struct Permutation3;
 
 impl SynthesisDriver for Permutation3 {
-    fn synthesize<E: Engine, C: Circuit<E>, B: Backend<E>>(backend: B, circuit: &C) -> Result<(), SynthesisError> {
+    fn synthesize<E: Engine, C: Circuit<E>, B: Backend<E>>(
+        backend: B,
+        circuit: &C,
+    ) -> Result<(), SynthesisError> {
         let mut tmp: PermutationSynthesizer<E, B> = PermutationSynthesizer::new(backend);
 
-        let one = tmp.alloc_input(|| Ok(E::Fr::one())).expect("should have no issues");
+        let one = tmp
+            .alloc_input(|| Ok(E::Fr::one()))
+            .expect("should have no issues");
 
-        match (one, <PermutationSynthesizer<E, B> as ConstraintSystem<E>>::ONE) {
-            (Variable::A(1), Variable::A(1)) => {},
-            _ => panic!("one variable is incorrect")
+        match (
+            one,
+            <PermutationSynthesizer<E, B> as ConstraintSystem<E>>::ONE,
+        ) {
+            (Variable::A(1), Variable::A(1)) => {}
+            _ => panic!("one variable is incorrect"),
         }
 
         circuit.synthesize(&mut tmp)?;

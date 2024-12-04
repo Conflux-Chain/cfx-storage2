@@ -1,19 +1,11 @@
-use crate::pairing::{
-    CurveAffine,
-    CurveProjective,
-    Engine
-};
+use crate::pairing::{CurveAffine, CurveProjective, Engine};
 
-use crate::pairing::ff::{
-    PrimeField,
-    Field,
-    PrimeFieldRepr,
-    ScalarEngine};
+use crate::pairing::ff::{Field, PrimeField, PrimeFieldRepr, ScalarEngine};
 
-use std::sync::Arc;
-use std::io;
 use bit_vec::{self, BitVec};
+use std::io;
 use std::iter;
+use std::sync::Arc;
 
 use super::SynthesisError;
 
@@ -27,7 +19,10 @@ pub trait SourceBuilder<G: CurveAffine>: Send + Sync + 'static + Clone {
 /// A source of bases, like an iterator.
 pub trait Source<G: CurveAffine> {
     /// Parses the element from the source. Fails if the point is at infinity.
-    fn add_assign_mixed(&mut self, to: &mut <G as CurveAffine>::Projective) -> Result<(), SynthesisError>;
+    fn add_assign_mixed(
+        &mut self,
+        to: &mut <G as CurveAffine>::Projective,
+    ) -> Result<(), SynthesisError>;
 
     /// Skips `amt` elements from the source, avoiding deserialization.
     fn skip(&mut self, amt: usize) -> Result<(), SynthesisError>;
@@ -42,13 +37,20 @@ impl<G: CurveAffine> SourceBuilder<G> for (Arc<Vec<G>>, usize) {
 }
 
 impl<G: CurveAffine> Source<G> for (Arc<Vec<G>>, usize) {
-    fn add_assign_mixed(&mut self, to: &mut <G as CurveAffine>::Projective) -> Result<(), SynthesisError> {
+    fn add_assign_mixed(
+        &mut self,
+        to: &mut <G as CurveAffine>::Projective,
+    ) -> Result<(), SynthesisError> {
         if self.0.len() <= self.1 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "expected more bases when adding from source").into());
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "expected more bases when adding from source",
+            )
+            .into());
         }
 
         if self.0[self.1].is_zero() {
-            return Err(SynthesisError::UnexpectedIdentity)
+            return Err(SynthesisError::UnexpectedIdentity);
         }
 
         to.add_assign_mixed(&self.0[self.1]);
@@ -60,7 +62,11 @@ impl<G: CurveAffine> Source<G> for (Arc<Vec<G>>, usize) {
 
     fn skip(&mut self, amt: usize) -> Result<(), SynthesisError> {
         if self.0.len() <= self.1 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "expected more bases skipping from source").into());
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "expected more bases skipping from source",
+            )
+            .into());
         }
 
         self.1 += amt;
@@ -71,7 +77,7 @@ impl<G: CurveAffine> Source<G> for (Arc<Vec<G>>, usize) {
 
 pub trait QueryDensity {
     /// Returns whether the base exists.
-    type Iter: Iterator<Item=bool>;
+    type Iter: Iterator<Item = bool>;
 
     fn iter(self) -> Self::Iter;
     fn get_query_size(self) -> Option<usize>;
@@ -101,7 +107,7 @@ impl<'a> QueryDensity for &'a FullDensity {
 #[derive(Clone)]
 pub struct DensityTracker {
     bv: BitVec,
-    total_density: usize
+    total_density: usize,
 }
 
 impl<'a> QueryDensity for &'a DensityTracker {
@@ -120,7 +126,7 @@ impl DensityTracker {
     pub fn new() -> DensityTracker {
         DensityTracker {
             bv: BitVec::new(),
-            total_density: 0
+            total_density: 0,
         }
     }
 

@@ -53,16 +53,16 @@ impl Fq12 {
     // // multiply by (c0, c1, c2) + (c3, c4, c5)*w where only c0, c3 and c4 are non-zero
     pub fn mul_by_034(&mut self, c0: &Fq2, c3: &Fq2, c4: &Fq2) {
         self.mul_assign(&Fq12 {
-                c0: Fq6 {
-                    c0: *c0,
-                    c1: Fq2::zero(),
-                    c2: Fq2::zero(),
-                },
-                c1: Fq6 {
-                    c0: *c3,
-                    c1: *c4,
-                    c2: Fq2::zero(),
-                },
+            c0: Fq6 {
+                c0: *c0,
+                c1: Fq2::zero(),
+                c2: Fq2::zero(),
+            },
+            c1: Fq6 {
+                c0: *c3,
+                c1: *c4,
+                c2: Fq2::zero(),
+            },
         });
     }
 }

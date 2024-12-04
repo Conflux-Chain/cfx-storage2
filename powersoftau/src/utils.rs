@@ -266,7 +266,8 @@ fn dense_multiexp_inner<G: CurveAffine>(
                     (*guard).add_assign(&acc);
                 });
             }
-        }).unwrap();
+        })
+        .unwrap();
 
         let this_region = Arc::try_unwrap(arc).unwrap();
 

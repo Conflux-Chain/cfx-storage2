@@ -1,17 +1,17 @@
 use crate::pairing::ff::{Field, PrimeField};
-use crate::pairing::{Engine, CurveProjective};
+use crate::pairing::{CurveProjective, Engine};
 
 // this one is for all external interfaces
 // use crate::{LinearCombination, ConstraintSystem, Circuit, Variable};
 
 use crate::SynthesisError;
 
-use crate::sonic::srs::SRS;
-use crate::sonic::cs::LinearCombination as SonicLinearCombination;
 use crate::sonic::cs::Circuit as SonicCircuit;
-use crate::sonic::cs::ConstraintSystem as SonicConstraintSystem;
-use crate::sonic::cs::Variable as SonicVariable;
 use crate::sonic::cs::Coeff;
+use crate::sonic::cs::ConstraintSystem as SonicConstraintSystem;
+use crate::sonic::cs::LinearCombination as SonicLinearCombination;
+use crate::sonic::cs::Variable as SonicVariable;
+use crate::sonic::srs::SRS;
 use std::marker::PhantomData;
 
 pub struct Adaptor<'a, E: Engine, CS: SonicConstraintSystem<E> + 'a> {
@@ -35,9 +35,10 @@ impl<'a, E: Engine, CS: SonicConstraintSystem<E> + 'a> crate::ConstraintSystem<E
         A: FnOnce() -> AR,
         AR: Into<String>,
     {
-        let var = self.cs.alloc(|| {
-            f().map_err(|_| crate::SynthesisError::AssignmentMissing)
-        }).map_err(|_| crate::SynthesisError::AssignmentMissing)?;
+        let var = self
+            .cs
+            .alloc(|| f().map_err(|_| crate::SynthesisError::AssignmentMissing))
+            .map_err(|_| crate::SynthesisError::AssignmentMissing)?;
 
         Ok(match var {
             SonicVariable::A(index) => crate::Variable::new_unchecked(crate::Index::Input(index)),
@@ -56,9 +57,10 @@ impl<'a, E: Engine, CS: SonicConstraintSystem<E> + 'a> crate::ConstraintSystem<E
         A: FnOnce() -> AR,
         AR: Into<String>,
     {
-        let var = self.cs.alloc_input(|| {
-            f().map_err(|_| crate::SynthesisError::AssignmentMissing)
-        }).map_err(|_| crate::SynthesisError::AssignmentMissing)?;
+        let var = self
+            .cs
+            .alloc_input(|| f().map_err(|_| crate::SynthesisError::AssignmentMissing))
+            .map_err(|_| crate::SynthesisError::AssignmentMissing)?;
 
         Ok(match var {
             SonicVariable::A(index) => crate::Variable::new_unchecked(crate::Index::Input(index)),

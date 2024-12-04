@@ -2,14 +2,12 @@
 use std::marker::PhantomData;
 
 use ark_ec::AffineRepr;
-use pairing_ce::CurveAffine;
 use ff::PrimeField;
+use pairing_ce::CurveAffine;
 use std::fmt::{Debug, Display};
 
 mod ppot {
-    pub use pairing_ce::bn256::{
-        Fq, Fq2, FqRepr, Fr, FrRepr, G1Affine, G2Affine,
-    };
+    pub use pairing_ce::bn256::{Fq, Fq2, FqRepr, Fr, FrRepr, G1Affine, G2Affine};
 }
 
 mod ark {
@@ -28,38 +26,31 @@ mod ark {
 }
 
 pub trait Adapter {
-    type Output: Debug
-        + PartialEq
-        + Sized
-        + Eq
-        + Copy
-        + Clone
-        + Send
-        + Sync
-        + Display;
+    type Output: Debug + PartialEq + Sized + Eq + Copy + Clone + Send + Sync + Display;
     fn adapt(self) -> Self::Output;
 }
 
 impl Adapter for ppot::FqRepr {
     type Output = ark::FqRepr;
 
-    fn adapt(self) -> Self::Output { ark::BigInt(self.0) }
+    fn adapt(self) -> Self::Output {
+        ark::BigInt(self.0)
+    }
 }
 
 impl Adapter for ppot::FrRepr {
     type Output = ark::FrRepr;
 
-    fn adapt(self) -> Self::Output { ark::BigInt(self.0) }
+    fn adapt(self) -> Self::Output {
+        ark::BigInt(self.0)
+    }
 }
 
 impl Adapter for ppot::Fq {
     type Output = ark::Fq;
 
     fn adapt(self) -> Self::Output {
-        ark::Fp::<ark::FqParameters, 4>(
-            self.into_raw_repr().adapt(),
-            PhantomData,
-        )
+        ark::Fp::<ark::FqParameters, 4>(self.into_raw_repr().adapt(), PhantomData)
     }
 }
 
@@ -67,10 +58,7 @@ impl Adapter for ppot::Fr {
     type Output = ark::Fr;
 
     fn adapt(self) -> Self::Output {
-        ark::Fp::<ark::FrParameters, 4>(
-            self.into_raw_repr().adapt(),
-            PhantomData,
-        )
+        ark::Fp::<ark::FrParameters, 4>(self.into_raw_repr().adapt(), PhantomData)
     }
 }
 

@@ -36,12 +36,7 @@ use std::fmt;
 /// of prime order `r`, and are equipped with a bilinear pairing function.
 pub trait Engine: ScalarEngine {
     /// The projective representation of an element in G1.
-    type G1: CurveProjective<
-            Engine = Self,
-            Base = Self::Fq,
-            Scalar = Self::Fr,
-            Affine = Self::G1Affine,
-        >
+    type G1: CurveProjective<Engine = Self, Base = Self::Fq, Scalar = Self::Fr, Affine = Self::G1Affine>
         + From<Self::G1Affine>;
 
     /// The affine representation of an element in G1.
@@ -52,16 +47,11 @@ pub trait Engine: ScalarEngine {
             Projective = Self::G1,
             Pair = Self::G2Affine,
             PairingResult = Self::Fqk,
-        >
-        + From<Self::G1> + RawEncodable;
+        > + From<Self::G1>
+        + RawEncodable;
 
     /// The projective representation of an element in G2.
-    type G2: CurveProjective<
-            Engine = Self,
-            Base = Self::Fqe,
-            Scalar = Self::Fr,
-            Affine = Self::G2Affine,
-        >
+    type G2: CurveProjective<Engine = Self, Base = Self::Fqe, Scalar = Self::Fr, Affine = Self::G2Affine>
         + From<Self::G2Affine>;
 
     /// The affine representation of an element in G2.
@@ -72,8 +62,7 @@ pub trait Engine: ScalarEngine {
             Projective = Self::G2,
             Pair = Self::G1Affine,
             PairingResult = Self::Fqk,
-        >
-        + From<Self::G2>;
+        > + From<Self::G2>;
 
     /// The base field that hosts G1.
     type Fq: PrimeField + SqrtField;
@@ -105,7 +94,8 @@ pub trait Engine: ScalarEngine {
     {
         Self::final_exponentiation(&Self::miller_loop(
             [(&(p.into().prepare()), &(q.into().prepare()))].iter(),
-        )).unwrap()
+        ))
+        .unwrap()
     }
 }
 
@@ -239,10 +229,16 @@ pub trait RawEncodable: CurveAffine {
     fn into_raw_uncompressed_le(&self) -> Self::Uncompressed;
 
     /// Creates a point from raw encoded coordinates without checking on curve
-    fn from_raw_uncompressed_le_unchecked(encoded: &Self::Uncompressed, infinity: bool) -> Result<Self, GroupDecodingError>;
+    fn from_raw_uncompressed_le_unchecked(
+        encoded: &Self::Uncompressed,
+        infinity: bool,
+    ) -> Result<Self, GroupDecodingError>;
 
     /// Creates a point from raw encoded coordinates
-    fn from_raw_uncompressed_le(encoded: &Self::Uncompressed, infinity: bool) -> Result<Self, GroupDecodingError>;
+    fn from_raw_uncompressed_le(
+        encoded: &Self::Uncompressed,
+        infinity: bool,
+    ) -> Result<Self, GroupDecodingError>;
 }
 
 /// An encoded elliptic curve point, which should essentially wrap a `[u8; N]`.

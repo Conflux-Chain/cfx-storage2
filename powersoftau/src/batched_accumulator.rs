@@ -980,7 +980,8 @@ impl<'a, E: Engine> BatchedAccumulator<'a, E> {
                     }
                 });
             }
-        }).unwrap();
+        })
+        .unwrap();
 
         // extra check that during the decompression all the the initially initialized infinitu points
         // were replaced with something
@@ -1159,7 +1160,8 @@ impl<'a, E: Engine> BatchedAccumulator<'a, E> {
                         }
                     });
                 }
-            }).unwrap();
+            })
+            .unwrap();
 
             // Perform batch normalization
             crossbeam::scope(|scope| {
@@ -1168,7 +1170,8 @@ impl<'a, E: Engine> BatchedAccumulator<'a, E> {
                         C::Projective::batch_normalization(projective);
                     });
                 }
-            }).unwrap();
+            })
+            .unwrap();
 
             // Turn it all back into affine points
             for (projective, affine) in projective.iter().zip(bases.iter_mut()) {
@@ -1213,7 +1216,8 @@ impl<'a, E: Engine> BatchedAccumulator<'a, E> {
                             }
                         });
                     }
-                }).unwrap();
+                })
+                .unwrap();
 
                 batch_exp::<E, _>(&mut accumulator.tau_powers_g1, &taupowers[0..], None);
                 batch_exp::<E, _>(&mut accumulator.tau_powers_g2, &taupowers[0..], None);
@@ -1275,7 +1279,8 @@ impl<'a, E: Engine> BatchedAccumulator<'a, E> {
                             }
                         });
                     }
-                }).unwrap();
+                })
+                .unwrap();
 
                 batch_exp::<E, _>(&mut accumulator.tau_powers_g1, &taupowers[0..], None);
                 //accumulator.beta_g2 = accumulator.beta_g2.mul(key.beta).into_affine();

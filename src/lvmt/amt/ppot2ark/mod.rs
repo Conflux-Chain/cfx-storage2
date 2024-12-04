@@ -39,8 +39,12 @@ impl InputType {
 }
 
 fn from_ppot_file_inner(
-    input_path: &str, input_type: InputType, file_size: usize,
-    read_from: usize, read_size_pow: usize, chunk_size_pow: usize,
+    input_path: &str,
+    input_type: InputType,
+    file_size: usize,
+    read_from: usize,
+    read_size_pow: usize,
+    chunk_size_pow: usize,
     parameters: &CeremonyParams<Bn256>,
 ) -> Result<PowerTau, String> {
     use ark_std::cfg_iter;
@@ -55,8 +59,7 @@ fn from_ppot_file_inner(
         return Err("too long to read".into());
     }
 
-    let input_filename =
-        format!("{}/{}", input_path, input_type.file_name(file_size));
+    let input_filename = format!("{}/{}", input_path, input_type.file_name(file_size));
 
     let reader = OpenOptions::new()
         .read(true)
@@ -64,9 +67,9 @@ fn from_ppot_file_inner(
         .map_err(|e| format!("Cannot open {}: {:?}", input_filename, e))?;
 
     let input_map = unsafe {
-        MmapOptions::new().map(&reader).map_err(|e| {
-            format!("unable to create a memory map for input, detail: {}", e)
-        })?
+        MmapOptions::new()
+            .map(&reader)
+            .map_err(|e| format!("unable to create a memory map for input, detail: {}", e))?
     };
 
     let mut accumulator = BatchedAccumulator::<Bn256>::empty(parameters);
@@ -94,29 +97,31 @@ fn from_ppot_file_inner(
             )
             .map_err(|e| format!("failed to read chunk, detail: {}", e))?;
 
-        let next_g1_chunk: Vec<_> =
-            cfg_iter!(accumulator.tau_powers_g1[..current_chunk_size])
-                .map(|tau| tau.adapt())
-                .collect();
+        let next_g1_chunk: Vec<_> = cfg_iter!(accumulator.tau_powers_g1[..current_chunk_size])
+            .map(|tau| tau.adapt())
+            .collect();
         g1.extend(next_g1_chunk);
 
-        let next_g2_chunk: Vec<_> =
-            cfg_iter!(accumulator.tau_powers_g2[..current_chunk_size])
-                .map(|tau| tau.adapt())
-                .collect();
+        let next_g2_chunk: Vec<_> = cfg_iter!(accumulator.tau_powers_g2[..current_chunk_size])
+            .map(|tau| tau.adapt())
+            .collect();
         g2.extend(next_g2_chunk);
 
         read_offset += current_chunk_size;
         remaining_size -= current_chunk_size;
     }
 
-    Ok(PowerTau {g1pp: g1, g2pp: g2})
+    Ok(PowerTau { g1pp: g1, g2pp: g2 })
 }
 
 #[instrument(skip_all, level=3, fields(file_size_pow=file_size_pow, target_size_pow=read_size_pow, read_from=read_from))]
 pub fn from_ppot_file(
-    input_path: &str, input_type: InputType, file_size_pow: usize,
-    read_from: usize, read_size_pow: usize, chunk_size_pow: usize,
+    input_path: &str,
+    input_type: InputType,
+    file_size_pow: usize,
+    read_from: usize,
+    read_size_pow: usize,
+    chunk_size_pow: usize,
 ) -> Result<PowerTau, String> {
     let params = CeremonyParams::<Bn256>::new(file_size_pow, file_size_pow);
     from_ppot_file_inner(
@@ -131,8 +136,12 @@ pub fn from_ppot_file(
 }
 
 pub fn load_save_power_tau(
-    input_path: &str, input_type: InputType, file_size_pow: usize,
-    target_size_pow: usize, high_read_size_pow: usize, chunk_size_pow: usize,
+    input_path: &str,
+    input_type: InputType,
+    file_size_pow: usize,
+    target_size_pow: usize,
+    high_read_size_pow: usize,
+    chunk_size_pow: usize,
     dir: impl AsRef<Path>,
 ) -> Result<(), String> {
     let power_tau = from_ppot_file(
@@ -190,14 +199,13 @@ fn main() {
         .with_target(false)
         .init();
 
-    let (file_size_pow, target_size_pow, challenge_path, output_path) =
-        match parse_param() {
-            Ok(x) => x,
-            Err(e) => {
-                eprintln!("Cannot parse input: {:?}", e);
-                std::process::exit(1);
-            }
-        };
+    let (file_size_pow, target_size_pow, challenge_path, output_path) = match parse_param() {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("Cannot parse input: {:?}", e);
+            std::process::exit(1);
+        }
+    };
     let high_read_size_pow = file_size_pow;
 
     let input_path = challenge_path;
@@ -224,12 +232,14 @@ fn crate_path() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
     pub use ark_ec::pairing::Pairing;
+    use std::process::Command;
 
     use super::*;
 
-    fn data_path() -> String { format!("{}/data", crate_path()) }
+    fn data_path() -> String {
+        format!("{}/data", crate_path())
+    }
 
     fn prepare_test_file(ty: InputType, degree: usize) {
         let target_file = format!("{}/{}", data_path(), ty.file_name(degree));

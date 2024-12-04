@@ -1,9 +1,9 @@
 use crate::pairing::ff::{Field, PrimeField};
 use crate::pairing::{CurveAffine, CurveProjective, Engine, Wnaf};
 
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{self, Read, Write};
 use std::sync::Arc;
-use byteorder::{BigEndian, WriteBytesExt, ReadBytesExt};
 
 #[derive(Clone, Eq)]
 pub struct SRS<E: Engine> {
@@ -36,15 +36,15 @@ pub struct SRS<E: Engine> {
 
 impl<E: Engine> PartialEq for SRS<E> {
     fn eq(&self, other: &SRS<E>) -> bool {
-        self.d == other.d &&
-        self.g_negative_x == other.g_negative_x &&
-        self.g_positive_x == other.g_positive_x &&
-        self.h_negative_x == other.h_negative_x &&
-        self.h_positive_x == other.h_positive_x &&
-        self.g_negative_x_alpha == other.g_negative_x_alpha &&
-        self.g_positive_x_alpha == other.g_positive_x_alpha &&
-        self.h_negative_x_alpha == other.h_negative_x_alpha &&
-        self.h_positive_x_alpha == other.h_positive_x_alpha
+        self.d == other.d
+            && self.g_negative_x == other.g_negative_x
+            && self.g_positive_x == other.g_positive_x
+            && self.h_negative_x == other.h_negative_x
+            && self.h_positive_x == other.h_positive_x
+            && self.g_negative_x_alpha == other.g_negative_x_alpha
+            && self.g_positive_x_alpha == other.g_positive_x_alpha
+            && self.h_negative_x_alpha == other.h_negative_x_alpha
+            && self.h_positive_x_alpha == other.h_positive_x_alpha
     }
 }
 
@@ -114,11 +114,7 @@ impl<E: Engine> SRS<E> {
 }
 
 impl<E: Engine> SRS<E> {
-    pub fn write<W: Write>(
-        &self,
-        mut writer: W
-    ) -> io::Result<()>
-    {
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         assert_eq!(self.d + 1, self.g_negative_x.len());
         assert_eq!(self.d + 1, self.g_positive_x.len());
 
@@ -164,11 +160,7 @@ impl<E: Engine> SRS<E> {
         Ok(())
     }
 
-    pub fn read<R: Read>(
-        mut reader: R,
-        checked: bool
-    ) -> io::Result<Self>
-    {
+    pub fn read<R: Read>(mut reader: R, checked: bool) -> io::Result<Self> {
         use crate::pairing::EncodedPoint;
 
         let read_g1 = |reader: &mut R| -> io::Result<E::G1Affine> {
@@ -176,17 +168,20 @@ impl<E: Engine> SRS<E> {
             reader.read_exact(repr.as_mut())?;
 
             if checked {
-                repr
-                .into_affine()
+                repr.into_affine()
             } else {
-                repr
-                .into_affine_unchecked()
+                repr.into_affine_unchecked()
             }
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-            .and_then(|e| if e.is_zero() {
-                Err(io::Error::new(io::ErrorKind::InvalidData, "point at infinity"))
-            } else {
-                Ok(e)
+            .and_then(|e| {
+                if e.is_zero() {
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "point at infinity",
+                    ))
+                } else {
+                    Ok(e)
+                }
             })
         };
 
@@ -195,17 +190,20 @@ impl<E: Engine> SRS<E> {
             reader.read_exact(repr.as_mut())?;
 
             if checked {
-                repr
-                .into_affine()
+                repr.into_affine()
             } else {
-                repr
-                .into_affine_unchecked()
+                repr.into_affine_unchecked()
             }
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-            .and_then(|e| if e.is_zero() {
-                Err(io::Error::new(io::ErrorKind::InvalidData, "point at infinity"))
-            } else {
-                Ok(e)
+            .and_then(|e| {
+                if e.is_zero() {
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "point at infinity",
+                    ))
+                } else {
+                    Ok(e)
+                }
             })
         };
 
@@ -224,19 +222,19 @@ impl<E: Engine> SRS<E> {
         let d = reader.read_u32::<BigEndian>()? as usize;
 
         {
-            for _ in 0..(d+1) {
+            for _ in 0..(d + 1) {
                 g_negative_x.push(read_g1(&mut reader)?);
             }
-            for _ in 0..(d+1) {
+            for _ in 0..(d + 1) {
                 g_positive_x.push(read_g1(&mut reader)?);
             }
         }
-        
+
         {
-            for _ in 0..(d+1) {
+            for _ in 0..(d + 1) {
                 h_negative_x.push(read_g2(&mut reader)?);
             }
-            for _ in 0..(d+1) {
+            for _ in 0..(d + 1) {
                 h_positive_x.push(read_g2(&mut reader)?);
             }
         }
@@ -251,14 +249,14 @@ impl<E: Engine> SRS<E> {
         }
 
         {
-            for _ in 0..(d+1) {
+            for _ in 0..(d + 1) {
                 h_negative_x_alpha.push(read_g2(&mut reader)?);
             }
-            for _ in 0..(d+1) {
+            for _ in 0..(d + 1) {
                 h_positive_x_alpha.push(read_g2(&mut reader)?);
             }
         }
-        
+
         Ok(Self {
             d: d,
             g_negative_x: g_negative_x,
@@ -268,7 +266,7 @@ impl<E: Engine> SRS<E> {
             g_negative_x_alpha: g_negative_x_alpha,
             g_positive_x_alpha: g_positive_x_alpha,
             h_negative_x_alpha: h_negative_x_alpha,
-            h_positive_x_alpha: h_positive_x_alpha
+            h_positive_x_alpha: h_positive_x_alpha,
         })
     }
 }

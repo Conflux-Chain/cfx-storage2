@@ -1,12 +1,11 @@
 #![allow(unused_imports)]
 #![allow(unused_macros)]
 #[macro_use]
-
 extern crate cfg_if;
-pub extern crate pairing;
-extern crate rand;
 extern crate bit_vec;
 extern crate byteorder;
+pub extern crate pairing;
+extern crate rand;
 
 #[macro_use]
 mod log;
@@ -20,8 +19,8 @@ pub mod gm17;
 pub mod sonic;
 
 mod group;
-mod source;
 mod multiexp;
+mod source;
 
 #[cfg(test)]
 mod tests;
@@ -46,8 +45,8 @@ cfg_if! {
 mod cs;
 pub use self::cs::*;
 
-use std::str::FromStr;
 use std::env;
+use std::str::FromStr;
 
 fn verbose_flag() -> bool {
     option_env!("BELLMAN_VERBOSE").unwrap_or("0") == "1"
