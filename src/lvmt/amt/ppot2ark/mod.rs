@@ -1,5 +1,5 @@
 mod adapter;
-mod adapter_bls;
+// mod adapter_bls;
 
 pub use adapter::Adapter;
 
@@ -69,7 +69,7 @@ fn from_ppot_file_inner(
         })?
     };
 
-    let mut accumulator = BatchedAccumulator::empty(parameters);
+    let mut accumulator = BatchedAccumulator::<Bn256>::empty(parameters);
     let use_compression = if let InputType::Response = input_type {
         UseCompression::Yes
     } else {
