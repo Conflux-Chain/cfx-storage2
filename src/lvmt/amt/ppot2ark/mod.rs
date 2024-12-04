@@ -1,4 +1,5 @@
 mod adapter;
+mod adapter_bls;
 
 pub use adapter::Adapter;
 
