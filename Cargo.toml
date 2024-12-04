@@ -78,3 +78,8 @@ bls12-381 = []
 name = "build_params"
 test = false
 bench = false
+
+[[bin]]
+name = "get_pp_from_ppot"
+test = false
+bench = false

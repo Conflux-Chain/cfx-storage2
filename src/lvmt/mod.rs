@@ -6,4 +6,4 @@ mod storage;
 pub mod table_schema;
 pub mod types;
 
-pub use amt::{AmtParams, CreateMode, PowerTau};
+pub use amt::{AmtParams, CreateMode, PowerTau, InputType, load_save_power_tau};

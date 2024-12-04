@@ -14,7 +14,7 @@ pub mod types;
 mod utils;
 
 pub use errors::{Result, StorageError};
-pub use lvmt::{AmtParams, CreateMode, PowerTau};
+pub use lvmt::{AmtParams, CreateMode, PowerTau, InputType, load_save_power_tau};
 
 #[derive(Default)]
 struct DummpyIter<T>(std::marker::PhantomData<T>);
