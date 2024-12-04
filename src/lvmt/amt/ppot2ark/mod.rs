@@ -160,6 +160,10 @@ pub fn load_save_power_tau(
         target_size_pow,
         chunk_size_pow,
     )?;
+
+    let rng = &mut rand::thread_rng();
+    power_tau.check_powers_of_tau(rng).unwrap();
+
     let path = &*dir
         .as_ref()
         .join(ptau_file_name::<PeArk>(target_size_pow, false));

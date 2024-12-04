@@ -14,5 +14,10 @@ error_chain! {
             description("In consistent length between expected params and real params")
             display("In consistent length between expected params and real params")
         }
+
+        InconsistentPowersOfTau {
+            description("In consistent powers of tau")
+            display("In consistent powers of tau")
+        }
     }
 }

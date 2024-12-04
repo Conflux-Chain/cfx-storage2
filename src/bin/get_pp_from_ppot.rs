@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
+use cfx_storage2::{load_save_power_tau, InputType};
 use tracing::Level;
 use tracing_subscriber::fmt::format::FmtSpan;
-use cfx_storage2::{InputType, load_save_power_tau};
 
 fn parse_param() -> Result<(usize, usize, String, String)> {
     let args: Vec<String> = std::env::args().collect();

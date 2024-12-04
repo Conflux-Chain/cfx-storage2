@@ -8,10 +8,10 @@ mod prove_params;
 mod utils;
 
 pub use power_tau::PowerTau;
+pub use ppot2ark::{load_save_power_tau, InputType};
 pub use proofs::AmtProofError;
 pub use prove_params::{AmtParams, CreateMode};
 pub use utils::ptau_file_name;
-pub use ppot2ark::{InputType, load_save_power_tau};
 
 #[cfg(not(feature = "bls12-381"))]
 pub use prove_params::fast_serde_bn254;

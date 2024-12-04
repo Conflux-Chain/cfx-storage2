@@ -9,9 +9,10 @@ use super::{
 use ark_bls12_381::Bls12_381;
 #[cfg(not(feature = "bls12-381"))]
 use ark_bn254::Bn254;
-use ark_ec::pairing::Pairing;
+use ark_ec::{pairing::Pairing, VariableBaseMSM};
 use ark_ff::{utils::k_adicity, Field};
 use ark_std::cfg_into_iter;
+use rand::rngs::ThreadRng;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::{
@@ -24,6 +25,29 @@ use tracing::{debug, info};
 pub struct PowerTau<PE: Pairing> {
     pub g1pp: Vec<G1Aff<PE>>,
     pub g2pp: Vec<G2Aff<PE>>,
+}
+
+impl<PE: Pairing> PowerTau<PE> {
+    pub fn check_powers_of_tau(&self, rng: &mut ThreadRng) -> Result<(), error::Error> {
+        let len = self.g1pp.len();
+        if self.g2pp.len() != len {
+            return Err(error::ErrorKind::InconsistentLength.into());
+        }
+
+        let r: Vec<_> = (0..len - 1).map(|_| Fr::<PE>::rand(rng)).collect();
+        let q: Vec<_> = (0..len - 1).map(|_| Fr::<PE>::rand(rng)).collect();
+
+        let g1_low: G1<PE> = VariableBaseMSM::msm(&self.g1pp[..len - 1], &r).unwrap();
+        let g1_high: G1<PE> = VariableBaseMSM::msm(&self.g1pp[1..], &r).unwrap();
+        let g2_low: G2<PE> = VariableBaseMSM::msm(&self.g2pp[..len - 1], &q).unwrap();
+        let g2_high: G2<PE> = VariableBaseMSM::msm(&self.g2pp[1..], &q).unwrap();
+
+        if PE::pairing(g1_low, g2_high) != PE::pairing(g1_high, g2_low) {
+            Err(error::ErrorKind::InconsistentPowersOfTau.into())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 fn power_tau<'a, G: AffineRepr>(gen: &'a G, tau: &'a G::ScalarField, length: usize) -> Vec<G> {
