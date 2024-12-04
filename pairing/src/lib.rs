@@ -27,7 +27,7 @@ pub mod bn256;
 mod wnaf;
 pub use self::wnaf::Wnaf;
 
-use ff::{Field, PrimeField, PrimeFieldDecodingError, PrimeFieldRepr, ScalarEngine, SqrtField};
+// use ff::{Field, PrimeField, PrimeFieldDecodingError, PrimeFieldRepr, ScalarEngine, SqrtField};
 use std::error::Error;
 use std::fmt;
 

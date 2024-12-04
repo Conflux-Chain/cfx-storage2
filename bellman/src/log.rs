@@ -1,4 +1,4 @@
-#[allow(unused_macros)]
+// #[allow(unused_macros)]
 
 cfg_if! {
     if #[cfg(feature = "wasm")] {
