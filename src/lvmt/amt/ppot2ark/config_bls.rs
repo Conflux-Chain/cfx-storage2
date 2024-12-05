@@ -1,4 +1,9 @@
-// use crate::ark::FqRepr;
+use ark_bls12_381::Bls12_381;
+pub use pairing_ce::bls12_381::Bls12;
+pub type PowerTau = super::super::PowerTau<Bls12_381>;
+pub type PePpot = Bls12;
+pub type PeArk = Bls12_381;
+
 use std::marker::PhantomData;
 
 use ark_ec::AffineRepr;

@@ -1,5 +1,13 @@
 mod adapter;
-mod adapter_bls;
+
+#[cfg(not(feature = "bls12-381"))]
+mod config_bn;
+#[cfg(not(feature = "bls12-381"))]
+use config_bn::{PeArk, PePpot, PowerTau};
+#[cfg(feature = "bls12-381")]
+mod config_bls;
+#[cfg(feature = "bls12-381")]
+use config_bls::{PeArk, PePpot, PowerTau};
 
 pub use adapter::Adapter;
 
@@ -15,18 +23,6 @@ use std::{
     fs::{File, OpenOptions},
     path::Path,
 };
-
-// use ark_bn254::Bn254;
-// pub use pairing_ce::bn256::Bn256;
-// type PowerTau = super::PowerTau<Bn254>;
-// type PePpot = Bn256;
-// type PeArk = Bn254;
-
-use ark_bls12_381::Bls12_381;
-pub use pairing_ce::bls12_381::Bls12;
-type PowerTau = super::PowerTau<Bls12_381>;
-type PePpot = Bls12;
-type PeArk = Bls12_381;
 
 #[derive(Debug, Clone, Copy)]
 pub enum InputType {
