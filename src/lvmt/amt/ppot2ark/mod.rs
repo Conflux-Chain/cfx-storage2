@@ -194,7 +194,7 @@ mod tests {
     fn prepare_test_file(ty: InputType, degree: usize) {
         let target_file = format!("{}/{}", data_path(), ty.file_name(degree));
         let script = format!("{}/dev_support/gen_test_ppot.sh", crate_path());
-        
+
         if std::fs::metadata(target_file.clone()).is_ok() {
             return;
         }
