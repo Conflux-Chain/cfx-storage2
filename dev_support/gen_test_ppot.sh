@@ -6,8 +6,8 @@ if [ ! -d "data" ]; then
     mkdir -p ./data
 fi
 
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 <degree>"
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <degree> <feature>"
     exit 1
 fi
 
@@ -15,9 +15,13 @@ degree=$1
 
 pot_size=$((2**degree))
 
-cargo run -r -p ppot --bin new_constrained_bls -- data/challenge_$degree $degree $pot_size
+feature=$2
 
-cargo run -r -p ppot --bin compute_constrained_bls -- data/challenge_$degree data/response_$degree $degree $pot_size <<< "some random text"
+echo $feature
+
+cargo run -r -p ppot --bin new_constrained_bls --features $feature -- data/challenge_${degree}_${feature} $degree $pot_size
+
+cargo run -r -p ppot --bin compute_constrained_bls --features $feature -- data/challenge_${degree}_${feature} data/response_${degree}_${feature} $degree $pot_size <<< "some random text"
 
 echo "The BLAKE2b hash of the response file is:"
 b2sum data/response_$degree

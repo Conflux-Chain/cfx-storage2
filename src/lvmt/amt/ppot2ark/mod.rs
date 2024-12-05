@@ -24,6 +24,11 @@ use std::{
     path::Path,
 };
 
+#[cfg(not(feature = "bls12-381"))]
+const FEATURE: &str = "bn254";
+#[cfg(feature = "bls12-381")]
+const FEATURE: &str = "bls12-381";
+
 #[derive(Debug, Clone, Copy)]
 pub enum InputType {
     Challenge,
@@ -33,12 +38,13 @@ pub enum InputType {
 impl InputType {
     fn file_name(&self, degree: usize) -> String {
         format!(
-            "{}_{}",
+            "{}_{}_{}",
             match self {
                 InputType::Challenge => "challenge",
                 InputType::Response => "response",
             },
-            degree
+            degree,
+            FEATURE,
         )
     }
 }
@@ -179,16 +185,24 @@ fn crate_path() -> String {
 #[cfg(test)]
 mod tests {
     pub use ark_ec::pairing::Pairing;
+    use parking_lot::Mutex;
     use std::process::Command;
 
     use super::*;
+
+    lazy_static::lazy_static! {
+        static ref LOCK: Mutex<()> = Mutex::new(());
+    }
 
     fn data_path() -> String {
         format!("{}/data", crate_path())
     }
 
     fn prepare_test_file(ty: InputType, degree: usize) {
+        let _guard = LOCK.lock();
+
         let target_file = format!("{}/{}", data_path(), ty.file_name(degree));
+        dbg!(&target_file);
         let script = format!("{}/dev_support/gen_test_ppot.sh", crate_path());
 
         if std::fs::metadata(target_file.clone()).is_ok() {
@@ -197,11 +211,13 @@ mod tests {
 
         println!("{} not found, building...", target_file);
 
-        Command::new("bash")
+        let output = Command::new("bash")
             .arg(script)
             .arg(degree.to_string())
+            .arg(FEATURE)
             .output()
             .expect("Failed to execute command");
+        dbg!(output);
     }
 
     #[test]

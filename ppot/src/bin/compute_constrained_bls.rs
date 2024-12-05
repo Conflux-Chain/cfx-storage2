@@ -6,14 +6,14 @@ use powersoftau::{
 };
 
 use memmap::*;
-// use pairing_ce::bn256::Bn256;
-use pairing_ce::bls12_381::Bls12;
 use std::fs::OpenOptions;
 
 use std::io::{Read, Write};
 
-// type PE = Bn256;
-type PE = Bls12;
+#[cfg(not(feature = "bls12-381"))]
+type PE = pairing_ce::bn256::Bn256;
+#[cfg(feature = "bls12-381")]
+type PE = pairing_ce::bls12_381::Bls12;
 
 const INPUT_IS_COMPRESSED: UseCompression = UseCompression::No;
 const COMPRESS_THE_OUTPUT: UseCompression = UseCompression::Yes;

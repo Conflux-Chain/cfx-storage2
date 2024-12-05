@@ -14,14 +14,6 @@ cargo clean
 echoStep "Check fmt"
 ./cargo_fmt.sh -- --check
 
-# echoStep "Build ppot2ark test params"
-# export RUSTFLAGS="-A warnings" 
-# if [[ ! -f crates/ppot2ark/data/challenge_12 ]]; then
-#     cd crates/ppot2ark
-#     ./gen_test_ppot.sh 12
-#     cd ../..
-# fi
-
 export RUSTFLAGS="-D warnings" 
 
 echoStep "Check all"
@@ -39,6 +31,8 @@ cargo clippy
 echoStep "Check clippy (parallel)"
 cargo clippy --features parallel
 
+rm data/*381
+rm data/*254
 rm -rf ./pp/*-05.bin
 
 echoStep "Test"

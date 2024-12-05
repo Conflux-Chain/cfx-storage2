@@ -5,15 +5,15 @@ use powersoftau::parameters::UseCompression;
 use powersoftau::utils::{blank_hash, calculate_hash};
 
 use memmap::*;
-// use pairing_ce::bn256::Bn256;
-use pairing_ce::bls12_381::Bls12;
 use std::fs::OpenOptions;
 use std::io::Write;
 
 use powersoftau::parameters::CeremonyParams;
 
-// type PE = Bn256;
-type PE = Bls12;
+#[cfg(not(feature = "bls12-381"))]
+type PE = pairing_ce::bn256::Bn256;
+#[cfg(feature = "bls12-381")]
+type PE = pairing_ce::bls12_381::Bls12;
 
 const COMPRESS_NEW_CHALLENGE: UseCompression = UseCompression::No;
 
