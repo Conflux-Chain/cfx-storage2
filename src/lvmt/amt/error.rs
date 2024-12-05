@@ -19,5 +19,10 @@ error_chain! {
             description("In consistent powers of tau")
             display("In consistent powers of tau")
         }
+
+        RareZeroGenerationError {
+            description("Failed to generate a non-zero scalar after multiple attempts")
+            display("Failed to generate a non-zero scalar after multiple attempts")
+        }
     }
 }

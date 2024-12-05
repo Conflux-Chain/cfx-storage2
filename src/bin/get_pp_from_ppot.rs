@@ -45,7 +45,8 @@ fn main() {
     };
 
     let input_path = challenge_path;
-    let input_type = InputType::Challenge;
+    // let input_type = InputType::Challenge;
+    let input_type = InputType::Response;
     let chunk_size_pow = std::cmp::min(target_size_pow, 16);
     let dir = &output_path;
     load_save_power_tau(

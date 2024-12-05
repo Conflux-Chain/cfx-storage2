@@ -16,17 +16,17 @@ use std::{
     path::Path,
 };
 
-use ark_bn254::Bn254;
-pub use pairing_ce::bn256::Bn256;
-type PowerTau = super::PowerTau<Bn254>;
-type PePpot = Bn256;
-type PeArk = Bn254;
+// use ark_bn254::Bn254;
+// pub use pairing_ce::bn256::Bn256;
+// type PowerTau = super::PowerTau<Bn254>;
+// type PePpot = Bn256;
+// type PeArk = Bn254;
 
-// use ark_bls12_381::Bls12_381;
-// pub use pairing_ce::bls12_381::Bls12;
-// type PowerTau = super::PowerTau<Bls12_381>;
-// type PePpot = Bls12;
-// type PeArk = Bls12_381;
+use ark_bls12_381::Bls12_381;
+pub use pairing_ce::bls12_381::Bls12;
+type PowerTau = super::PowerTau<Bls12_381>;
+type PePpot = Bls12;
+type PeArk = Bls12_381;
 
 #[derive(Debug, Clone, Copy)]
 pub enum InputType {
@@ -193,13 +193,9 @@ mod tests {
 
     fn prepare_test_file(ty: InputType, degree: usize) {
         let target_file = format!("{}/{}", data_path(), ty.file_name(degree));
-        dbg!(crate_path());
-        dbg!(&target_file);
         let script = format!("{}/dev_support/gen_test_ppot.sh", crate_path());
-        dbg!(&script);
-
+        
         if std::fs::metadata(target_file.clone()).is_ok() {
-            dbg!("already has");
             return;
         }
 

@@ -1,7 +1,7 @@
 use super::{
     ec_algebra::{
         AffineRepr, CanonicalDeserialize, CanonicalSerialize, CurveGroup, Fr, G1Aff, G2Aff,
-        UniformRand, G1, G2,
+        UniformRand, G1, G2, Zero,
     },
     error, ptau_file_name,
 };
@@ -34,8 +34,8 @@ impl<PE: Pairing> PowerTau<PE> {
             return Err(error::ErrorKind::InconsistentLength.into());
         }
 
-        let r: Vec<_> = (0..len - 1).map(|_| Fr::<PE>::rand(rng)).collect();
-        let q: Vec<_> = (0..len - 1).map(|_| Fr::<PE>::rand(rng)).collect();
+        let r = (0..len - 1).map(|_| Self::gen_rand_non_zero_fr(rng)).collect::<Result<Vec<_>, error::Error>>()?;
+        let q = (0..len - 1).map(|_| Self::gen_rand_non_zero_fr(rng)).collect::<Result<Vec<_>, error::Error>>()?;
 
         let g1_low: G1<PE> = VariableBaseMSM::msm(&self.g1pp[..len - 1], &r).unwrap();
         let g1_high: G1<PE> = VariableBaseMSM::msm(&self.g1pp[1..], &r).unwrap();
@@ -47,6 +47,16 @@ impl<PE: Pairing> PowerTau<PE> {
         } else {
             Ok(())
         }
+    }
+
+    fn gen_rand_non_zero_fr(rng: &mut ThreadRng) -> Result<Fr<PE>, error::Error> {
+        for _ in 0..10 {
+            let fr = Fr::<PE>::rand(rng);
+            if !fr.is_zero() {
+                return Ok(fr)
+            }
+        }
+        Err(error::ErrorKind::RareZeroGenerationError.into())
     }
 }
 
