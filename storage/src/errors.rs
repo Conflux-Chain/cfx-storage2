@@ -39,6 +39,8 @@ pub enum DecodeError {
     CryptoError,
     #[error("Custom error: {0}")]
     Custom(&'static str),
+    #[error("Error collected from kvdb_rocksdb")]
+    RocksDbError,
 }
 
 impl From<SerializationError> for DecodeError {

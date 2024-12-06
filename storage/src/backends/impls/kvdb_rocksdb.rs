@@ -6,7 +6,7 @@ use super::super::{
     write_schema::WriteSchemaNoSubkey,
     DatabaseTrait, TableIter, TableRead,
 };
-use crate::errors::{DecResult, Result};
+use crate::errors::{DecResult, DecodeError, Result};
 
 use kvdb::KeyValueDB;
 
@@ -33,9 +33,14 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
 
     // #[cfg(test)]
     fn iter_from_start(&self) -> Result<TableIter<T>> {
-        Ok(Box::new(crate::todo_iter::<
-            DecResult<(Cow<T::Key>, Cow<T::Value>)>,
-        >()))
+        let iter = self.inner.iter(self.col).map(|kv| match kv {
+            Ok((k, v)) => Ok((
+                Cow::Owned(<T::Key>::decode(&k)?.into_owned()),
+                Cow::Owned(<T::Value>::decode(&v)?.into_owned()),
+            )),
+            Err(_) => Err(DecodeError::RocksDbError),
+        });
+        Ok(Box::new(iter))
     }
 }
 
