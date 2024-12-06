@@ -6,6 +6,10 @@ echoStep() {
     echo -e "\033[1;34m────────────────────────────────────────────────────────\033[0m"
 }
 
+rm ppot2ark/data/*12*381
+rm ppot2ark/data/*12*254
+rm -rf storage/pp/*-05.bin
+
 set -e
 
 echoStep "Clean"
@@ -31,17 +35,16 @@ cargo clippy
 echoStep "Check clippy (parallel)"
 cargo clippy --features parallel
 
-rm data/*381
-rm data/*254
-rm -rf ./pp/*-05.bin
-
 echoStep "Test"
 cargo test -r --all
+
+echoStep "Test ppot2ark (bls12-381)"
+cargo test -r -p ppot2ark --features bls12-381
 
 echoStep "Test amt, use previous pp"
 cargo test -r -- lvmt::amt
 
-rm -rf ./pp/*-05.bin
+rm -rf storage/pp/*-05.bin
 
 echoStep "Test (parallel)"
 cargo test -r --all --features parallel
@@ -49,7 +52,7 @@ cargo test -r --all --features parallel
 echoStep "Test amt (parallel), use previous pp"
 cargo test -r --features parallel -- lvmt::amt
 
-rm -rf ./pp/*-05.bin
+rm -rf storage/pp/*-05.bin
 
 echoStep "Test amt (bn254)"
 cargo test -r --features parallel,bn254 -- lvmt::amt
