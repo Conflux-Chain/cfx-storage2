@@ -1,4 +1,7 @@
-use std::{borrow::{Borrow, Cow}, path::PathBuf};
+use std::{
+    borrow::{Borrow, Cow},
+    path::PathBuf,
+};
 
 use super::super::{
     serde::{Decode, Encode},
@@ -46,7 +49,7 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
         Ok(Box::new(iter))
     }
 
-    // #[cfg(test)]
+    #[cfg(test)]
     fn iter_from_start(&self) -> Result<TableIter<T>> {
         let iter = self.inner.iter(self.col).map(|kv| match kv {
             Ok((k, v)) => Ok((
@@ -62,6 +65,15 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
 impl DatabaseTrait for kvdb_rocksdb::Database {
     type TableID = u32;
     type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
+
+    #[cfg(test)]
+    fn empty_for_test() -> Result<Self> {
+        use std::fs::create_dir_all;
+
+        let db_path = "database";
+        create_dir_all(db_path).unwrap();
+        empty_rocksdb(4, db_path)
+    }
 
     fn view<T: TableSchema>(&self) -> Result<impl '_ + TableRead<T>> {
         Ok(RocksDBColumn {
