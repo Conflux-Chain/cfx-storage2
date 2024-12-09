@@ -1,4 +1,4 @@
-use std::borrow::{Borrow, Cow};
+use std::{borrow::{Borrow, Cow}, path::PathBuf};
 
 use super::super::{
     serde::{Decode, Encode},
@@ -9,10 +9,17 @@ use super::super::{
 use crate::errors::{DecodeError, Result};
 
 use kvdb::KeyValueDB;
+use kvdb_rocksdb::DatabaseConfig;
 
 pub struct RocksDBColumn<'a> {
     col: u32,
     inner: &'a kvdb_rocksdb::Database,
+}
+
+pub fn empty_rocksdb(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database> {
+    let config = DatabaseConfig::with_columns(num_cols);
+    let db_path = PathBuf::from(path);
+    Ok(kvdb_rocksdb::Database::open(&config, db_path)?)
 }
 
 impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
