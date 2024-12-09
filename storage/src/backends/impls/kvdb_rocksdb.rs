@@ -68,11 +68,15 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
 
     #[cfg(test)]
     fn empty_for_test() -> Result<Self> {
-        use std::fs::create_dir_all;
+        use crate::backends::TableName;
 
-        let db_path = "database";
-        create_dir_all(db_path).unwrap();
-        empty_rocksdb(4, db_path)
+        let db_path = "test_database";
+        if std::path::Path::new(db_path).exists() {
+            std::fs::remove_dir_all(db_path)?;
+        }
+        std::fs::create_dir_all(db_path).unwrap();
+
+        empty_rocksdb(TableName::max_index() + 1, db_path)
     }
 
     fn view<T: TableSchema>(&self) -> Result<impl '_ + TableRead<T>> {

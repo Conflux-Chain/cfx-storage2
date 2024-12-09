@@ -5,7 +5,7 @@ use super::{
     VersionedStore,
 };
 use crate::{
-    backends::{InMemoryDatabase, VersionedKVName},
+    backends::{DatabaseTrait, InMemoryDatabase, VersionedKVName},
     errors::Result,
     middlewares::{
         versioned_flat_key_value::{
@@ -681,7 +681,7 @@ fn gen_updates(
 }
 
 #[allow(clippy::type_complexity)]
-fn gen_init(
+fn gen_init<D: DatabaseTrait>(
     num_history: usize,
     rng: &mut ChaChaRng,
     max_num_new_keys: usize,
@@ -690,7 +690,7 @@ fn gen_init(
 ) -> (
     UniqueVec<CommitID>,
     Vec<BTreeMap<u64, Option<u64>>>,
-    InMemoryDatabase,
+    D,
     VersionedMap<PendingKeyValueConfig<TestSchema, CommitID>>,
 ) {
     let mut history_cids = UniqueVec::new();
@@ -718,10 +718,10 @@ fn gen_init(
         ));
     }
 
-    let mut empty_db = InMemoryDatabase::empty();
+    let mut empty_db = D::empty_for_test().unwrap();
     let pending_part = VersionedMap::new(history_cids.items().last().copied(), history_cids.len());
 
-    confirm_series_to_history::<InMemoryDatabase, TestSchema>(
+    confirm_series_to_history::<D, TestSchema>(
         &mut empty_db,
         0,
         history_cids
@@ -1147,7 +1147,11 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
     }
 }
 
-fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: usize) {
+fn test_versioned_store<D: DatabaseTrait>(
+    num_history: usize,
+    num_pending: usize,
+    num_operations: usize,
+) {
     let mut rng = get_rng_for_test();
     let num_gen_new_keys = 10;
     let num_gen_previous_keys = 10;
@@ -1155,7 +1159,7 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
     let mut all_keys = BTreeSet::new();
 
     // init history part
-    let (history_cids, history_updates, mut db, mut pending_part) = gen_init(
+    let (history_cids, history_updates, mut db, mut pending_part) = gen_init::<D>(
         num_history,
         &mut rng,
         num_gen_new_keys,
@@ -1290,6 +1294,11 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
 }
 
 #[test]
-fn tests_versioned_store() {
-    test_versioned_store(2, 10, 1000);
+fn tests_versioned_store_inmemory() {
+    test_versioned_store::<InMemoryDatabase>(2, 10, 1000);
+}
+
+#[test]
+fn tests_versioned_store_rocksdb() {
+    test_versioned_store::<kvdb_rocksdb::Database>(2, 10, 1000);
 }

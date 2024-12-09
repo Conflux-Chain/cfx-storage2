@@ -287,7 +287,7 @@ mod tests {
         let _guard = LOCK.lock();
 
         let target_file = format!("{}/{}", data_path(), ty.file_name(degree));
-        dbg!(&target_file);
+
         let script = format!("{}/gen_test_ppot.sh", crate_path());
 
         if std::fs::metadata(target_file.clone()).is_ok() {
@@ -296,13 +296,12 @@ mod tests {
 
         println!("{} not found, building...", target_file);
 
-        let output = Command::new("bash")
+        Command::new("bash")
             .arg(script)
             .arg(degree.to_string())
             .arg(FEATURE)
             .output()
             .expect("Failed to execute command");
-        dbg!(output);
     }
 
     #[test]
