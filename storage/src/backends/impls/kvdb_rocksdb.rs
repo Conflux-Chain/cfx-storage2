@@ -38,7 +38,7 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
     fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
         let iter = self
             .inner
-            .iter_from(self.col, &key.encode().into_owned())
+            .iter_from(self.col, &key.encode())
             .map(|kv| match kv {
                 Ok((k, v)) => Ok((
                     Cow::Owned(<T::Key>::decode(&k)?.into_owned()),
