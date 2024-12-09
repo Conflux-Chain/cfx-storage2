@@ -37,7 +37,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         &self,
         old_commit: H256,
         new_commit: H256,
-        changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
+        changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>, // TODO: What if there is a duplicate key?
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
     ) -> Result<()>
@@ -59,6 +59,10 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                 (old_value.allocation, old_value.version + 1)
             } else {
                 let allocation = allocate_version_slot(&key, &slot_alloc_view)?;
+                // TODO?: only retrieve read-only slot_alloc_view is not enough,
+                // since the `allocation` may have already been added to `allocations` for previous `key` in these `changes`.
+                // At least `allocations` should be another parameter passed into `allocate_version_slot()`,
+                // since writing down to db is after this whole iteration.
                 allocations.push(AllocationKeyInfo::new(allocation.slot_index, key.clone()));
                 (allocation, 0)
             };
@@ -92,6 +96,8 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         };
 
         // TODO: write down to db
+        // Write to pending part, then write to db outside LvmtStore?
+        // Write to db here?
 
         Ok(())
     }
