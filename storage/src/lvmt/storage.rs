@@ -1,4 +1,4 @@
-use std::borrow::Borrow;
+use std::{borrow::Borrow, collections::BTreeMap};
 
 use super::{
     amt::{ec_algebra::Pairing, AmtParams},
@@ -34,7 +34,7 @@ pub struct LvmtStore<'cache, 'db> {
 
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
     fn commit<PE: Pairing>(
-        &self,
+        &mut self,
         old_commit: H256,
         new_commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>, // TODO: What if there is a duplicate key?
@@ -59,8 +59,8 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                 (old_value.allocation, old_value.version + 1)
             } else {
                 let allocation = allocate_version_slot(&key, &slot_alloc_view)?;
-                // TODO?: only retrieve read-only slot_alloc_view is not enough,
-                // since the `allocation` may have already been added to `allocations` for previous `key` in these `changes`.
+                // TODO?: only retrieve read-only slot_alloc_view is not enough, since
+                // the `allocation` may have already been added to `allocations` for previous `key` in the `changes`.
                 // At least `allocations` should be another parameter passed into `allocate_version_slot()`,
                 // since writing down to db is after this whole iteration.
                 allocations.push(AllocationKeyInfo::new(allocation.slot_index, key.clone()));
@@ -97,7 +97,26 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
         // TODO: write down to db
         // Write to pending part, then write to db outside LvmtStore?
-        // Write to db here?
+        // Or how to write to db here?
+        let amt_node_updates: BTreeMap<_, _> =
+            amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
+        self.amt_node_store
+            .add_to_pending_part(Some(old_commit), new_commit, amt_node_updates)?;
+
+        let key_value_updates: BTreeMap<_, _> = key_value_changes
+            .into_iter()
+            .map(|(k, v)| (k, Some(v)))
+            .collect();
+        self.key_value_store.add_to_pending_part(
+            Some(old_commit),
+            new_commit,
+            key_value_updates,
+        )?;
+
+        // let slot_alloc_updates: BTreeMap<_, _> =
+        // self.slot_alloc_store.add_to_pending_part(Some(old_commit), new_commit, slot_alloc_updates)?;
+
+        // self.auth_changes.commit()?;
 
         Ok(())
     }
