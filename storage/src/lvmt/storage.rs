@@ -17,6 +17,7 @@ use crate::{
     errors::Result,
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::table_schema::KeyValueSnapshotRead,
+    traits::KeyValueStoreBulksTrait,
 };
 use crate::{
     lvmt::types::LvmtValue,
@@ -116,7 +117,9 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         // let slot_alloc_updates: BTreeMap<_, _> =
         // self.slot_alloc_store.add_to_pending_part(Some(old_commit), new_commit, slot_alloc_updates)?;
 
-        // self.auth_changes.commit()?;
+        let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
+        self.auth_changes
+            .commit(new_commit, auth_change_bulk, write_schema)?;
 
         Ok(())
     }
