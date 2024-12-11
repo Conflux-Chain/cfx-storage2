@@ -60,12 +60,14 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
                 (old_value.allocation, old_value.version + 1)
             } else {
-                let (allocation_wrt_db, key_digest) = allocate_version_slot(&key, &slot_alloc_view)?;
+                let (allocation_wrt_db, key_digest) =
+                    allocate_version_slot(&key, &slot_alloc_view)?;
                 // TODO?: only retrieve read-only slot_alloc_view is not enough, since
                 // the `allocation` may have already been added to `allocations` for previous `key` in the `changes`.
                 // At least `allocations` should be another parameter passed into `allocate_version_slot()`,
                 // since writing down to db is after this whole iteration.
-                let allocation = allocate_wrt_changes(&key, allocation_wrt_db, key_digest, &mut allocations)?;
+                let allocation =
+                    allocate_wrt_changes(&key, allocation_wrt_db, key_digest, &mut allocations)?;
                 (allocation, 0)
             };
 
@@ -150,10 +152,13 @@ fn allocate_version_slot(
             }
         };
 
-        return Ok((AllocatePosition {
-            depth: depth as u8,
-            slot_index: next_index as u8,
-        }, key_digest));
+        return Ok((
+            AllocatePosition {
+                depth: depth as u8,
+                slot_index: next_index as u8,
+            },
+            key_digest,
+        ));
     }
 }
 
@@ -163,6 +168,38 @@ fn allocate_wrt_changes(
     key_digest: H256,
     allocations: &mut BTreeMap<AmtNodeId, AllocationKeyInfo>,
 ) -> Result<AllocatePosition> {
-    let mut depth = allocation_wrt_db.depth;
-    todo!()
+    let mut depth = allocation_wrt_db.depth as usize;
+
+    loop {
+        let amt_node_id = compute_amt_node_id(key_digest, depth);
+        let slot_alloc = allocations.entry(amt_node_id);
+        let next_index = match slot_alloc {
+            std::collections::btree_map::Entry::Vacant(_) => {
+                if depth > allocation_wrt_db.depth as usize {
+                    0
+                } else {
+                    allocation_wrt_db.slot_index
+                }
+            }
+            std::collections::btree_map::Entry::Occupied(x) => {
+                let alloc = x.get();
+                if (alloc.index as usize) < KEY_SLOT_SIZE - 1 {
+                    alloc.index + 1
+                } else {
+                    depth += 1;
+                    continue;
+                }
+            }
+        };
+
+        assert!(depth >= allocation_wrt_db.depth as usize);
+        if depth == allocation_wrt_db.depth as usize {
+            assert!(next_index >= allocation_wrt_db.slot_index);
+        }
+
+        return Ok(AllocatePosition {
+            depth: depth as u8,
+            slot_index: next_index as u8,
+        });
+    }
 }
