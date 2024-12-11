@@ -3,6 +3,7 @@ use std::{borrow::Borrow, collections::BTreeMap};
 use super::{
     amt::{ec_algebra::Pairing, AmtParams},
     crypto::G1Config,
+    types::AmtNodeId,
 };
 use ethereum_types::H256;
 
@@ -51,7 +52,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let key_value_view = self.key_value_store.get_versioned_store(&old_commit)?;
 
         let mut key_value_changes = vec![];
-        let mut allocations = vec![];
+        let mut allocations = BTreeMap::new();
         let mut amt_change_manager = AmtChangeManager::default();
 
         // Update version number
@@ -59,12 +60,12 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
                 (old_value.allocation, old_value.version + 1)
             } else {
-                let allocation = allocate_version_slot(&key, &slot_alloc_view)?;
+                let allocation_wrt_db = allocate_version_slot(&key, &slot_alloc_view)?;
                 // TODO?: only retrieve read-only slot_alloc_view is not enough, since
                 // the `allocation` may have already been added to `allocations` for previous `key` in the `changes`.
                 // At least `allocations` should be another parameter passed into `allocate_version_slot()`,
                 // since writing down to db is after this whole iteration.
-                allocations.push(AllocationKeyInfo::new(allocation.slot_index, key.clone()));
+                let allocation = allocate_wrt_changes(&key, allocation_wrt_db, &mut allocations)?;
                 (allocation, 0)
             };
 
@@ -114,8 +115,13 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             key_value_updates,
         )?;
 
-        // let slot_alloc_updates: BTreeMap<_, _> =
-        // self.slot_alloc_store.add_to_pending_part(Some(old_commit), new_commit, slot_alloc_updates)?;
+        let slot_alloc_updates: BTreeMap<_, _> =
+            allocations.into_iter().map(|(k, v)| (k, Some(v))).collect();
+        self.slot_alloc_store.add_to_pending_part(
+            Some(old_commit),
+            new_commit,
+            slot_alloc_updates,
+        )?;
 
         let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
         self.auth_changes
@@ -149,4 +155,12 @@ fn allocate_version_slot(
             slot_index: next_index as u8,
         });
     }
+}
+
+fn allocate_wrt_changes(
+    key: &[u8],
+    allocation_wrt_db: AllocatePosition,
+    allocations: &mut BTreeMap<AmtNodeId, AllocationKeyInfo>,
+) -> Result<AllocatePosition> {
+    todo!()
 }
