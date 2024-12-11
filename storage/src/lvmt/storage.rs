@@ -168,17 +168,16 @@ fn resolve_allocation_slot(
 
     loop {
         let amt_node_id = compute_amt_node_id(key_digest, depth);
-        let slot_alloc = allocations.entry(amt_node_id);
+        let slot_alloc = allocations.get(&amt_node_id);
         let next_index = match slot_alloc {
-            std::collections::btree_map::Entry::Vacant(_) => {
+            None => {
                 if depth > allocation_wrt_db.depth as usize {
                     0
                 } else {
                     allocation_wrt_db.slot_index
                 }
             }
-            std::collections::btree_map::Entry::Occupied(x) => {
-                let alloc = x.get();
+            Some(alloc) => {
                 if (alloc.index as usize) < KEY_SLOT_SIZE - 1 {
                     alloc.index + 1
                 } else {
@@ -192,6 +191,8 @@ fn resolve_allocation_slot(
         if depth == allocation_wrt_db.depth as usize {
             assert!(next_index >= allocation_wrt_db.slot_index);
         }
+
+        allocations.insert(amt_node_id, AllocationKeyInfo::new(next_index, key.into()));
 
         return AllocatePosition {
             depth: depth as u8,
