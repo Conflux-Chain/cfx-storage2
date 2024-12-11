@@ -62,12 +62,8 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             } else {
                 let (allocation_wrt_db, key_digest) =
                     allocate_version_slot(&key, &slot_alloc_view)?;
-                // TODO?: only retrieve read-only slot_alloc_view is not enough, since
-                // the `allocation` may have already been added to `allocations` for previous `key` in the `changes`.
-                // At least `allocations` should be another parameter passed into `allocate_version_slot()`,
-                // since writing down to db is after this whole iteration.
                 let allocation =
-                    allocate_wrt_changes(&key, allocation_wrt_db, key_digest, &mut allocations)?;
+                    resolve_allocation_slot(&key, allocation_wrt_db, key_digest, &mut allocations);
                 (allocation, 0)
             };
 
@@ -162,12 +158,12 @@ fn allocate_version_slot(
     }
 }
 
-fn allocate_wrt_changes(
+fn resolve_allocation_slot(
     key: &[u8],
     allocation_wrt_db: AllocatePosition,
     key_digest: H256,
     allocations: &mut BTreeMap<AmtNodeId, AllocationKeyInfo>,
-) -> Result<AllocatePosition> {
+) -> AllocatePosition {
     let mut depth = allocation_wrt_db.depth as usize;
 
     loop {
@@ -197,9 +193,9 @@ fn allocate_wrt_changes(
             assert!(next_index >= allocation_wrt_db.slot_index);
         }
 
-        return Ok(AllocatePosition {
+        return AllocatePosition {
             depth: depth as u8,
             slot_index: next_index as u8,
-        });
+        };
     }
 }
