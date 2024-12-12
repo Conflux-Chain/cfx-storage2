@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use once_cell::sync::Lazy;
 
@@ -86,6 +86,14 @@ pub type PE = ark_bls12_381::Bls12_381;
 pub static AMT: Lazy<AmtParams<PE>> =
     Lazy::new(|| AmtParams::from_dir_mont("./pp", TEST_LEVEL, TEST_LEVEL, CreateMode::Both, None));
 
+fn get_changes_from_updates(
+    updates: BTreeMap<u64, Option<u64>>,
+) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> {
+    updates
+        .into_iter()
+        .map(|(k, v)| (u64_to_boxed_u8(k), option_u64_to_boxed_u8(v)))
+}
+
 fn basic<D: DatabaseTrait>() {
     let mut db = Storage::<D>::new().unwrap();
     let mut lvmt = db.as_manager().unwrap();
@@ -96,12 +104,15 @@ fn basic<D: DatabaseTrait>() {
     let previous_keys = Default::default();
     let num_keys = 10;
     let mut all_keys = Default::default();
-    let updates = gen_updates(&mut rng, &previous_keys, num_keys, 0, &mut all_keys);
-    let changes = updates
-        .into_iter()
-        .map(|(k, v)| (u64_to_boxed_u8(k), option_u64_to_boxed_u8(v)));
+    let updates_1 = gen_updates(&mut rng, &previous_keys, num_keys, 0, &mut all_keys);
+    let previous_keys = all_keys.clone();
+    let updates_2 = gen_updates(&mut rng, &previous_keys, num_keys, num_keys, &mut all_keys);
+    let changes_1 = get_changes_from_updates(updates_1);
+    let changes_2 = get_changes_from_updates(updates_2);
     let write_schema = D::write_schema();
-    lvmt.commit_for_test(old_commit, new_commit, changes, &write_schema, &AMT)
+    lvmt.first_commit(old_commit, changes_1, &write_schema, &AMT)
+        .unwrap();
+    lvmt.commit_for_test(old_commit, new_commit, changes_2, &write_schema, &AMT)
         .unwrap();
 }
 

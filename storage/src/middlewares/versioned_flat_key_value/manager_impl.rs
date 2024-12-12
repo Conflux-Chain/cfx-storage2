@@ -22,6 +22,16 @@ pub struct SnapshotView<'db, T: VersionedKeyValueSchema> {
     history: Option<SnapshotHistorical<'db, T>>,
 }
 
+impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
+    #[cfg(test)]
+    pub fn new_empty() -> Self {
+        Self {
+            pending_updates: None,
+            history: None,
+        }
+    }
+}
+
 pub struct SnapshotHistorical<'db, T: VersionedKeyValueSchema> {
     history_number: HistoryNumber,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,

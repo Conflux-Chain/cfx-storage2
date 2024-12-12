@@ -59,7 +59,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         &mut self,
         old_commit: H256,
         new_commit: H256,
-        changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>, // TODO: What if there is a duplicate key?
+        changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
     ) -> Result<()>
@@ -70,11 +70,101 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         self.commit(old_commit, new_commit, changes, write_schema, pp)
     }
 
+    #[cfg(test)]
+    pub fn first_commit<PE: Pairing>(
+        &mut self,
+        commit: H256,
+        changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
+        write_schema: &impl WriteSchemaTrait,
+        pp: &AmtParams<PE>,
+    ) -> Result<()>
+    where
+        <PE as super::amt::ec_algebra::Pairing>::G1Affine:
+            Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
+    {
+        use crate::middlewares::SnapshotView;
+
+        let amt_node_view = SnapshotView::<'_, AmtNodes>::new_empty();
+
+        let mut key_value_changes = vec![];
+        let mut allocations = BTreeMap::new();
+        let mut amt_change_manager = AmtChangeManager::default();
+
+        let mut set_of_keys = HashSet::new();
+
+        // Update version number
+        for (key, value) in changes {
+            if !set_of_keys.insert(key.clone()) {
+                return Err(StorageError::DuplicateKeysInOneCommit);
+            }
+
+            let (allocation, version) = {
+                let (allocation_wrt_db, key_digest) = allocate_version_slot_from_empty_db(&key)?;
+                let allocation =
+                    resolve_allocation_slot(&key, allocation_wrt_db, key_digest, &mut allocations);
+                (allocation, 0)
+            };
+
+            amt_change_manager.record_with_allocation(allocation, &key);
+
+            key_value_changes.push((
+                key,
+                LvmtValue {
+                    allocation,
+                    version,
+                    value,
+                },
+            ));
+        }
+
+        let amt_changes = amt_change_manager.compute_amt_changes(&amt_node_view, pp)?;
+
+        // Update auth changes
+        let auth_changes = {
+            let auth_change_iter = amt_changes
+                .iter()
+                .filter(|&(amt_id, curve_point)| (amt_id.len() > 0))
+                .map(|(amt_id, curve_point)| amt_change_hash(amt_id, curve_point));
+            let key_value_iter = key_value_changes
+                .iter()
+                .map(|(key, value)| key_value_hash(key, value));
+
+            let hashes = key_value_iter.chain(auth_change_iter).collect();
+            process_dump_items(hashes)
+        };
+
+        // TODO: write down to db
+        // Write to pending part, then write to db outside LvmtStore?
+        // Or how to write to db here?
+        let amt_node_updates: BTreeMap<_, _> =
+            amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
+        self.amt_node_store
+            .add_to_pending_part(None, commit, amt_node_updates)?;
+
+        let key_value_updates: BTreeMap<_, _> = key_value_changes
+            .into_iter()
+            .map(|(k, v)| (k, Some(v)))
+            .collect();
+        self.key_value_store
+            .add_to_pending_part(None, commit, key_value_updates)?;
+
+        let slot_alloc_updates: BTreeMap<_, _> =
+            allocations.into_iter().map(|(k, v)| (k, Some(v))).collect();
+        self.slot_alloc_store
+            .add_to_pending_part(None, commit, slot_alloc_updates)?;
+
+        let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
+        self.auth_changes
+            .commit(commit, auth_change_bulk, write_schema)?;
+
+        Ok(())
+    }
+
     fn commit<PE: Pairing>(
         &mut self,
         old_commit: H256,
         new_commit: H256,
-        changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>, // TODO: What if there is a duplicate key?
+        changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
     ) -> Result<()>
@@ -168,6 +258,21 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
         Ok(())
     }
+}
+
+#[cfg(test)]
+fn allocate_version_slot_from_empty_db(key: &[u8]) -> Result<(AllocatePosition, H256)> {
+    let key_digest = blake2s(key);
+    let depth = 1;
+    let amt_node_id = compute_amt_node_id(key_digest, depth);
+    let next_index = 0;
+    return Ok((
+        AllocatePosition {
+            depth: depth as u8,
+            slot_index: next_index as u8,
+        },
+        key_digest,
+    ));
 }
 
 fn allocate_version_slot(
