@@ -7,3 +7,6 @@ pub mod table_schema;
 pub mod types;
 
 pub use amt::{ptau_file_name, AmtParams, CreateMode, PowerTau};
+
+#[cfg(test)]
+mod tests;

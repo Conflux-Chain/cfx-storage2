@@ -35,6 +35,37 @@ pub struct LvmtStore<'cache, 'db> {
 }
 
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
+    #[cfg(test)]
+    pub fn new(
+        key_value_store: VersionedStore<'cache, 'db, FlatKeyValue>,
+        amt_node_store: VersionedStore<'cache, 'db, AmtNodes>,
+        slot_alloc_store: VersionedStore<'cache, 'db, SlotAllocations>,
+        auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
+    ) -> Self {
+        Self {
+            key_value_store,
+            amt_node_store,
+            slot_alloc_store,
+            auth_changes,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn commit_for_test<PE: Pairing>(
+        &mut self,
+        old_commit: H256,
+        new_commit: H256,
+        changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>, // TODO: What if there is a duplicate key?
+        write_schema: &impl WriteSchemaTrait,
+        pp: &AmtParams<PE>,
+    ) -> Result<()>
+    where
+        <PE as super::amt::ec_algebra::Pairing>::G1Affine:
+            Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
+    {
+        self.commit(old_commit, new_commit, changes, write_schema, pp)
+    }
+
     fn commit<PE: Pairing>(
         &mut self,
         old_commit: H256,

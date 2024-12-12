@@ -142,7 +142,7 @@ impl<K: 'static + Ord, V: 'static + Clone> KeyValueStoreRead<K, V> for MockOneSt
 }
 
 #[derive(Debug)]
-struct MockVersionedStore<T: VersionedKeyValueSchema> {
+pub struct MockVersionedStore<T: VersionedKeyValueSchema> {
     pending: MockTree<T>,
     history: HashMap<CommitID, (Option<CommitID>, MockStore<T>)>,
 }
@@ -621,7 +621,7 @@ enum KeyType {
     Novel,
 }
 
-fn get_rng_for_test() -> ChaChaRng {
+pub fn get_rng_for_test() -> ChaChaRng {
     ChaChaRng::from_seed([123; 32])
 }
 
@@ -640,7 +640,7 @@ fn select_vec_element<T: Clone>(rng: &mut ChaChaRng, vec: &[T]) -> T {
     vec[rng.next_u64() as usize % num_elements].clone()
 }
 
-fn gen_updates(
+pub fn gen_updates(
     rng: &mut ChaChaRng,
     previous_keys: &BTreeSet<u64>,
     num_gen_new_keys: usize,
@@ -746,7 +746,7 @@ fn gen_novel_u64(rng: &mut ChaChaRng, previous: &BTreeSet<u64>) -> u64 {
     panic!()
 }
 
-fn gen_random_commit_id(rng: &mut ChaChaRng) -> CommitID {
+pub fn gen_random_commit_id(rng: &mut ChaChaRng) -> CommitID {
     let mut bytes = [0u8; 32];
     for i in 0..4 {
         let num = rng.next_u64().to_ne_bytes();

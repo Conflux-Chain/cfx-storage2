@@ -4,6 +4,8 @@ mod serde;
 pub mod table_schema;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub use tests::{gen_random_commit_id, gen_updates, get_rng_for_test, MockVersionedStore};
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
