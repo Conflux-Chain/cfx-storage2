@@ -6,8 +6,8 @@ use crate::{
     backends::{DatabaseTrait, InMemoryDatabase},
     errors::Result,
     middlewares::{
-        gen_random_commit_id, gen_updates, get_rng_for_test, KeyValueStoreBulks,
-        MockVersionedStore, VersionedStore, VersionedStoreCache,
+        gen_random_commit_id, gen_updates, get_rng_for_test, KeyValueStoreBulks, VersionedStore,
+        VersionedStoreCache,
     },
     AmtParams, CreateMode,
 };
@@ -17,13 +17,6 @@ use super::{
     storage::LvmtStore,
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
 };
-
-pub struct MockLvmtStore<'db> {
-    key_value_store: MockVersionedStore<FlatKeyValue>,
-    amt_node_store: MockVersionedStore<AmtNodes>,
-    slot_alloc_store: MockVersionedStore<SlotAllocations>,
-    auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
-}
 
 pub struct Storage<D: DatabaseTrait> {
     backend: D,

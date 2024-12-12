@@ -7,7 +7,7 @@ mod tests;
 #[cfg(test)]
 pub use manager_impl::SnapshotView;
 #[cfg(test)]
-pub use tests::{gen_random_commit_id, gen_updates, get_rng_for_test, MockVersionedStore};
+pub use tests::{gen_random_commit_id, gen_updates, get_rng_for_test};
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
