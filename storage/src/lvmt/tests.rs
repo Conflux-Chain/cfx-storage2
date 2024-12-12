@@ -95,7 +95,7 @@ fn basic<D: DatabaseTrait>() {
     let new_commit = gen_random_commit_id(&mut rng);
     assert_ne!(old_commit, new_commit);
     let previous_keys = Default::default();
-    let num_keys = 10;
+    let num_keys = 10; //0000;
     let mut all_keys = Default::default();
     let updates_1 = gen_updates(&mut rng, &previous_keys, num_keys, 0, &mut all_keys);
     let previous_keys = all_keys.clone();
@@ -103,10 +103,17 @@ fn basic<D: DatabaseTrait>() {
     let changes_1 = get_changes_from_updates(updates_1);
     let changes_2 = get_changes_from_updates(updates_2);
     let write_schema = D::write_schema();
+    dbg!("init");
     lvmt.first_commit(old_commit, changes_1, &write_schema, &AMT)
         .unwrap();
+    lvmt.check_consistency(old_commit, &AMT).unwrap();
+    dbg!("first");
     lvmt.commit_for_test(old_commit, new_commit, changes_2, &write_schema, &AMT)
         .unwrap();
+    lvmt.check_consistency(new_commit, &AMT).unwrap();
+    dbg!("second");
+    lvmt.check_consistency(old_commit, &AMT).unwrap();
+    dbg!("check first after second");
 }
 
 #[test]

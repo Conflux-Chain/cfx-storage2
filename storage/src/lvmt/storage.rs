@@ -100,8 +100,10 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
             let (allocation, version) = {
                 let (allocation_wrt_db, key_digest) = allocate_version_slot_from_empty_db(&key)?;
+                dbg!(&allocation_wrt_db);
                 let allocation =
                     resolve_allocation_slot(&key, allocation_wrt_db, key_digest, &mut allocations);
+                dbg!(&allocation);
                 (allocation, 0)
             };
 
@@ -138,6 +140,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         // Or how to write to db here?
         let amt_node_updates: BTreeMap<_, _> =
             amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
+        dbg!(&amt_node_updates);
         self.amt_node_store
             .add_to_pending_part(None, commit, amt_node_updates)?;
 
@@ -150,6 +153,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
         let slot_alloc_updates: BTreeMap<_, _> =
             allocations.into_iter().map(|(k, v)| (k, Some(v))).collect();
+        dbg!(&slot_alloc_updates);
         self.slot_alloc_store
             .add_to_pending_part(None, commit, slot_alloc_updates)?;
 
@@ -157,6 +161,29 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         self.auth_changes
             .commit(commit, auth_change_bulk, write_schema)?;
 
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn check_consistency<PE: Pairing>(
+        &mut self,
+        commit: H256,
+        pp: &AmtParams<PE>,
+    ) -> Result<()> {
+        let amt_node_view = self.amt_node_store.get_versioned_store(&commit)?;
+        let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit)?;
+        let key_value_view = self.key_value_store.get_versioned_store(&commit)?;
+
+        // Each Amt subtree (amt_id) except the root Amt should be a fully-allocated leaf node of its parent Amt tree
+        let amt_node_iter = amt_node_view.iter_pending();
+        for (amt_id, curve_point_with_version) in amt_node_iter {
+            if amt_id.len() > 0 {
+                let amt_node_id = amt_id;
+                dbg!(&amt_node_id);
+                let alloc_key_info = slot_alloc_view.get(&amt_node_id)?.unwrap();
+                assert_eq!(alloc_key_info.index as usize, KEY_SLOT_SIZE - 1);
+            }
+        }
         Ok(())
     }
 
@@ -263,7 +290,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 #[cfg(test)]
 fn allocate_version_slot_from_empty_db(key: &[u8]) -> Result<(AllocatePosition, H256)> {
     let key_digest = blake2s(key);
-    let depth = 1;
+    let depth = 0;
     let amt_node_id = compute_amt_node_id(key_digest, depth);
     let next_index = 0;
     return Ok((
@@ -281,7 +308,7 @@ fn allocate_version_slot(
 ) -> Result<(AllocatePosition, H256)> {
     let key_digest = blake2s(key);
 
-    let mut depth = 1;
+    let mut depth = 0;
     loop {
         let amt_node_id = compute_amt_node_id(key_digest, depth);
         let slot_alloc = db.get(&amt_node_id)?;
