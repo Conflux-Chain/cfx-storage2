@@ -170,6 +170,8 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         commit: H256,
         pp: &AmtParams<PE>,
     ) -> Result<()> {
+        use std::collections::BTreeSet;
+
         let amt_node_view = self.amt_node_store.get_versioned_store(&commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit)?;
         let key_value_view = self.key_value_store.get_versioned_store(&commit)?;
@@ -183,7 +185,114 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                 let alloc_key_info = slot_alloc_view.get(&amt_node_id)?.unwrap();
                 assert_eq!(alloc_key_info.index as usize, KEY_SLOT_SIZE - 1);
             }
+
+            match curve_point_with_version {
+                crate::types::ValueEntry::Deleted => panic!("amt node should not contain deletion"),
+                _ => (),
+            }
         }
+
+        // Each AmtNode should be in an Amt tree & Each fully-allocated AmtNode should be an Amt subtree
+        let slot_alloc_iter = slot_alloc_view.iter_pending();
+        for (amt_node_id, alloc_key_info) in slot_alloc_iter {
+            let mut parent_amt_id = amt_node_id.clone();
+            parent_amt_id.pop().unwrap();
+
+            amt_node_view.get(&parent_amt_id)?.unwrap();
+
+            match alloc_key_info {
+                crate::types::ValueEntry::Value(alloc_key_info) => {
+                    if (alloc_key_info.index as usize) == KEY_SLOT_SIZE - 1 {
+                        amt_node_view.get(&amt_node_id)?.unwrap();
+                    }
+                }
+                crate::types::ValueEntry::Deleted => {
+                    panic!("slot alloc should not contain deletion")
+                }
+            }
+        }
+
+        // Gather the version of each allocated slot
+        let mut slot_versions = BTreeMap::new();
+        let key_value_iter = key_value_view.iter_pending();
+        for (key, lvmt_value) in key_value_iter {
+            match lvmt_value {
+                crate::types::ValueEntry::Value(lvmt_value) => {
+                    let LvmtValue {
+                        allocation,
+                        version,
+                        ..
+                    } = lvmt_value;
+                    let (amt_id, node_index, slot_index) = allocation.amt_info(&key);
+                    let node_map = slot_versions.entry(amt_id).or_insert_with(BTreeMap::new);
+                    let slot_map = node_map.entry(node_index).or_insert_with(BTreeMap::new);
+                    slot_map.insert(slot_index, version);
+                }
+                crate::types::ValueEntry::Deleted => {
+                    panic!("key value should not contain deletion")
+                }
+            }
+        }
+
+        // Gather each allocated slot
+        let mut slot_allocs = BTreeMap::new();
+        let slot_alloc_iter = slot_alloc_view.iter_pending();
+        for (amt_node_id, alloc_key_info) in slot_alloc_iter {
+            let mut parent_amt_id = amt_node_id.clone();
+            let node_index = parent_amt_id.pop().unwrap();
+
+            match alloc_key_info {
+                crate::types::ValueEntry::Value(alloc_key_info) => {
+                    for slot_index in 0..=alloc_key_info.index {
+                        let node_map = slot_allocs
+                            .entry(parent_amt_id)
+                            .or_insert_with(BTreeMap::new);
+                        let slot_map = node_map.entry(node_index).or_insert_with(BTreeSet::new);
+                        slot_map.insert(slot_index);
+                    }
+                }
+                crate::types::ValueEntry::Deleted => {
+                    panic!("slot alloc should not contain deletion")
+                }
+            }
+        }
+
+        // Check consistency between `slot_versions` and `slot_allocs`
+        assert_eq!(
+            slot_versions.len(),
+            slot_allocs.len(),
+            "Inconsistent allocations."
+        );
+        for (amt_id, node_map) in slot_versions {
+            match slot_allocs.get(&amt_id) {
+                Some(alloc_node_map) => {
+                    assert_eq!(
+                        node_map.len(),
+                        alloc_node_map.len(),
+                        "Inconsistent allocations."
+                    );
+                    for (node_index, slot_map) in node_map {
+                        match alloc_node_map.get(&node_index) {
+                            Some(alloc_slot_map) => {
+                                assert_eq!(
+                                    slot_map.len(),
+                                    alloc_slot_map.len(),
+                                    "Inconsistent allocations."
+                                );
+                                for (slot_index, version) in slot_map {
+                                    if !alloc_slot_map.contains(&slot_index) {
+                                        panic!("Inconsistent allocations.")
+                                    }
+                                }
+                            }
+                            None => panic!("Inconsistent allocations."),
+                        }
+                    }
+                }
+                None => panic!("Inconsistent allocations."),
+            }
+        }
+
         Ok(())
     }
 
