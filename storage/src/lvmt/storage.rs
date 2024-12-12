@@ -1,4 +1,7 @@
-use std::{borrow::Borrow, collections::BTreeMap};
+use std::{
+    borrow::Borrow,
+    collections::{BTreeMap, HashSet},
+};
 
 use super::{
     amt::{ec_algebra::Pairing, AmtParams},
@@ -19,6 +22,7 @@ use crate::{
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::table_schema::KeyValueSnapshotRead,
     traits::KeyValueStoreBulksTrait,
+    StorageError,
 };
 use crate::{
     lvmt::types::LvmtValue,
@@ -86,8 +90,14 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let mut allocations = BTreeMap::new();
         let mut amt_change_manager = AmtChangeManager::default();
 
+        let mut set_of_keys = HashSet::new();
+
         // Update version number
         for (key, value) in changes {
+            if !set_of_keys.insert(key.clone()) {
+                return Err(StorageError::DuplicateKeysInOneCommit);
+            }
+
             let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
                 (old_value.allocation, old_value.version + 1)
             } else {

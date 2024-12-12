@@ -25,6 +25,9 @@ pub enum StorageError {
 
     #[error("pending error {0:?}")]
     PendingError(#[from] PendingError<CommitID>),
+
+    #[error("including duplicate keys within one commit")]
+    DuplicateKeysInOneCommit,
 }
 
 pub type Result<T> = ::std::result::Result<T, StorageError>;
