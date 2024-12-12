@@ -75,7 +75,7 @@ fn option_u64_to_boxed_u8(opt: Option<u64>) -> Box<[u8]> {
     }
 }
 
-pub const TEST_LEVEL: usize = 5;
+pub const TEST_LEVEL: usize = 16;
 pub const TEST_LENGTH: usize = 1 << TEST_LEVEL;
 
 #[cfg(not(feature = "bls12-381"))]
@@ -117,11 +117,13 @@ fn basic<D: DatabaseTrait>() {
 }
 
 #[test]
+#[ignore]
 fn basic_rocksdb() {
     basic::<kvdb_rocksdb::Database>()
 }
 
 #[test]
+#[ignore]
 fn basic_inmemory() {
     basic::<InMemoryDatabase>()
 }

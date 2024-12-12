@@ -65,3 +65,9 @@ cargo test -r --features parallel,bn254 -- lvmt::amt
 
 echoStep "Test amt (bls12-381), use previous pp"
 cargo test -r --features parallel,bls12-381 -- lvmt::amt
+
+echoStep "Test ignore (bn254), must parallel"
+cargo test -r --features parallel,bn254 -- --ignored
+
+echoStep "Test ignore (bls12-381), must parallel"
+cargo test -r --features parallel,bls12-381 -- --ignored
