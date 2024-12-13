@@ -292,7 +292,12 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                 }
             }
             let commitment = G1::msm_bigint(&basis[..], &bigints[..]).into_affine();
-            let stored_commitment = amt_node_view.get(&amt_id)?.unwrap().point.affine().into_owned();
+            let stored_commitment = amt_node_view
+                .get(&amt_id)?
+                .unwrap()
+                .point
+                .affine()
+                .into_owned();
             assert_eq!(commitment, stored_commitment);
         }
         Ok(())

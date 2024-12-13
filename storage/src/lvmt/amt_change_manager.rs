@@ -51,8 +51,7 @@ impl AmtChangeManager {
         &self,
         db: &KeyValueSnapshotRead<'_, AmtNodes>,
         pp: &AmtParams<PE>,
-    ) -> Result<Vec<(AmtId, CurvePointWithVersion)>>
-    {
+    ) -> Result<Vec<(AmtId, CurvePointWithVersion)>> {
         let mut result = vec![];
 
         for (key, value) in self.0.iter() {
@@ -69,8 +68,7 @@ impl AmtChangeManager {
     }
 }
 
-pub fn commitment_diff(change: &AmtChange, pp: &AmtParams<PE>) -> G1
-{
+pub fn commitment_diff(change: &AmtChange, pp: &AmtParams<PE>) -> G1 {
     let mut diff_sum = G1::zero();
     for (idx, diff) in change.iter() {
         let basis_power = pp.get_basis_power_at(*idx as usize);
