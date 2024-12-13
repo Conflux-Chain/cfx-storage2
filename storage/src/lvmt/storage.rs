@@ -182,7 +182,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         // Each AmtNode should be in an Amt tree & Each fully-allocated AmtNode should be an Amt subtree
         let slot_alloc_iter = slot_alloc_view.iter_pending();
         for (amt_node_id, alloc_key_info) in slot_alloc_iter {
-            let mut parent_amt_id = amt_node_id.clone();
+            let mut parent_amt_id = amt_node_id;
             parent_amt_id.pop().unwrap();
 
             amt_node_view.get(&parent_amt_id)?.unwrap();
@@ -225,7 +225,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let mut slot_allocs = BTreeMap::new();
         let slot_alloc_iter = slot_alloc_view.iter_pending();
         for (amt_node_id, alloc_key_info) in slot_alloc_iter {
-            let mut parent_amt_id = amt_node_id.clone();
+            let mut parent_amt_id = amt_node_id;
             let node_index = parent_amt_id.pop().unwrap();
 
             match alloc_key_info {
@@ -405,13 +405,13 @@ fn allocate_version_slot_from_empty_db(key: &[u8]) -> Result<(AllocatePosition, 
     let depth = 0;
     let amt_node_id = compute_amt_node_id(key_digest, depth);
     let next_index = 0;
-    return Ok((
+    Ok((
         AllocatePosition {
             depth: depth as u8,
             slot_index: next_index as u8,
         },
         key_digest,
-    ));
+    ))
 }
 
 fn allocate_version_slot(
