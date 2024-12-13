@@ -1,13 +1,6 @@
-use std::{
-    borrow::Borrow,
-    collections::{BTreeMap, HashSet},
-};
+use std::collections::{BTreeMap, HashSet};
 
-use super::{
-    amt::{ec_algebra::Pairing, AmtParams},
-    crypto::G1Config,
-    types::AmtNodeId,
-};
+use super::{amt::AmtParams, crypto::PE, types::AmtNodeId};
 use ethereum_types::H256;
 
 use super::{
@@ -55,33 +48,25 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
     }
 
     #[cfg(test)]
-    pub fn commit_for_test<PE: Pairing>(
+    pub fn commit_for_test(
         &mut self,
         old_commit: H256,
         new_commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
-    ) -> Result<()>
-    where
-        <PE as super::amt::ec_algebra::Pairing>::G1Affine:
-            Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
-    {
+    ) -> Result<()> {
         self.commit(old_commit, new_commit, changes, write_schema, pp)
     }
 
     #[cfg(test)]
-    pub fn first_commit<PE: Pairing>(
+    pub fn first_commit(
         &mut self,
         commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
-    ) -> Result<()>
-    where
-        <PE as super::amt::ec_algebra::Pairing>::G1Affine:
-            Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
-    {
+    ) -> Result<()> {
         use crate::middlewares::SnapshotView;
 
         let amt_node_view = SnapshotView::<'_, AmtNodes>::new_empty();
@@ -165,12 +150,11 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
     }
 
     #[cfg(test)]
-    pub fn check_consistency<PE: Pairing>(
-        &mut self,
-        commit: H256,
-        pp: &AmtParams<PE>,
-    ) -> Result<()> {
+    pub fn check_consistency(&mut self, commit: H256, pp: &AmtParams<PE>) -> Result<()> {
         use std::collections::BTreeSet;
+
+        use crate::lvmt::crypto::Fr;
+        // use ark_ec::VariableBaseMSM;
 
         let amt_node_view = self.amt_node_store.get_versioned_store(&commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit)?;
@@ -263,8 +247,8 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             slot_allocs.len(),
             "Inconsistent allocations."
         );
-        for (amt_id, node_map) in slot_versions {
-            match slot_allocs.get(&amt_id) {
+        for (amt_id, node_map) in slot_versions.iter() {
+            match slot_allocs.get(amt_id) {
                 Some(alloc_node_map) => {
                     assert_eq!(
                         node_map.len(),
@@ -272,7 +256,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                         "Inconsistent allocations."
                     );
                     for (node_index, slot_map) in node_map {
-                        match alloc_node_map.get(&node_index) {
+                        match alloc_node_map.get(node_index) {
                             Some(alloc_slot_map) => {
                                 assert_eq!(
                                     slot_map.len(),
@@ -280,7 +264,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                                     "Inconsistent allocations."
                                 );
                                 for (slot_index, version) in slot_map {
-                                    if !alloc_slot_map.contains(&slot_index) {
+                                    if !alloc_slot_map.contains(slot_index) {
                                         panic!("Inconsistent allocations.")
                                     }
                                 }
@@ -293,21 +277,30 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             }
         }
 
+        // Compute the commitment of each Amt tree
+        let mut basis = vec![];
+        let mut bigints = vec![];
+        for (amt_id, node_map) in slot_versions {
+            for (node_index, slot_map) in node_map {
+                let basis_power = pp.get_basis_power_at(node_index as usize);
+                for (slot_index, version) in slot_map {
+                    basis.push(basis_power[slot_index as usize]);
+                    bigints.push(Fr::from(version));
+                }
+            }
+            // let commitment = G1::<PE>::msm_bigint(&basis[..], &bigints[..]);
+        }
         Ok(())
     }
 
-    fn commit<PE: Pairing>(
+    fn commit(
         &mut self,
         old_commit: H256,
         new_commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
-    ) -> Result<()>
-    where
-        <PE as super::amt::ec_algebra::Pairing>::G1Affine:
-            Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
-    {
+    ) -> Result<()> {
         let amt_node_view = self.amt_node_store.get_versioned_store(&old_commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&old_commit)?;
         let key_value_view = self.key_value_store.get_versioned_store(&old_commit)?;
