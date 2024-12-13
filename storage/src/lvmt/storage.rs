@@ -87,10 +87,8 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
             let (allocation, version) = {
                 let (allocation_wrt_db, key_digest) = allocate_version_slot_from_empty_db(&key)?;
-                dbg!(&allocation_wrt_db);
                 let allocation =
                     resolve_allocation_slot(&key, allocation_wrt_db, key_digest, &mut allocations);
-                dbg!(&allocation);
                 (allocation, ALLOC_START_VERSION)
             };
 
@@ -127,7 +125,6 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         // Or how to write to db here?
         let amt_node_updates: BTreeMap<_, _> =
             amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
-        dbg!(&amt_node_updates);
         self.amt_node_store
             .add_to_pending_part(None, commit, amt_node_updates)?;
 
@@ -140,7 +137,6 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
         let slot_alloc_updates: BTreeMap<_, _> =
             allocations.into_iter().map(|(k, v)| (k, Some(v))).collect();
-        dbg!(&slot_alloc_updates);
         self.slot_alloc_store
             .add_to_pending_part(None, commit, slot_alloc_updates)?;
 
@@ -168,7 +164,6 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         for (amt_id, curve_point_with_version) in amt_node_iter {
             if amt_id.len() > 0 {
                 let amt_node_id = amt_id;
-                dbg!(&amt_node_id);
                 let alloc_key_info = slot_alloc_view.get(&amt_node_id)?.unwrap();
                 assert_eq!(alloc_key_info.index as usize, KEY_SLOT_SIZE - 1);
             }
@@ -179,7 +174,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             }
         }
 
-        // Each AmtNode should be in an Amt tree & Each fully-allocated AmtNode should be an Amt subtree
+        // Each AmtNode should be in an Amt tree
         let slot_alloc_iter = slot_alloc_view.iter_pending();
         for (amt_node_id, alloc_key_info) in slot_alloc_iter {
             let mut parent_amt_id = amt_node_id;
@@ -188,14 +183,8 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             amt_node_view.get(&parent_amt_id)?.unwrap();
 
             match alloc_key_info {
-                crate::types::ValueEntry::Value(alloc_key_info) => {
-                    if (alloc_key_info.index as usize) == KEY_SLOT_SIZE - 1 {
-                        amt_node_view.get(&amt_node_id)?.unwrap();
-                    }
-                }
-                crate::types::ValueEntry::Deleted => {
-                    panic!("slot alloc should not contain deletion")
-                }
+                crate::types::ValueEntry::Deleted => panic!("slot alloc should not contain deletion"),
+                _ => (),
             }
         }
 

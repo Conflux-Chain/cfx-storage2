@@ -95,7 +95,7 @@ fn basic<D: DatabaseTrait>() {
     let new_commit = gen_random_commit_id(&mut rng);
     assert_ne!(old_commit, new_commit);
     let previous_keys = Default::default();
-    let num_keys = 10; //0000;
+    let num_keys = 100000;
     let mut all_keys = Default::default();
     let updates_1 = gen_updates(&mut rng, &previous_keys, num_keys, 0, &mut all_keys);
     let previous_keys = all_keys.clone();
