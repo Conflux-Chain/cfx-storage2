@@ -31,6 +31,8 @@ pub struct LvmtStore<'cache, 'db> {
     auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
 }
 
+pub const ALLOC_START_VERSION: u64 = 1;
+
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
     #[cfg(test)]
     pub fn new(
@@ -89,7 +91,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                 let allocation =
                     resolve_allocation_slot(&key, allocation_wrt_db, key_digest, &mut allocations);
                 dbg!(&allocation);
-                (allocation, 0)
+                (allocation, ALLOC_START_VERSION)
             };
 
             amt_change_manager.record_with_allocation(allocation, &key);
@@ -153,8 +155,9 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
     pub fn check_consistency(&mut self, commit: H256, pp: &AmtParams<PE>) -> Result<()> {
         use std::collections::BTreeSet;
 
-        use crate::lvmt::crypto::Fr;
-        // use ark_ec::VariableBaseMSM;
+        use ark_ec::CurveGroup;
+
+        use crate::lvmt::crypto::{FrInt, VariableBaseMSM, G1};
 
         let amt_node_view = self.amt_node_store.get_versioned_store(&commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit)?;
@@ -278,17 +281,19 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         }
 
         // Compute the commitment of each Amt tree
-        let mut basis = vec![];
-        let mut bigints = vec![];
         for (amt_id, node_map) in slot_versions {
+            let mut basis = vec![];
+            let mut bigints = vec![];
             for (node_index, slot_map) in node_map {
                 let basis_power = pp.get_basis_power_at(node_index as usize);
                 for (slot_index, version) in slot_map {
                     basis.push(basis_power[slot_index as usize]);
-                    bigints.push(Fr::from(version));
+                    bigints.push(FrInt::from(version));
                 }
             }
-            // let commitment = G1::<PE>::msm_bigint(&basis[..], &bigints[..]);
+            let commitment = G1::msm_bigint(&basis[..], &bigints[..]).into_affine();
+            let stored_commitment = amt_node_view.get(&amt_id)?.unwrap().point.affine().into_owned();
+            assert_eq!(commitment, stored_commitment);
         }
         Ok(())
     }
@@ -324,7 +329,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                     allocate_version_slot(&key, &slot_alloc_view)?;
                 let allocation =
                     resolve_allocation_slot(&key, allocation_wrt_db, key_digest, &mut allocations);
-                (allocation, 0)
+                (allocation, ALLOC_START_VERSION)
             };
 
             amt_change_manager.record_with_allocation(allocation, &key);
