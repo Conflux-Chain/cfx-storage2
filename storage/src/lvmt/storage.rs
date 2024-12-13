@@ -335,6 +335,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let amt_node_view = self.amt_node_store.get_versioned_store(&old_commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&old_commit)?;
         let key_value_view = self.key_value_store.get_versioned_store(&old_commit)?;
+        dbg!(1);
 
         let mut key_value_changes = vec![];
         let mut allocations = BTreeMap::new();
@@ -369,8 +370,10 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                 },
             ));
         }
+        dbg!(2);
 
         let amt_changes = amt_change_manager.compute_amt_changes(&amt_node_view, pp)?;
+        dbg!(3);
 
         // Update auth changes
         let auth_changes = {
@@ -393,6 +396,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
         self.amt_node_store
             .add_to_pending_part(Some(old_commit), new_commit, amt_node_updates)?;
+        dbg!(4);
 
         let key_value_updates: BTreeMap<_, _> = key_value_changes
             .into_iter()
@@ -403,6 +407,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             new_commit,
             key_value_updates,
         )?;
+        dbg!(5);
 
         let slot_alloc_updates: BTreeMap<_, _> =
             allocations.into_iter().map(|(k, v)| (k, Some(v))).collect();
@@ -411,10 +416,12 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             new_commit,
             slot_alloc_updates,
         )?;
+        dbg!(6);
 
         let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
         self.auth_changes
             .commit(new_commit, auth_change_bulk, write_schema)?;
+        dbg!(7);
 
         Ok(())
     }

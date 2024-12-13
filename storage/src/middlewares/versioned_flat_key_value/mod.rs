@@ -142,6 +142,7 @@ fn confirm_series_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     db: &mut D,
     to_confirm_start_height: usize,
     to_confirm_ids_maps: Vec<(CommitID, BTreeMap<T::Key, impl Into<Option<T::Value>>>)>,
+    is_first_t: bool,
 ) -> Result<()> {
     let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
     let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
@@ -157,23 +158,29 @@ fn confirm_series_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
         let height = to_confirm_start_height + delta_height;
         let history_number = height_to_history_number(height);
 
-        if commit_id_table.get(&confirmed_commit_id)?.is_some()
-            || history_number_table.get(&history_number)?.is_some()
+        if is_first_t {
+            if commit_id_table.get(&confirmed_commit_id)?.is_some()
+                || history_number_table.get(&history_number)?.is_some()
+            {
+                return Err(StorageError::ConsistencyCheckFailure);
+            }
+
+            let commit_id_table_op = (
+                Cow::Owned(confirmed_commit_id),
+                Some(Cow::Owned(history_number)),
+            );
+            write_schema.write::<CommitIDSchema>(commit_id_table_op);
+
+            let history_number_table_op = (
+                Cow::Owned(history_number),
+                Some(Cow::Owned(confirmed_commit_id)),
+            );
+            write_schema.write::<HistoryNumberSchema>(history_number_table_op);
+        } else if commit_id_table.get(&confirmed_commit_id)?.is_none()
+            || history_number_table.get(&history_number)?.is_none()
         {
             return Err(StorageError::ConsistencyCheckFailure);
         }
-
-        let commit_id_table_op = (
-            Cow::Owned(confirmed_commit_id),
-            Some(Cow::Owned(history_number)),
-        );
-        write_schema.write::<CommitIDSchema>(commit_id_table_op);
-
-        let history_number_table_op = (
-            Cow::Owned(history_number),
-            Some(Cow::Owned(confirmed_commit_id)),
-        );
-        write_schema.write::<HistoryNumberSchema>(history_number_table_op);
 
         let history_indices_table_op = updates.keys().map(|key| {
             (
@@ -204,12 +211,20 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
     db: &mut D,
     pending_part: &mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
     new_root_commit_id: CommitID,
+    is_first_t: bool,
 ) -> Result<()> {
     // old root..=new root's parent
     let (to_confirm_start_height, to_confirm_ids_maps) =
         pending_part.change_root(new_root_commit_id)?;
+    dbg!("pending");
 
-    confirm_series_to_history::<D, T>(db, to_confirm_start_height, to_confirm_ids_maps)?;
+    confirm_series_to_history::<D, T>(
+        db,
+        to_confirm_start_height,
+        to_confirm_ids_maps,
+        is_first_t,
+    )?;
+    dbg!("history");
 
     Ok(())
 }

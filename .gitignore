@@ -2,6 +2,7 @@
 /target/
 /proptest-regressions
 target
+storage/proptest-regressions
 
 # Data
 pp
