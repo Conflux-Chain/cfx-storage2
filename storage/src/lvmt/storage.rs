@@ -153,7 +153,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
         use ark_ec::CurveGroup;
 
-        use crate::lvmt::crypto::{FrInt, VariableBaseMSM, G1};
+        use crate::lvmt::{crypto::{FrInt, VariableBaseMSM, G1}, types::SLOT_SIZE};
 
         let amt_node_view = self.amt_node_store.get_versioned_store(&commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit)?;
@@ -248,6 +248,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                         "Inconsistent allocations."
                     );
                     for (node_index, slot_map) in node_map {
+                        if slot_map.len() > KEY_SLOT_SIZE { panic!();}
                         match alloc_node_map.get(node_index) {
                             Some(alloc_slot_map) => {
                                 assert_eq!(
@@ -269,11 +270,33 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             }
         }
 
+        // Add amt node to `slot_versions`
+        let amt_node_iter = amt_node_view.iter_pending();
+        for (amt_id, curve_point_with_version) in amt_node_iter {
+            if amt_id.len() > 0 {
+                let mut parent_amt_id = amt_id;
+                let node_index = parent_amt_id.pop().unwrap();
+                let slot_index = SLOT_SIZE - 1;
+                let version = {
+                    match curve_point_with_version {
+                        crate::types::ValueEntry::Value(curve_point_with_version) => curve_point_with_version.version,
+                        crate::types::ValueEntry::Deleted => panic!("amt node should not contain deletion"),
+                    }
+                };
+                let node_map = slot_versions.entry(parent_amt_id).or_insert_with(BTreeMap::new);
+                let slot_map = node_map.entry(node_index).or_insert_with(BTreeMap::new);
+                slot_map.insert(slot_index as u8, version);
+            }
+        }
+
         // Compute the commitment of each Amt tree
         for (amt_id, node_map) in slot_versions {
+            if amt_id.len() > 1 {
+                dbg!(amt_id);
+            }
             let mut basis = vec![];
             let mut bigints = vec![];
-            for (node_index, slot_map) in node_map {
+            for (node_index, slot_map) in node_map {        
                 let basis_power = pp.get_basis_power_at(node_index as usize);
                 for (slot_index, version) in slot_map {
                     basis.push(basis_power[slot_index as usize]);
