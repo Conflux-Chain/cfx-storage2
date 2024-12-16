@@ -1,6 +1,6 @@
 use ark_bls12_381::Bls12_381;
 pub use pairing_ce::bls12_381::Bls12;
-pub type PowerTau = storage::PowerTau<Bls12_381>;
+pub type PowerTau = amt::PowerTau<Bls12_381>;
 pub type PePpot = Bls12;
 pub type PeArk = Bls12_381;
 
