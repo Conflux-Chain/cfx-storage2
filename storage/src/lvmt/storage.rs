@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, HashSet};
 
-use super::{amt::AmtParams, crypto::PE, types::AmtNodeId};
+use super::{
+    amt::AmtParams,
+    crypto::PE,
+    types::{AmtNodeId, AuthChangeKey, AuthChangeNode, CurvePointWithVersion},
+};
 use ethereum_types::H256;
 
 use super::{
@@ -102,18 +106,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let amt_changes = amt_change_manager.compute_amt_changes(None, pp)?;
 
         // Update auth changes
-        let auth_changes = {
-            let auth_change_iter = amt_changes
-                .iter()
-                .filter(|&(amt_id, curve_point)| (amt_id.len() > 0))
-                .map(|(amt_id, curve_point)| amt_change_hash(amt_id, curve_point));
-            let key_value_iter = key_value_changes
-                .iter()
-                .map(|(key, value)| key_value_hash(key, value));
-
-            let hashes = key_value_iter.chain(auth_change_iter).collect();
-            process_dump_items(hashes)
-        };
+        let auth_changes = compute_auth_changes(&amt_changes, &key_value_changes);
 
         // TODO: write down to db
         // Write to pending part, then write to db outside LvmtStore?
@@ -373,18 +366,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         dbg!(3);
 
         // Update auth changes
-        let auth_changes = {
-            let auth_change_iter = amt_changes
-                .iter()
-                .filter(|&(amt_id, curve_point)| (amt_id.len() > 0))
-                .map(|(amt_id, curve_point)| amt_change_hash(amt_id, curve_point));
-            let key_value_iter = key_value_changes
-                .iter()
-                .map(|(key, value)| key_value_hash(key, value));
-
-            let hashes = key_value_iter.chain(auth_change_iter).collect();
-            process_dump_items(hashes)
-        };
+        let auth_changes = compute_auth_changes(&amt_changes, &key_value_changes);
 
         // TODO: write down to db
         // Write to pending part, then write to db outside LvmtStore?
@@ -422,6 +404,22 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
         Ok(())
     }
+}
+
+fn compute_auth_changes(
+    amt_changes: &[(AmtNodeId, CurvePointWithVersion)],
+    key_value_changes: &[(Box<[u8]>, LvmtValue)],
+) -> BTreeMap<AuthChangeKey, AuthChangeNode> {
+    let auth_change_iter = amt_changes
+        .iter()
+        .filter(|&(amt_id, curve_point)| (amt_id.len() > 0))
+        .map(|(amt_id, curve_point)| amt_change_hash(amt_id, curve_point));
+    let key_value_iter = key_value_changes
+        .iter()
+        .map(|(key, value)| key_value_hash(key, value));
+
+    let hashes = key_value_iter.chain(auth_change_iter).collect();
+    process_dump_items(hashes)
 }
 
 fn allocate_version_slot_from_empty_db(key: &[u8]) -> Result<(AllocatePosition, H256)> {
