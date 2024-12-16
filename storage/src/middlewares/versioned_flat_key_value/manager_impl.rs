@@ -49,6 +49,21 @@ pub struct SnapshotHistorical<'db, T: VersionedKeyValueSchema> {
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
+// impl<'db, T: VersionedKeyValueSchema> SnapshotHistorical<'db, T> {
+//     #[cfg(test)]
+//     pub fn iter(&self) -> Result<BTreeMap<T::Key, ValueEntry<T::Value>>> {
+//         use crate::middlewares::ChangeKey;
+
+//         for change_history in self.change_history_table.iter_from_start()?.into_iter() {
+//             let (change_key, value) = change_history?;
+//             let change_key = change_key.into_owned();
+//             let value = value.into_owned();
+//             let ChangeKey(key, history_number) = change_key;
+//         }
+//         todo!()
+//     }
+// }
+
 impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value> for SnapshotView<'db, T> {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         if let Some(opt_v) = self.pending_updates.as_ref().and_then(|u| u.get(key)) {
