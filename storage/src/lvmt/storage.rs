@@ -105,32 +105,15 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
         let amt_changes = amt_change_manager.compute_amt_changes(None, pp)?;
 
-        // Update auth changes
-        let auth_changes = compute_auth_changes(&amt_changes, &key_value_changes);
-
-        // TODO: write down to db
-        // Write to pending part, then write to db outside LvmtStore?
-        // Or how to write to db here?
-        let amt_node_updates: BTreeMap<_, _> =
-            amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
-        self.amt_node_store
-            .add_to_pending_part(None, commit, amt_node_updates)?;
-
-        let key_value_updates: BTreeMap<_, _> = key_value_changes
-            .into_iter()
-            .map(|(k, v)| (k, Some(v)))
-            .collect();
-        self.key_value_store
-            .add_to_pending_part(None, commit, key_value_updates)?;
-
-        let slot_alloc_updates: BTreeMap<_, _> =
-            allocations.into_iter().map(|(k, v)| (k, Some(v))).collect();
-        self.slot_alloc_store
-            .add_to_pending_part(None, commit, slot_alloc_updates)?;
-
-        let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
-        self.auth_changes
-            .commit(commit, auth_change_bulk, write_schema)?;
+        // Write down to db
+        self.write_to_db(
+            None,
+            commit,
+            amt_changes,
+            key_value_changes,
+            allocations,
+            write_schema,
+        )?;
 
         Ok(())
     }
@@ -325,7 +308,6 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let amt_node_view = self.amt_node_store.get_versioned_store(&old_commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&old_commit)?;
         let key_value_view = self.key_value_store.get_versioned_store(&old_commit)?;
-        dbg!(1);
 
         let mut key_value_changes = vec![];
         let mut allocations = BTreeMap::new();
@@ -360,47 +342,57 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
                 },
             ));
         }
-        dbg!(2);
 
         let amt_changes = amt_change_manager.compute_amt_changes(Some(&amt_node_view), pp)?;
-        dbg!(3);
 
+        // Write down to db
+        self.write_to_db(
+            Some(old_commit),
+            new_commit,
+            amt_changes,
+            key_value_changes,
+            allocations,
+            write_schema,
+        )?;
+
+        Ok(())
+    }
+
+    /// Write to the pending part of db.
+    /// Write to the history part is beyond the range of [`LvmtStore`].
+    /// Note: `self.auth_changes` includes all commits, even if they are not confirmed, so consider `gc_commit` elsewhere.
+    fn write_to_db(
+        &mut self,
+        parent_commit: Option<H256>,
+        new_commit: H256,
+        amt_changes: Vec<(AmtNodeId, CurvePointWithVersion)>,
+        key_value_changes: Vec<(Box<[u8]>, LvmtValue)>,
+        allocations: BTreeMap<AmtNodeId, AllocationKeyInfo>,
+        write_schema: &impl WriteSchemaTrait,
+    ) -> Result<()> {
         // Update auth changes
         let auth_changes = compute_auth_changes(&amt_changes, &key_value_changes);
 
-        // TODO: write down to db
-        // Write to pending part, then write to db outside LvmtStore?
-        // Or how to write to db here?
         let amt_node_updates: BTreeMap<_, _> =
             amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
         self.amt_node_store
-            .add_to_pending_part(Some(old_commit), new_commit, amt_node_updates)?;
-        dbg!(4);
+            .add_to_pending_part(parent_commit, new_commit, amt_node_updates)?;
 
         let key_value_updates: BTreeMap<_, _> = key_value_changes
             .into_iter()
             .map(|(k, v)| (k, Some(v)))
             .collect();
-        self.key_value_store.add_to_pending_part(
-            Some(old_commit),
-            new_commit,
-            key_value_updates,
-        )?;
-        dbg!(5);
+        self.key_value_store
+            .add_to_pending_part(parent_commit, new_commit, key_value_updates)?;
 
         let slot_alloc_updates: BTreeMap<_, _> =
             allocations.into_iter().map(|(k, v)| (k, Some(v))).collect();
-        self.slot_alloc_store.add_to_pending_part(
-            Some(old_commit),
-            new_commit,
-            slot_alloc_updates,
-        )?;
-        dbg!(6);
+        self.slot_alloc_store
+            .add_to_pending_part(parent_commit, new_commit, slot_alloc_updates)?;
 
         let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
         self.auth_changes
             .commit(new_commit, auth_change_bulk, write_schema)?;
-        dbg!(7);
 
         Ok(())
     }
