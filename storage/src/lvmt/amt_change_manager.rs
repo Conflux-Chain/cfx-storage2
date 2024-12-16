@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use ark_ff::Zero;
 
-use super::amt::AmtParams;
+use amt::AmtParams;
 
 use super::{
     crypto::{G1, PE},

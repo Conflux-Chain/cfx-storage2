@@ -1,7 +1,7 @@
 use self::generate::CreateMode;
 
 use super::super::{
-    ec_algebra::{EvaluationDomain, Fr, Radix2EvaluationDomain, UniformRand, G1},
+    ec_algebra::{EvaluationDomain, Fr, Radix2EvaluationDomain, G1},
     PowerTau,
 };
 use super::*;
@@ -40,10 +40,3 @@ pub static DOMAIN: Lazy<Radix2EvaluationDomain<Fr<PE>>> =
     Lazy::new(|| Radix2EvaluationDomain::new(TEST_LENGTH).unwrap());
 
 pub static W: Lazy<Fr<PE>> = Lazy::new(|| DOMAIN.group_gen);
-
-pub fn random_scalars(length: usize) -> Vec<Fr<PE>> {
-    let mut rng = rand::thread_rng();
-    (0..length)
-        .map(|_| Fr::<PE>::rand(&mut rng))
-        .collect::<Vec<_>>()
-}

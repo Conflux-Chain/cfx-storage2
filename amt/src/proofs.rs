@@ -14,6 +14,7 @@ pub struct AllProofs<PE: Pairing> {
 }
 
 impl<PE: Pairing> AllProofs<PE> {
+    #[allow(unused)]
     pub fn get_proof(&self, reversed_index: usize) -> Proof<PE> {
         assert!(reversed_index * self.batch_size < self.input_len);
         let index_bits = self.commitments.len();

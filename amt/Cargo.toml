@@ -1,40 +1,34 @@
 [package]
-name = "ppot2ark"
+name = "amt"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-amt = { workspace = true }
-storage = { workspace = true }
-
-pairing_ce = { git = "https://github.com/Conflux-Chain/pot-phase2", rev = "1e7fd60" }
-powersoftau = { git = "https://github.com/Conflux-Chain/pot-phase2", rev = "1e7fd60" }
-
-parking_lot = "0.12"
-
 ark-ec = "0.5"
 ark-ff = "0.5"
 ark-poly = "0.5"
 ark-serialize = "0.5"
 ark-bls12-381 = "0.5"
+ark-bn254 = "0.5"
 ark-std = "0.5"
 
 rayon = { version = "1.10", optional = true }
 
+base64 = "0.22"
 rand = "0.8"
 
-ark-bn254 = "0.5"
+once_cell = "1.19"
+
+error-chain = { version = "0.12", default-features = false }
 
 anyhow = "1"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 
-ff = { package = "ff_ce", version = "0.7", features = ["derive"] }
 memmap = "0.7.0"
 
 [dev-dependencies]
 rand = "0.8.0"
-project-root = "0.2"
 lazy_static = "1.4"
 
 [features]
@@ -42,3 +36,8 @@ default = []
 parallel = ["ark-poly/parallel", "ark-ec/parallel", "ark-std/parallel", "rayon"]
 bn254 = []#["storage/bn254"]
 bls12-381 = []#["storage/bls12-381"]
+
+[[bin]]
+name = "build_params"
+test = false
+bench = false

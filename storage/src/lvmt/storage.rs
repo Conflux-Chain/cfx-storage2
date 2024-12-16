@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashSet};
 
+use amt::AmtParams;
+
 use super::{
-    amt::AmtParams,
     crypto::PE,
     types::{AmtNodeId, AuthChangeKey, AuthChangeNode, CurvePointWithVersion},
 };

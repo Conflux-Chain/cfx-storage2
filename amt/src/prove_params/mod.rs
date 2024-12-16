@@ -12,12 +12,11 @@ pub mod tests;
 
 pub use generate::CreateMode;
 
-use crate::lvmt::types::SLOT_SIZE;
-
 use super::ec_algebra::{G1Aff, G2Aff, G2};
 
 use ark_ec::{pairing::Pairing, CurveGroup};
 
+const SLOT_SIZE: usize = 6;
 const SLOT_SIZE_MINUS_1: usize = SLOT_SIZE - 1;
 
 pub struct AmtParams<PE: Pairing> {

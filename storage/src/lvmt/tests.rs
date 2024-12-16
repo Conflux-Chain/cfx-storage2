@@ -7,6 +7,8 @@ use ethereum_types::H256;
 use once_cell::sync::Lazy;
 use rand_chacha::ChaChaRng;
 
+use amt::{AmtParams, CreateMode};
+
 use crate::{
     backends::{DatabaseTrait, InMemoryDatabase},
     errors::Result,
@@ -14,7 +16,6 @@ use crate::{
         confirmed_pending_to_history, gen_random_commit_id, gen_updates, get_rng_for_test,
         KeyValueStoreBulks, VersionedStore, VersionedStoreCache,
     },
-    AmtParams, CreateMode,
 };
 
 use super::{

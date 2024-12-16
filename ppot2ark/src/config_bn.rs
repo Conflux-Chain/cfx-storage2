@@ -1,6 +1,6 @@
 use ark_bn254::Bn254;
 use pairing_ce::bn256::Bn256;
-pub type PowerTau = storage::PowerTau<Bn254>;
+pub type PowerTau = amt::PowerTau<Bn254>;
 pub type PePpot = Bn256;
 pub type PeArk = Bn254;
 

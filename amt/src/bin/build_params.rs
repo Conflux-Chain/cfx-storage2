@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use storage::{AmtParams, CreateMode, PowerTau};
+use amt::{AmtParams, CreateMode, PowerTau};
 use tracing::Level;
 
 fn parse_param() -> Result<(usize, usize, Option<String>)> {

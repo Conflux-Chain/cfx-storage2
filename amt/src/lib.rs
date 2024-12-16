@@ -1,4 +1,6 @@
-mod deferred_verification;
+#[macro_use]
+extern crate tracing;
+
 pub mod ec_algebra;
 mod error;
 mod power_tau;

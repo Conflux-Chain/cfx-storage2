@@ -15,7 +15,7 @@ use config_bls::{PeArk, PePpot, PowerTau};
 pub use adapter::Adapter;
 
 use ark_serialize::CanonicalSerialize;
-use storage::ptau_file_name;
+use amt::ptau_file_name;
 
 pub use powersoftau::{
     batched_accumulator::BatchedAccumulator,

@@ -4,7 +4,9 @@ resolver = "2"
 members = [
     "storage",
     "ppot2ark",
+    "amt"
 ]
 
 [workspace.dependencies]
 storage = { path = "storage"}
+amt = { path = "amt" }
