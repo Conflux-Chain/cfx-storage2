@@ -135,7 +135,7 @@ fn basic<D: DatabaseTrait>() {
     commits.insert(commit_3);
     assert_eq!(commits.len(), 4);
     let previous_keys = Default::default();
-    let num_keys = 100000; //00; // 10^7 has been tested, but still contain no amt_id whose len > 1
+    let num_keys = 100000; // 8 * 10^6 has been tested, but still contain no amt_node_id whose depth > 1
     let mut all_keys = Default::default();
     let updates_1 = gen_updates(&mut rng, &previous_keys, num_keys, 0, &mut all_keys);
     let previous_keys = all_keys.clone();

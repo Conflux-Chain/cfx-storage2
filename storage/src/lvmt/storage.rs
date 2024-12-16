@@ -162,10 +162,12 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit)?;
         let key_value_view = self.key_value_store.get_versioned_store(&commit)?;
 
-        // Each Amt subtree (amt_id) except the root Amt should be a fully-allocated leaf node of its parent Amt tree
+        // Each Amt subtree (amt_id) (except the children of the root Amt)
+        // should be a fully-allocated leaf node of its parent Amt tree.
+        // The expection of the children of the root Amt is due to the design that the root Amt does not allocate slots.
         let amt_node_iter = amt_node_view.iter_pending();
         for (amt_id, curve_point_with_version) in amt_node_iter {
-            if amt_id.len() > 0 {
+            if amt_id.len() > 1 {
                 let amt_node_id = amt_id;
                 let alloc_key_info = slot_alloc_view.get(&amt_node_id)?.unwrap();
                 assert_eq!(alloc_key_info.index as usize, KEY_SLOT_SIZE - 1);
@@ -430,13 +432,10 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 #[cfg(test)]
 fn allocate_version_slot_from_empty_db(key: &[u8]) -> Result<(AllocatePosition, H256)> {
     let key_digest = blake2s(key);
-    let depth = 0;
-    let amt_node_id = compute_amt_node_id(key_digest, depth);
-    let next_index = 0;
     Ok((
         AllocatePosition {
-            depth: depth as u8,
-            slot_index: next_index as u8,
+            depth: 1,
+            slot_index: 0,
         },
         key_digest,
     ))
@@ -448,7 +447,7 @@ fn allocate_version_slot(
 ) -> Result<(AllocatePosition, H256)> {
     let key_digest = blake2s(key);
 
-    let mut depth = 0;
+    let mut depth = 1;
     loop {
         let amt_node_id = compute_amt_node_id(key_digest, depth);
         let slot_alloc = db.get(&amt_node_id)?;
@@ -506,6 +505,10 @@ fn resolve_allocation_slot(
         }
 
         allocations.insert(amt_node_id, AllocationKeyInfo::new(next_index, key.into()));
+
+        if depth > 1 {
+            dbg!(depth);
+        }
 
         return AllocatePosition {
             depth: depth as u8,
