@@ -38,7 +38,6 @@ pub struct LvmtStore<'cache, 'db> {
 pub const ALLOC_START_VERSION: u64 = 1;
 
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
-    #[cfg(test)]
     pub fn new(
         key_value_store: VersionedStore<'cache, 'db, FlatKeyValue>,
         amt_node_store: VersionedStore<'cache, 'db, AmtNodes>,
