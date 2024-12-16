@@ -5,6 +5,7 @@ use std::{
 
 use ethereum_types::H256;
 use once_cell::sync::Lazy;
+use rand_chacha::ChaChaRng;
 
 use crate::{
     backends::{DatabaseTrait, InMemoryDatabase},
@@ -58,27 +59,27 @@ impl<D: DatabaseTrait> Storage<D> {
     }
 
     pub fn confirmed_pending_to_history(&mut self, new_root_commit_id: H256) -> Result<()> {
-        dbg!(1);
         confirmed_pending_to_history(
             &mut self.backend,
             &mut self.key_value_cache,
             new_root_commit_id,
             true,
         )?;
-        dbg!(2);
+
         confirmed_pending_to_history(
             &mut self.backend,
             &mut self.amt_node_cache,
             new_root_commit_id,
             false,
         )?;
-        dbg!(3);
+
         confirmed_pending_to_history(
             &mut self.backend,
             &mut self.slot_alloc_cache,
             new_root_commit_id,
             false,
         )?;
+
         Ok(())
     }
 }
@@ -120,22 +121,30 @@ fn get_changes_from_updates(
         .map(|(k, v)| (u64_to_boxed_u8(k), option_u64_to_boxed_u8(v)))
 }
 
-fn basic<D: DatabaseTrait>() {
-    let mut db = Storage::<D>::new().unwrap();
-    let mut lvmt = db.as_manager().unwrap();
+fn gen_novel_commit_id(rng: &mut ChaChaRng, previous: &mut HashSet<H256>) -> H256 {
+    for _ in 0..1 << 4 {
+        let novel = gen_random_commit_id(rng);
+        if !previous.contains(&novel) {
+            previous.insert(novel);
+            return novel;
+        }
+    }
+    panic!()
+}
+
+// `num_keys` = 8 * 10^6 has been tested, but still contain no amt_node_id whose depth > 1
+fn basic<D: DatabaseTrait>(num_keys: usize) {
     let mut rng = get_rng_for_test();
-    let commit_1 = gen_random_commit_id(&mut rng);
-    let commit_2 = gen_random_commit_id(&mut rng);
-    let commit_2_1 = gen_random_commit_id(&mut rng);
-    let commit_3 = gen_random_commit_id(&mut rng);
-    let mut commits = HashSet::new();
-    commits.insert(commit_1);
-    commits.insert(commit_2);
-    commits.insert(commit_2_1);
-    commits.insert(commit_3);
-    assert_eq!(commits.len(), 4);
+
+    // Generate different commit_ids
+    let mut previous_commits = HashSet::new();
+    let commit_1 = gen_novel_commit_id(&mut rng, &mut previous_commits);
+    let commit_2 = gen_novel_commit_id(&mut rng, &mut previous_commits);
+    let commit_2_1 = gen_novel_commit_id(&mut rng, &mut previous_commits);
+    let commit_3 = gen_novel_commit_id(&mut rng, &mut previous_commits);
+
+    // Generate (key, value) changes for each commit
     let previous_keys = Default::default();
-    let num_keys = 100000; // 8 * 10^6 has been tested, but still contain no amt_node_id whose depth > 1
     let mut all_keys = Default::default();
     let updates_1 = gen_updates(&mut rng, &previous_keys, num_keys, 0, &mut all_keys);
     let previous_keys = all_keys.clone();
@@ -154,41 +163,46 @@ fn basic<D: DatabaseTrait>() {
     let changes_2 = get_changes_from_updates(updates_2);
     let changes_2_1 = get_changes_from_updates(updates_2_1);
     let changes_3 = get_changes_from_updates(updates_3);
+
+    // Initialize empty db
+    let mut db = Storage::<D>::new().unwrap();
+
+    let mut lvmt = db.as_manager().unwrap();
     let write_schema = D::write_schema();
-    dbg!("init");
-    lvmt.first_commit(commit_1, changes_1, &write_schema, &AMT)
+
+    lvmt.commit(None, commit_1, changes_1, &write_schema, &AMT)
         .unwrap();
     lvmt.check_consistency(commit_1, &AMT).unwrap();
-    dbg!("first");
-    lvmt.commit_for_test(commit_1, commit_2, changes_2, &write_schema, &AMT)
+
+    lvmt.commit(Some(commit_1), commit_2, changes_2, &write_schema, &AMT)
         .unwrap();
     lvmt.check_consistency(commit_2, &AMT).unwrap();
-    dbg!("second");
-    lvmt.commit_for_test(commit_1, commit_2_1, changes_2_1, &write_schema, &AMT)
+
+    lvmt.commit(Some(commit_1), commit_2_1, changes_2_1, &write_schema, &AMT)
         .unwrap();
     lvmt.check_consistency(commit_2_1, &AMT).unwrap();
-    dbg!("second-branch");
+
     lvmt.check_consistency(commit_1, &AMT).unwrap();
-    dbg!("check first after second");
+
     drop(lvmt);
     db.commit_auth(write_schema).unwrap();
-    dbg!("commit auth");
     db.confirmed_pending_to_history(commit_2).unwrap();
-    dbg!("confirmed_pending_to_history");
+
     lvmt = db.as_manager().unwrap();
     let write_schema = D::write_schema();
-    lvmt.commit_for_test(commit_2, commit_3, changes_3, &write_schema, &AMT)
+
+    lvmt.commit(Some(commit_2), commit_3, changes_3, &write_schema, &AMT)
         .unwrap();
 }
 
 #[test]
 #[ignore]
 fn basic_rocksdb() {
-    basic::<kvdb_rocksdb::Database>()
+    basic::<kvdb_rocksdb::Database>(100000)
 }
 
 #[test]
 #[ignore]
 fn basic_inmemory() {
-    basic::<InMemoryDatabase>()
+    basic::<InMemoryDatabase>(100000)
 }

@@ -52,19 +52,22 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         }
     }
 
-    #[cfg(test)]
-    pub fn commit_for_test(
+    pub fn commit(
         &mut self,
-        old_commit: H256,
+        old_commit: Option<H256>,
         new_commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
     ) -> Result<()> {
-        self.commit(old_commit, new_commit, changes, write_schema, pp)
+        if let Some(old_commit) = old_commit {
+            self.subsequent_commit(old_commit, new_commit, changes, write_schema, pp)
+        } else {
+            self.first_commit(new_commit, changes, write_schema, pp)
+        }
     }
 
-    pub fn first_commit(
+    fn first_commit(
         &mut self,
         commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
@@ -207,43 +210,23 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         }
 
         // Check consistency between `slot_versions` and `slot_allocs`
+        let slot_versions_simple: BTreeMap<_, _> = slot_versions
+            .iter()
+            .map(|(amt_id, node_map)| {
+                let node_map_simple: BTreeMap<_, _> = node_map
+                    .iter()
+                    .map(|(node_index, slot_map)| {
+                        let slot_set: BTreeSet<_> = slot_map.keys().cloned().collect();
+                        (*node_index, slot_set)
+                    })
+                    .collect();
+                (amt_id.clone(), node_map_simple)
+            })
+            .collect();
         assert_eq!(
-            slot_versions.len(),
-            slot_allocs.len(),
+            slot_versions_simple, slot_allocs,
             "Inconsistent allocations."
         );
-        for (amt_id, node_map) in slot_versions.iter() {
-            match slot_allocs.get(amt_id) {
-                Some(alloc_node_map) => {
-                    assert_eq!(
-                        node_map.len(),
-                        alloc_node_map.len(),
-                        "Inconsistent allocations."
-                    );
-                    for (node_index, slot_map) in node_map {
-                        if slot_map.len() > KEY_SLOT_SIZE {
-                            panic!();
-                        }
-                        match alloc_node_map.get(node_index) {
-                            Some(alloc_slot_map) => {
-                                assert_eq!(
-                                    slot_map.len(),
-                                    alloc_slot_map.len(),
-                                    "Inconsistent allocations."
-                                );
-                                for (slot_index, version) in slot_map {
-                                    if !alloc_slot_map.contains(slot_index) {
-                                        panic!("Inconsistent allocations.")
-                                    }
-                                }
-                            }
-                            None => panic!("Inconsistent allocations."),
-                        }
-                    }
-                }
-                None => panic!("Inconsistent allocations."),
-            }
-        }
 
         // Add amt node to `slot_versions`
         let amt_node_iter = amt_node_view.iter_pending();
@@ -272,9 +255,6 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
         // Compute the commitment of each Amt tree
         for (amt_id, node_map) in slot_versions {
-            if amt_id.len() > 1 {
-                dbg!(amt_id);
-            }
             let mut basis = vec![];
             let mut bigints = vec![];
             for (node_index, slot_map) in node_map {
@@ -296,7 +276,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         Ok(())
     }
 
-    fn commit(
+    fn subsequent_commit(
         &mut self,
         old_commit: H256,
         new_commit: H256,
@@ -488,10 +468,6 @@ fn resolve_allocation_slot(
         }
 
         allocations.insert(amt_node_id, AllocationKeyInfo::new(next_index, key.into()));
-
-        if depth > 1 {
-            dbg!(depth);
-        }
 
         return AllocatePosition {
             depth: depth as u8,
