@@ -49,16 +49,25 @@ impl AmtChangeManager {
 
     pub fn compute_amt_changes(
         &self,
-        db: &KeyValueSnapshotRead<'_, AmtNodes>,
+        maybe_db: Option<&KeyValueSnapshotRead<'_, AmtNodes>>,
         pp: &AmtParams<PE>,
     ) -> Result<Vec<(AmtId, CurvePointWithVersion)>> {
         let mut result = vec![];
 
-        for (key, value) in self.0.iter() {
-            let mut curve_point = db.get(key)?.unwrap_or_default();
-            curve_point.point += commitment_diff(value, pp);
-            curve_point.version += 1;
-            result.push((*key, curve_point));
+        if let Some(db) = maybe_db {
+            for (key, value) in self.0.iter() {
+                let mut curve_point = db.get(key)?.unwrap_or_default();
+                curve_point.point += commitment_diff(value, pp);
+                curve_point.version += 1;
+                result.push((*key, curve_point));
+            }
+        } else {
+            for (key, value) in self.0.iter() {
+                let mut curve_point: CurvePointWithVersion = Default::default();
+                curve_point.point += commitment_diff(value, pp);
+                curve_point.version += 1;
+                result.push((*key, curve_point));
+            }
         }
 
         let curve_point_iter_mut = result.iter_mut().map(|(_, value)| &mut value.point);

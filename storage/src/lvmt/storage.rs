@@ -61,7 +61,6 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         self.commit(old_commit, new_commit, changes, write_schema, pp)
     }
 
-    #[cfg(test)]
     pub fn first_commit(
         &mut self,
         commit: H256,
@@ -69,10 +68,6 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
     ) -> Result<()> {
-        use crate::middlewares::SnapshotView;
-
-        let amt_node_view = SnapshotView::<'_, AmtNodes>::new_empty();
-
         let mut key_value_changes = vec![];
         let mut allocations = BTreeMap::new();
         let mut amt_change_manager = AmtChangeManager::default();
@@ -104,7 +99,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             ));
         }
 
-        let amt_changes = amt_change_manager.compute_amt_changes(&amt_node_view, pp)?;
+        let amt_changes = amt_change_manager.compute_amt_changes(None, pp)?;
 
         // Update auth changes
         let auth_changes = {
@@ -374,7 +369,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         }
         dbg!(2);
 
-        let amt_changes = amt_change_manager.compute_amt_changes(&amt_node_view, pp)?;
+        let amt_changes = amt_change_manager.compute_amt_changes(Some(&amt_node_view), pp)?;
         dbg!(3);
 
         // Update auth changes
@@ -429,7 +424,6 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
     }
 }
 
-#[cfg(test)]
 fn allocate_version_slot_from_empty_db(key: &[u8]) -> Result<(AllocatePosition, H256)> {
     let key_digest = blake2s(key);
     Ok((

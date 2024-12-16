@@ -12,5 +12,5 @@ pub use versioned_flat_key_value::{
 
 #[cfg(test)]
 pub use versioned_flat_key_value::{
-    confirmed_pending_to_history, gen_random_commit_id, gen_updates, get_rng_for_test, SnapshotView,
+    confirmed_pending_to_history, gen_random_commit_id, gen_updates, get_rng_for_test,
 };

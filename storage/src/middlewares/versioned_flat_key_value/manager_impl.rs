@@ -24,14 +24,6 @@ pub struct SnapshotView<'db, T: VersionedKeyValueSchema> {
 
 impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
     #[cfg(test)]
-    pub fn new_empty() -> Self {
-        Self {
-            pending_updates: None,
-            history: None,
-        }
-    }
-
-    #[cfg(test)]
     pub fn iter_pending(&self) -> impl Iterator<Item = (T::Key, ValueEntry<T::Value>)> {
         if self.history.is_some() {
             panic!("Cannot test iter for non-empty history");
