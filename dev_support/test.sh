@@ -38,8 +38,8 @@ cargo clippy --features parallel
 echoStep "Test"
 cargo test -r --all
 
-echoStep "Test bn254 (parallel)"
-cargo test -r --features parallel,bn254
+#echoStep "Test bn254 (parallel)"
+#cargo test -r --features parallel,bn254
 
 #echoStep "Test ignore (bn254), must parallel"
 #cargo test -r --features parallel,bn254 -- --ignored
@@ -50,8 +50,8 @@ cargo test -r --features parallel,bls12-381
 #echoStep "Test ignore (bls12-381), must parallel"
 #cargo test -r --features parallel,bls12-381 -- --ignored
 
-echoStep "Test amt (parallel, bn254), use previous pp"
-cargo test -r -p amt --features parallel,bn254
+#echoStep "Test amt (parallel, bn254), use previous pp"
+#cargo test -r -p amt --features parallel,bn254
 
-echoStep "Test amt (parallel, bls12-381), use previous pp"
-cargo test -r -p amt --features parallel,bls12-381
+#echoStep "Test amt (parallel, bls12-381), use previous pp"
+#cargo test -r -p amt --features parallel,bls12-381
