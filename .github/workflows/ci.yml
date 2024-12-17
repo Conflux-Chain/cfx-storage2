@@ -21,6 +21,9 @@ jobs:
           apt-get update
           apt-get install -y curl wget
 
+      - name: Install libclang
+        run: apt-get install -y libclang-dev
+        
       - name: Install protobuf-compiler
         run: apt-get install -y protobuf-compiler
 
