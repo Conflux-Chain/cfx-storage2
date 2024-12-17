@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 amt = { workspace = true }
-storage = { workspace = true }
 
 pairing_ce = { git = "https://github.com/Conflux-Chain/pot-phase2", rev = "1e7fd60" }
 powersoftau = { git = "https://github.com/Conflux-Chain/pot-phase2", rev = "1e7fd60" }
@@ -14,7 +13,6 @@ parking_lot = "0.12"
 
 ark-ec = "0.5"
 ark-ff = "0.5"
-ark-poly = "0.5"
 ark-serialize = "0.5"
 ark-bls12-381 = "0.5"
 ark-std = "0.5"
@@ -39,6 +37,6 @@ lazy_static = "1.4"
 
 [features]
 default = []
-parallel = ["ark-poly/parallel", "ark-ec/parallel", "ark-std/parallel", "rayon"]
-bn254 = []#["storage/bn254"]
-bls12-381 = []#["storage/bls12-381"]
+parallel = ["ark-ec/parallel", "ark-std/parallel", "rayon", "amt/parallel"]
+bn254 = ["amt/bn254"]
+bls12-381 = ["amt/bls12-381"]
