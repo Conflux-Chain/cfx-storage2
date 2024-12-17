@@ -41,11 +41,11 @@ cargo test -r --all
 echoStep "Test bn254 (parallel)"
 cargo test -r --features parallel,bn254
 
-echoStep "Test bls12-381 (parallel)"
-cargo test -r --features parallel,bls12-381
-
 echoStep "Test ignore (bn254), must parallel"
 cargo test -r --features parallel,bn254 -- --ignored
+
+echoStep "Test bls12-381 (parallel)"
+cargo test -r --features parallel,bls12-381
 
 echoStep "Test ignore (bls12-381), must parallel"
 cargo test -r --features parallel,bls12-381 -- --ignored
