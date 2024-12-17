@@ -5,21 +5,27 @@ edition = "2021"
 
 [dependencies]
 amt = { workspace = true }
+
+ark-ec = { workspace = true }
+ark-ff = { workspace = true }
+ark-poly = { workspace = true }
+ark-serialize = { workspace = true }
+ark-bls12-381 = { workspace = true }
+ark-bn254 = { workspace = true }
+
+parking_lot = { workspace = true }
+
+once_cell = { workspace = true }
+
 thiserror = "1"
 auto_impl = "1.2"
+
 #kvdb-rocksdb = "0.19"
 kvdb-rocksdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "3fcd845" }
 #kvdb = "0.13"
 kvdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "3fcd845" }
-parking_lot = "0.12"
 
 tinyvec = "1.8"
-
-ark-ec = "0.5"
-ark-ff = "0.5"
-ark-poly = "0.5"
-ark-serialize = "0.5"
-ark-bls12-381 = "0.5"
 
 ethereum-types = "0.12"
 
@@ -31,13 +37,8 @@ static_assertions = "1.1.0"
 
 proptest = "1.5"
 
-rand = "0.8"
-
-once_cell = "1.19"
-ark-bn254 = "0.5"
-
 [dev-dependencies]
-rand = "0.8.0"
+rand = { workspace = true }
 rand_distr = "0.4.0"
 rand_chacha = "0.2.1"
 
