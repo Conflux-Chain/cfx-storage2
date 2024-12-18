@@ -305,20 +305,20 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_challenge_12_nomal() {
+    fn test_load_from_challenge_nomal() {
         let input_path = format!("{}/data", crate_path());
         let input_type = InputType::Challenge;
-        let file_size_pow = 12;
-        let read_from = 3840;
-        let read_size_pow = 8;
+        let file_size_pow = 7;
+        let read_size_pow = 5;
         let chunk_size_pow = 10;
+        let read_from = 2u32.pow(file_size_pow as u32) - 2u32.pow(read_size_pow as u32);
 
         prepare_test_file(input_type, file_size_pow);
         let pot = from_ppot_file(
             &input_path,
             input_type,
             file_size_pow,
-            read_from,
+            read_from as usize,
             read_size_pow,
             chunk_size_pow,
         )
@@ -331,20 +331,20 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_challenge_12_too_long() {
+    fn test_load_from_challenge_too_long() {
         let input_path = format!("{}/data", crate_path());
         let input_type = InputType::Challenge;
-        let file_size_pow = 12;
-        let read_from = 3841;
-        let read_size_pow = 8;
+        let file_size_pow = 7;
+        let read_size_pow = 5;
         let chunk_size_pow = 10;
+        let read_from = 2u32.pow(file_size_pow as u32) - 2u32.pow(read_size_pow as u32) + 1;
 
         prepare_test_file(input_type, file_size_pow);
         let pot = from_ppot_file(
             &input_path,
             input_type,
             file_size_pow,
-            read_from,
+            read_from as usize,
             read_size_pow,
             chunk_size_pow,
         );
@@ -353,12 +353,12 @@ mod tests {
 
     //#[ignore = "heavy task"]
     #[test]
-    fn test_load_from_high_deg_response_nomal() {
+    fn test_load_from_response_nomal() {
         // expect to deg 28
         let input_path = format!("{}/data", crate_path());
         let input_type = InputType::Response;
-        let file_size_pow = 12;
-        let read_size_pow = 8;
+        let file_size_pow = 7;
+        let read_size_pow = 5;
         let chunk_size_pow = 10;
         let read_from = 2u32.pow(file_size_pow) - 2u32.pow(read_size_pow);
 

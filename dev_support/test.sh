@@ -6,8 +6,8 @@ echoStep() {
     echo -e "\033[1;34m────────────────────────────────────────────────────────\033[0m"
 }
 
-rm ppot2ark/data/*12*381
-rm ppot2ark/data/*12*254
+rm ppot2ark/data/*7*381
+rm ppot2ark/data/*7*254
 rm -rf amt/pp/*-05.bin
 
 set -e
