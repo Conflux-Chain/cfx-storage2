@@ -23,7 +23,7 @@ echoStep "Check all tests"
 cargo check --all --tests --benches
 
 echoStep "Check clippy"
-cargo clippy
+cargo clippy --all-targets --all-features -- -D warnings
 
 echoStep "Test"
 cargo test -r --all
