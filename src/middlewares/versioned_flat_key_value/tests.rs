@@ -316,7 +316,7 @@ impl<T: Eq + std::hash::Hash + Clone> UniqueVec<T> {
         self.items.len()
     }
 
-    pub fn to_vec(self) -> Vec<T> {
+    pub fn into_vec(self) -> Vec<T> {
         self.items
     }
 }
@@ -680,6 +680,7 @@ fn gen_updates(
     updates
 }
 
+#[allow(clippy::type_complexity)]
 fn gen_init(
     num_history: usize,
     rng: &mut ChaChaRng,
@@ -725,7 +726,7 @@ fn gen_init(
         0,
         history_cids
             .clone()
-            .to_vec()
+            .into_vec()
             .into_iter()
             .zip(history_updates.clone())
             .collect(),
@@ -1220,8 +1221,6 @@ fn test_versioned_store(num_history: usize, num_pending: usize, num_operations: 
                 num_gen_previous_keys,
             ),
             Operation::ConfirmedPendingToHistory => {
-                drop(versioned_store_proxy);
-
                 let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
 
                 drop(real_versioned_store);
