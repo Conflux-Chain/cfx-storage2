@@ -1,11 +1,11 @@
-use std::{borrow::Borrow, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use ark_ff::Zero;
 
-use super::amt::{ec_algebra::Pairing, AmtParams};
+use amt::AmtParams;
 
 use super::{
-    crypto::{G1Config, G1},
+    crypto::{G1, PE},
     table_schema::AmtNodes,
     types::{batch_normalize, AllocatePosition, AmtId, CurvePointWithVersion, SLOT_SIZE},
 };
@@ -47,15 +47,11 @@ impl AmtChangeManager {
         self.record(amt_id, node_index, (SLOT_SIZE - 1) as u8);
     }
 
-    pub fn compute_amt_changes<PE: Pairing>(
+    pub fn compute_amt_changes(
         &self,
         db: &KeyValueSnapshotRead<'_, AmtNodes>,
         pp: &AmtParams<PE>,
-    ) -> Result<Vec<(AmtId, CurvePointWithVersion)>>
-    where
-        <PE as super::amt::ec_algebra::Pairing>::G1Affine:
-            Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
-    {
+    ) -> Result<Vec<(AmtId, CurvePointWithVersion)>> {
         let mut result = vec![];
 
         for (key, value) in self.0.iter() {
@@ -72,11 +68,7 @@ impl AmtChangeManager {
     }
 }
 
-pub fn commitment_diff<PE: Pairing>(change: &AmtChange, pp: &AmtParams<PE>) -> G1
-where
-    <PE as super::amt::ec_algebra::Pairing>::G1Affine:
-        Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
-{
+pub fn commitment_diff(change: &AmtChange, pp: &AmtParams<PE>) -> G1 {
     let mut diff_sum = G1::zero();
     for (idx, diff) in change.iter() {
         let basis_power = pp.get_basis_power_at(*idx as usize);

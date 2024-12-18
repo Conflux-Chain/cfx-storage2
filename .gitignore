@@ -6,8 +6,8 @@ target
 # Data
 pp
 data
-ppot2ark/data
 storage/pp
+storage/test_database
 params
 
 # Remove Cargo.lock from gitignore if creating an executable, leave it for libraries

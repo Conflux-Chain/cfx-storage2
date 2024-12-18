@@ -4,20 +4,27 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-thiserror = "1"
-auto_impl = "1.2"
-kvdb-rocksdb = "0.19"
-kvdb = "0.13"
-parking_lot = "0.12"
-
-tinyvec = "1.8"
+amt = { git = "https://github.com/Conflux-Chain/amt", rev = "828c4c6" }
 
 ark-ec = "0.5"
 ark-ff = "0.5"
 ark-poly = "0.5"
 ark-serialize = "0.5"
 ark-bls12-381 = "0.5"
+ark-bn254 = "0.5"
 ark-std = "0.5"
+
+parking_lot = "0.12"
+
+once_cell = "1.19"
+
+thiserror = "1"
+auto_impl = "1.2"
+
+kvdb-rocksdb = "0.19"
+kvdb = "0.13"
+
+tinyvec = "1.8"
 
 ethereum-types = "0.12"
 
@@ -27,34 +34,15 @@ slab = "0.4.9"
 
 static_assertions = "1.1.0"
 
-itertools = "0.13"
-
 proptest = "1.5"
 
-error-chain = { version = "0.12", default-features = false }
-rayon = { version = "1.10", optional = true }
-base64 = "0.22"
-rand = "0.8"
-
-once_cell = "1.19"
-ark-bn254 = "0.5"
-
-anyhow = "1"
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
-
 [dev-dependencies]
-rand = "0.8.0"
+rand = "0.8"
 rand_distr = "0.4.0"
 rand_chacha = "0.2.1"
 
 [features]
 default = []
-parallel = ["ark-poly/parallel", "ark-ec/parallel", "ark-std/parallel", "rayon"]
-bn254 = []
-bls12-381 = []
-
-[[bin]]
-name = "build_params"
-test = false
-bench = false
+parallel = ["ark-poly/parallel", "ark-ec/parallel", "amt/parallel"]
+bn254 = ["amt/bn254"]
+bls12-381 = ["amt/bls12-381"]

@@ -1,9 +1,5 @@
-use std::borrow::Borrow;
-
-use super::{
-    amt::{ec_algebra::Pairing, AmtParams},
-    crypto::G1Config,
-};
+use super::crypto::PE;
+use amt::AmtParams;
 use ethereum_types::H256;
 
 use super::{
@@ -33,18 +29,14 @@ pub struct LvmtStore<'cache, 'db> {
 }
 
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
-    fn commit<PE: Pairing>(
+    fn commit(
         &self,
         old_commit: H256,
         new_commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
-    ) -> Result<()>
-    where
-        <PE as super::amt::ec_algebra::Pairing>::G1Affine:
-            Borrow<ark_ec::short_weierstrass::Affine<G1Config>>,
-    {
+    ) -> Result<()> {
         let amt_node_view = self.amt_node_store.get_versioned_store(&old_commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&old_commit)?;
         let key_value_view = self.key_value_store.get_versioned_store(&old_commit)?;

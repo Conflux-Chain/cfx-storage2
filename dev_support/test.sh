@@ -6,9 +6,9 @@ echoStep() {
     echo -e "\033[1;34m────────────────────────────────────────────────────────\033[0m"
 }
 
-rm ppot2ark/data/*12*381
-rm ppot2ark/data/*12*254
-rm -rf storage/pp/*-05.bin
+rm ppot2ark/data/*7*381
+rm ppot2ark/data/*7*254
+rm -rf amt/pp/*-05.bin
 
 set -e
 
@@ -38,30 +38,14 @@ cargo clippy --features parallel
 echoStep "Test"
 cargo test -r --all
 
-echoStep "Test ppot2ark (bls12-381)"
-cargo test -r -p ppot2ark --features bls12-381
+#echoStep "Test bn254 (parallel)"
+#cargo test -r --features parallel,bn254
 
-echoStep "Test amt, use previous pp"
-cargo test -r -- lvmt::amt
+#echoStep "Test ignore (bn254), must parallel"
+#cargo test -r --features parallel,bn254 -- --ignored
 
-rm -rf storage/pp/*-05.bin
+echoStep "Test bls12-381 (parallel)"
+cargo test -r --features parallel,bls12-381
 
-echoStep "Test (parallel)"
-cargo test -r --all --features parallel
-
-echoStep "Test amt (parallel), use previous pp"
-cargo test -r --features parallel -- lvmt::amt
-
-rm -rf storage/pp/*-05.bin
-
-echoStep "Test amt (bn254)"
-cargo test -r --features parallel,bn254 -- lvmt::amt
-
-echoStep "Test amt (bls12-381)"
-cargo test -r --features parallel,bls12-381 -- lvmt::amt
-
-echoStep "Test amt (bn254), use previous pp"
-cargo test -r --features parallel,bn254 -- lvmt::amt
-
-echoStep "Test amt (bls12-381), use previous pp"
-cargo test -r --features parallel,bls12-381 -- lvmt::amt
+#echoStep "Test ignore (bls12-381), must parallel"
+#cargo test -r --features parallel,bls12-381 -- --ignored
