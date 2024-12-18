@@ -4,8 +4,6 @@
 target
 
 # Data
-pp
-data
 storage/pp
 storage/test_database
 params

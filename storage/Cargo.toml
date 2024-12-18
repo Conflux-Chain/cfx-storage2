@@ -42,7 +42,7 @@ rand_distr = "0.4.0"
 rand_chacha = "0.2.1"
 
 [features]
-default = []
+default = ["parallel", "bls12-381"]
 parallel = ["ark-poly/parallel", "ark-ec/parallel", "amt/parallel"]
 bn254 = ["amt/bn254"]
 bls12-381 = ["amt/bls12-381"]
