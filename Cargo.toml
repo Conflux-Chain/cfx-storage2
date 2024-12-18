@@ -3,8 +3,4 @@ resolver = "2"
 
 members = [
     "storage",
-    "ppot2ark",
 ]
-
-[workspace.dependencies]
-storage = { path = "storage"}
