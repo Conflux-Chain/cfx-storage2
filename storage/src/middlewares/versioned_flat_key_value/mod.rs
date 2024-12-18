@@ -214,7 +214,6 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
     // old root..=new root's parent
     let (to_confirm_start_height, to_confirm_ids_maps) =
         pending_part.change_root(new_root_commit_id)?;
-    dbg!("pending");
 
     confirm_series_to_history::<D, T>(
         db,
@@ -222,7 +221,6 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
         to_confirm_ids_maps,
         is_first_t,
     )?;
-    dbg!("history");
 
     Ok(())
 }
