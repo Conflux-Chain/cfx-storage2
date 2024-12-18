@@ -3,29 +3,4 @@ resolver = "2"
 
 members = [
     "storage",
-    "ppot2ark",
-    "amt"
 ]
-
-[workspace.dependencies]
-amt = { path = "amt" }
-
-ark-ec = "0.5"
-ark-ff = "0.5"
-ark-poly = "0.5"
-ark-serialize = "0.5"
-ark-bls12-381 = "0.5"
-ark-bn254 = "0.5"
-ark-std = "0.5"
-
-rayon = "1.10"
-
-rand = "0.8"
-
-parking_lot = "0.12"
-
-once_cell = "1.19"
-
-anyhow = "1"
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }

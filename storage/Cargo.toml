@@ -4,18 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-amt = { workspace = true }
+amt = { git = "https://github.com/Conflux-Chain/amt", rev = "828c4c6" }
 
-ark-ec = { workspace = true }
-ark-ff = { workspace = true }
-ark-poly = { workspace = true }
-ark-serialize = { workspace = true }
-ark-bls12-381 = { workspace = true }
-ark-bn254 = { workspace = true }
+ark-ec = "0.5"
+ark-ff = "0.5"
+ark-poly = "0.5"
+ark-serialize = "0.5"
+ark-bls12-381 = "0.5"
+ark-bn254 = "0.5"
+ark-std = "0.5"
 
-parking_lot = { workspace = true }
+parking_lot = "0.12"
 
-once_cell = { workspace = true }
+once_cell = "1.19"
 
 thiserror = "1"
 auto_impl = "1.2"
@@ -38,7 +39,7 @@ static_assertions = "1.1.0"
 proptest = "1.5"
 
 [dev-dependencies]
-rand = { workspace = true }
+rand = "0.8"
 rand_distr = "0.4.0"
 rand_chacha = "0.2.1"
 
