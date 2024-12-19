@@ -1,8 +1,10 @@
+use amt::AmtParams;
 use ethereum_types::H256;
 
 use super::{
     amt_change_manager::AmtChangeManager,
     auth_changes::{amt_change_hash, key_value_hash, process_dump_items, AuthChangeTable},
+    crypto::PE,
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
     types::AllocatePosition,
 };
@@ -33,6 +35,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         new_commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
+        pp: &AmtParams<PE>,
     ) -> Result<()> {
         let amt_node_view = self.amt_node_store.get_versioned_store(&old_commit)?;
         let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&old_commit)?;
@@ -64,7 +67,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             ));
         }
 
-        let amt_changes = amt_change_manager.compute_amt_changes(&amt_node_view)?;
+        let amt_changes = amt_change_manager.compute_amt_changes(&amt_node_view, pp)?;
 
         // Update auth changes
         let auth_changes = {
