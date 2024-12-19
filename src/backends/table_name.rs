@@ -28,7 +28,7 @@ use TableName::*;
 use VersionedKVName::*;
 
 impl TableName {
-    pub fn max_index() -> u32 {
+    pub const fn max_index() -> u32 {
         9
     }
 }

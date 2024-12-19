@@ -5,7 +5,9 @@ use super::{
     VersionedStore,
 };
 use crate::{
-    backends::{DatabaseTrait, InMemoryDatabase, VersionedKVName},
+    backends::{
+        impls::kvdb_rocksdb::open_database, DatabaseTrait, InMemoryDatabase, VersionedKVName,
+    },
     errors::Result,
     middlewares::{
         versioned_flat_key_value::{
@@ -681,7 +683,8 @@ fn gen_updates(
 }
 
 #[allow(clippy::type_complexity)]
-fn gen_init<D: DatabaseTrait>(
+fn gen_init(
+    db: &mut impl DatabaseTrait,
     num_history: usize,
     rng: &mut ChaChaRng,
     max_num_new_keys: usize,
@@ -690,7 +693,6 @@ fn gen_init<D: DatabaseTrait>(
 ) -> (
     UniqueVec<CommitID>,
     Vec<BTreeMap<u64, Option<u64>>>,
-    D,
     VersionedMap<PendingKeyValueConfig<TestSchema, CommitID>>,
 ) {
     let mut history_cids = UniqueVec::new();
@@ -718,11 +720,10 @@ fn gen_init<D: DatabaseTrait>(
         ));
     }
 
-    let mut empty_db = D::empty_for_test().unwrap();
     let pending_part = VersionedMap::new(history_cids.items().last().copied(), history_cids.len());
 
-    confirm_series_to_history::<D, TestSchema>(
-        &mut empty_db,
+    confirm_series_to_history::<_, TestSchema>(
+        db,
         0,
         history_cids
             .clone()
@@ -733,7 +734,7 @@ fn gen_init<D: DatabaseTrait>(
     )
     .unwrap();
 
-    (history_cids, history_updates, empty_db, pending_part)
+    (history_cids, history_updates, pending_part)
 }
 
 fn gen_novel_u64(rng: &mut ChaChaRng, previous: &BTreeSet<u64>) -> u64 {
@@ -1147,7 +1148,8 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
     }
 }
 
-fn test_versioned_store<D: DatabaseTrait>(
+fn test_versioned_store(
+    db: &mut impl DatabaseTrait,
     num_history: usize,
     num_pending: usize,
     num_operations: usize,
@@ -1159,7 +1161,8 @@ fn test_versioned_store<D: DatabaseTrait>(
     let mut all_keys = BTreeSet::new();
 
     // init history part
-    let (history_cids, history_updates, mut db, mut pending_part) = gen_init::<D>(
+    let (history_cids, history_updates, mut pending_part) = gen_init(
+        db,
         num_history,
         &mut rng,
         num_gen_new_keys,
@@ -1170,7 +1173,7 @@ fn test_versioned_store<D: DatabaseTrait>(
     let mut mock_versioned_store =
         MockVersionedStore::build(history_cids.clone(), history_updates.clone());
 
-    let mut real_versioned_store = VersionedStore::new(&db, &mut pending_part).unwrap();
+    let mut real_versioned_store = VersionedStore::new(db, &mut pending_part).unwrap();
     real_versioned_store.check_consistency().unwrap();
 
     let mut versioned_store_proxy = VersionedStoreProxy::new(
@@ -1228,8 +1231,8 @@ fn test_versioned_store<D: DatabaseTrait>(
                 let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
 
                 drop(real_versioned_store);
-                let real_res = confirmed_pending_to_history(&mut db, &mut pending_part, commit_id);
-                real_versioned_store = VersionedStore::new(&db, &mut pending_part).unwrap();
+                let real_res = confirmed_pending_to_history(db, &mut pending_part, commit_id);
+                real_versioned_store = VersionedStore::new(db, &mut pending_part).unwrap();
                 real_versioned_store.check_consistency().unwrap();
 
                 versioned_store_proxy = VersionedStoreProxy::new(
@@ -1293,12 +1296,31 @@ fn test_versioned_store<D: DatabaseTrait>(
     }
 }
 
+fn empty_rocksdb(db_path: &str) -> Result<kvdb_rocksdb::Database> {
+    use crate::backends::TableName;
+
+    if std::path::Path::new(db_path).exists() {
+        std::fs::remove_dir_all(db_path)?;
+    }
+    std::fs::create_dir_all(db_path).unwrap();
+
+    open_database(TableName::max_index() + 1, db_path)
+}
+
 #[test]
 fn tests_versioned_store_inmemory() {
-    test_versioned_store::<InMemoryDatabase>(2, 10, 1000);
+    let mut db = InMemoryDatabase::empty();
+    test_versioned_store(&mut db, 2, 10, 1000);
 }
 
 #[test]
 fn tests_versioned_store_rocksdb() {
-    test_versioned_store::<kvdb_rocksdb::Database>(2, 10, 1000);
+    let db_path = "__test_database";
+
+    let mut db = empty_rocksdb(db_path).unwrap();
+    test_versioned_store(&mut db, 2, 10, 1000);
+
+    if std::path::Path::new(db_path).exists() {
+        std::fs::remove_dir_all(db_path).unwrap();
+    }
 }

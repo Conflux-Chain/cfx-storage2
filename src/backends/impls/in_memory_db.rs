@@ -39,7 +39,6 @@ impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
         Ok(Box::new(iter))
     }
 
-    #[cfg(test)]
     fn iter_from_start(&self) -> Result<TableIter<T>> {
         let range = self.inner.0.range((self.col, Vec::new())..);
         let iter = range
@@ -53,11 +52,6 @@ impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
 impl DatabaseTrait for InMemoryDatabase {
     type TableID = u32;
     type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
-
-    #[cfg(test)]
-    fn empty_for_test() -> Result<Self> {
-        Ok(Self::empty())
-    }
 
     fn view<T: TableSchema>(&self) -> Result<impl '_ + TableRead<T>> {
         Ok(InMemoryTable {
