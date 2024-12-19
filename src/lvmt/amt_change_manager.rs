@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
+use amt::AmtParams;
+use ark_ff::Zero;
+
 use super::{
-    crypto::G1,
+    crypto::{G1, PE},
     table_schema::AmtNodes,
     types::{batch_normalize, AllocatePosition, AmtId, CurvePointWithVersion, SLOT_SIZE},
 };
@@ -46,12 +49,13 @@ impl AmtChangeManager {
     pub fn compute_amt_changes(
         &self,
         db: &KeyValueSnapshotRead<'_, AmtNodes>,
+        pp: &AmtParams<PE>,
     ) -> Result<Vec<(AmtId, CurvePointWithVersion)>> {
         let mut result = vec![];
 
         for (key, value) in self.0.iter() {
             let mut curve_point = db.get(key)?.unwrap_or_default();
-            curve_point.point += commitment_diff(value);
+            curve_point.point += commitment_diff(value, pp);
             curve_point.version += 1;
             result.push((*key, curve_point));
         }
@@ -63,6 +67,17 @@ impl AmtChangeManager {
     }
 }
 
-pub fn commitment_diff(change: &AmtChange) -> G1 {
-    todo!()
+pub fn commitment_diff(change: &AmtChange, pp: &AmtParams<PE>) -> G1 {
+    let mut diff_sum = G1::zero();
+
+    for (idx, diff) in change.iter() {
+        let basis_power = pp.get_basis_power_at(*idx as usize);
+        for (i_diff, i_basis_power) in diff.iter().zip(basis_power.into_iter()) {
+            if *i_diff {
+                diff_sum += i_basis_power;
+            }
+        }
+    }
+
+    diff_sum
 }

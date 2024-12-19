@@ -31,8 +31,12 @@ itertools = "0.13"
 
 proptest = "1.5"
 
+amt = { git = "https://github.com/Conflux-Chain/amt", rev = "828c4c6" }
 
 [dev-dependencies]
 rand = "0.8.0"
 rand_distr = "0.4.0"
 rand_chacha = "0.2.1"
+
+[features]
+default = ["amt/bls12-381", "ark-poly/parallel", "ark-ec/parallel", "amt/parallel"]
