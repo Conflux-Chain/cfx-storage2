@@ -1,4 +1,7 @@
-use std::borrow::{Borrow, Cow};
+use std::{
+    borrow::{Borrow, Cow},
+    path::PathBuf,
+};
 
 use super::super::{
     serde::{Decode, Encode},
@@ -9,10 +12,17 @@ use super::super::{
 use crate::errors::{DecodeError, Result};
 
 use kvdb::KeyValueDB;
+use kvdb_rocksdb::DatabaseConfig;
 
 pub struct RocksDBColumn<'a> {
     col: u32,
     inner: &'a kvdb_rocksdb::Database,
+}
+
+pub fn empty_rocksdb(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database> {
+    let config = DatabaseConfig::with_columns(num_cols);
+    let db_path = PathBuf::from(path);
+    Ok(kvdb_rocksdb::Database::open(&config, db_path)?)
 }
 
 impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
@@ -40,7 +50,7 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
         Ok(Box::new(iter))
     }
 
-    // #[cfg(test)]
+    #[cfg(test)]
     fn iter_from_start(&self) -> Result<TableIter<T>> {
         let iter = self.inner.iter(self.col).map(|kv| match kv {
             Ok((k, v)) => Ok((
@@ -57,6 +67,19 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
 impl DatabaseTrait for kvdb_rocksdb::Database {
     type TableID = u32;
     type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
+
+    #[cfg(test)]
+    fn empty_for_test() -> Result<Self> {
+        use crate::backends::TableName;
+
+        let db_path = "test_database";
+        if std::path::Path::new(db_path).exists() {
+            std::fs::remove_dir_all(db_path)?;
+        }
+        std::fs::create_dir_all(db_path).unwrap();
+
+        empty_rocksdb(TableName::max_index() + 1, db_path)
+    }
 
     fn view<T: TableSchema>(&self) -> Result<impl '_ + TableRead<T>> {
         Ok(RocksDBColumn {

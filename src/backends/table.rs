@@ -22,7 +22,7 @@ pub trait TableRead<T: TableSchema> {
 
     fn iter<'a>(&'a self, key: &T::Key) -> Result<TableIter<'a, '_, T>>;
 
-    // #[cfg(test)]
+    #[cfg(test)]
     fn iter_from_start(&self) -> Result<TableIter<T>>;
 }
 
