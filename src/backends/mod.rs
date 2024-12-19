@@ -22,6 +22,10 @@ pub trait DatabaseTrait: Sized + Send + Sync {
     /// For example, MDBX supports subkeys.
     type WriteSchema: WriteSchemaTrait;
 
+    /// Initializes an empty database.
+    #[cfg(test)]
+    fn empty_for_test() -> Result<Self>;
+
     /// Returns a read-only view of a table.
     ///
     /// # Type Parameters

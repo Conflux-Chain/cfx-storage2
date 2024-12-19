@@ -27,6 +27,12 @@ pub const fn history_index(versioned_kv: VersionedKVName) -> TableName {
 use TableName::*;
 use VersionedKVName::*;
 
+impl TableName {
+    pub fn max_index() -> u32 {
+        9
+    }
+}
+
 impl From<TableName> for u32 {
     fn from(t: TableName) -> Self {
         match t {
