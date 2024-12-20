@@ -9,7 +9,7 @@ use super::super::{
     write_schema::WriteSchemaNoSubkey,
     DatabaseTrait, TableIter, TableRead,
 };
-use crate::errors::{DecodeError, Result};
+use crate::errors::{DatabaseError, Result};
 
 use kvdb::KeyValueDB;
 use kvdb_rocksdb::DatabaseConfig;
@@ -44,7 +44,7 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
                     Cow::Owned(<T::Key>::decode(&k)?.into_owned()),
                     Cow::Owned(<T::Value>::decode(&v)?.into_owned()),
                 )),
-                Err(_) => Err(DecodeError::RocksDbError),
+                Err(e) => Err(DatabaseError::IoError(e)),
             });
 
         Ok(Box::new(iter))
@@ -56,7 +56,7 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
                 Cow::Owned(<T::Key>::decode(&k)?.into_owned()),
                 Cow::Owned(<T::Value>::decode(&v)?.into_owned()),
             )),
-            Err(_) => Err(DecodeError::RocksDbError),
+            Err(e) => Err(DatabaseError::IoError(e)),
         });
 
         Ok(Box::new(iter))

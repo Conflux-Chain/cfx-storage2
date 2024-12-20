@@ -19,15 +19,27 @@ pub enum StorageError {
 
     #[error("io error {0:?}")]
     IoError(#[from] std::io::Error),
-
     #[error("decode error {0:?}")]
     DecodeError(#[from] DecodeError),
+
+    #[error("database error {0:?}")]
+    DatabaseError(#[from] DatabaseError),
 
     #[error("pending error {0:?}")]
     PendingError(#[from] PendingError<CommitID>),
 }
 
 pub type Result<T> = ::std::result::Result<T, StorageError>;
+
+#[derive(Error, Debug)]
+pub enum DatabaseError {
+    #[error("decode error {0:?}")]
+    DecodeError(#[from] DecodeError),
+    #[error("io error {0:?}")]
+    IoError(std::io::Error),
+}
+
+pub type DbResult<T> = ::std::result::Result<T, DatabaseError>;
 
 #[derive(Error, Debug, Clone, Copy, PartialEq)]
 pub enum DecodeError {
@@ -39,8 +51,6 @@ pub enum DecodeError {
     CryptoError,
     #[error("Custom error: {0}")]
     Custom(&'static str),
-    #[error("An error occurred while interacting with the kvdb_rocksdb interface")]
-    RocksDbError,
 }
 
 impl From<SerializationError> for DecodeError {
@@ -61,7 +71,20 @@ impl PartialEq for StorageError {
             (CommitIdAlreadyExistsInHistory, CommitIdAlreadyExistsInHistory) => true,
             (IoError(_), IoError(_)) => true,
             (DecodeError(e1), DecodeError(e2)) => e1 == e2,
+            (DatabaseError(e1), DatabaseError(e2)) => e1 == e2,
             (PendingError(e1), PendingError(e2)) => e1 == e2,
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+impl PartialEq for DatabaseError {
+    fn eq(&self, other: &Self) -> bool {
+        use DatabaseError::*;
+        match (self, other) {
+            (IoError(_), IoError(_)) => true,
+            (DecodeError(e1), DecodeError(e2)) => e1 == e2,
             _ => false,
         }
     }
