@@ -22,6 +22,19 @@ pub struct SnapshotView<'db, T: VersionedKeyValueSchema> {
     history: Option<SnapshotHistorical<'db, T>>,
 }
 
+impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
+    #[cfg(test)]
+    pub fn iter_pending(&self) -> impl Iterator<Item = (T::Key, ValueEntry<T::Value>)> {
+        if self.history.is_some() {
+            panic!("Cannot test iter for non-empty history");
+        }
+        self.pending_updates
+            .as_ref()
+            .map(|map| map.clone().into_iter())
+            .unwrap_or_else(|| BTreeMap::new().into_iter())
+    }
+}
+
 pub struct SnapshotHistorical<'db, T: VersionedKeyValueSchema> {
     history_number: HistoryNumber,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
