@@ -22,13 +22,17 @@ pub struct RocksDBColumn<'a> {
 pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database> {
     let config = DatabaseConfig::with_columns(num_cols);
     let db_path = PathBuf::from(path);
-    Ok(kvdb_rocksdb::Database::open(&config, db_path)?)
+    Ok(kvdb_rocksdb::Database::open(&config, db_path).map_err(DatabaseError::IoError)?)
 }
 
 impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
-        if let Some(v) = KeyValueDB::get(self.inner, self.col, key.encode().borrow())? {
-            let owned = <T::Value>::decode(&v)?.into_owned();
+        if let Some(v) = KeyValueDB::get(self.inner, self.col, key.encode().borrow())
+            .map_err(DatabaseError::IoError)?
+        {
+            let owned = <T::Value>::decode(&v)
+                .map_err(DatabaseError::DecodeError)?
+                .into_owned();
             Ok(Some(Cow::Owned(owned)))
         } else {
             Ok(None)
@@ -88,6 +92,6 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
             }
         }
 
-        Ok(KeyValueDB::write(self, tx)?)
+        Ok(KeyValueDB::write(self, tx).map_err(DatabaseError::IoError)?)
     }
 }

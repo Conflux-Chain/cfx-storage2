@@ -17,11 +17,6 @@ pub enum StorageError {
     #[error("backend db fails consistency check")]
     ConsistencyCheckFailure,
 
-    #[error("io error {0:?}")]
-    IoError(#[from] std::io::Error),
-    #[error("decode error {0:?}")]
-    DecodeError(#[from] DecodeError),
-
     #[error("database error {0:?}")]
     DatabaseError(#[from] DatabaseError),
 
@@ -35,6 +30,7 @@ pub type Result<T> = ::std::result::Result<T, StorageError>;
 pub enum DatabaseError {
     #[error("decode error {0:?}")]
     DecodeError(#[from] DecodeError),
+
     #[error("io error {0:?}")]
     IoError(std::io::Error),
 }
@@ -69,8 +65,7 @@ impl PartialEq for StorageError {
             (VersionNotFound, VersionNotFound) => true,
             (CommitIDNotFound, CommitIDNotFound) => true,
             (CommitIdAlreadyExistsInHistory, CommitIdAlreadyExistsInHistory) => true,
-            (IoError(_), IoError(_)) => true,
-            (DecodeError(e1), DecodeError(e2)) => e1 == e2,
+            (ConsistencyCheckFailure, ConsistencyCheckFailure) => true,
             (DatabaseError(e1), DatabaseError(e2)) => e1 == e2,
             (PendingError(e1), PendingError(e2)) => e1 == e2,
             _ => false,
@@ -83,8 +78,8 @@ impl PartialEq for DatabaseError {
     fn eq(&self, other: &Self) -> bool {
         use DatabaseError::*;
         match (self, other) {
-            (IoError(_), IoError(_)) => true,
             (DecodeError(e1), DecodeError(e2)) => e1 == e2,
+            (IoError(_), IoError(_)) => true,
             _ => false,
         }
     }

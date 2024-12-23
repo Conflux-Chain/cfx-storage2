@@ -1300,7 +1300,7 @@ fn empty_rocksdb(db_path: &str) -> Result<kvdb_rocksdb::Database> {
     use crate::backends::TableName;
 
     if std::path::Path::new(db_path).exists() {
-        std::fs::remove_dir_all(db_path)?;
+        std::fs::remove_dir_all(db_path).unwrap();
     }
     std::fs::create_dir_all(db_path).unwrap();
 

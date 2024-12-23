@@ -4,7 +4,7 @@ use super::super::{
     write_schema::WriteSchemaNoSubkey,
     DatabaseTrait, TableIter, TableRead,
 };
-use crate::errors::Result;
+use crate::errors::{DatabaseError, Result};
 use std::{borrow::Cow, collections::BTreeMap};
 
 pub struct InMemoryDatabase(BTreeMap<(u32, Vec<u8>), Vec<u8>>);
@@ -24,7 +24,9 @@ impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
         let key = (self.col, key.encode().into_owned());
         if let Some(v) = self.inner.0.get(&key) {
-            Ok(Some(<T::Value>::decode(v)?))
+            Ok(Some(
+                <T::Value>::decode(v).map_err(DatabaseError::DecodeError)?,
+            ))
         } else {
             Ok(None)
         }
