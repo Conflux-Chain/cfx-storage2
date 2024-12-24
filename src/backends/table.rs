@@ -6,14 +6,14 @@ use super::serde::{Decode, Encode, EncodeSubKey};
 use super::table_name::TableName;
 use crate::combine_traits;
 
-use crate::errors::{DecResult, Result};
+use crate::errors::{DbResult, Result};
 use auto_impl::auto_impl;
 
 pub type TableItem<'a, T> = (
     Cow<'a, <T as TableSchema>::Key>,
     Cow<'a, <T as TableSchema>::Value>,
 );
-pub type TableIter<'a, 'b, T> = Box<dyn 'a + Iterator<Item = DecResult<TableItem<'b, T>>>>;
+pub type TableIter<'a, 'b, T> = Box<dyn 'a + Iterator<Item = DbResult<TableItem<'b, T>>>>;
 pub type TableReader<'a, T> = Arc<dyn 'a + TableRead<T>>;
 
 #[auto_impl(&, Arc)]
@@ -22,7 +22,6 @@ pub trait TableRead<T: TableSchema> {
 
     fn iter<'a>(&'a self, key: &T::Key) -> Result<TableIter<'a, '_, T>>;
 
-    // #[cfg(test)]
     fn iter_from_start(&self) -> Result<TableIter<T>>;
 }
 

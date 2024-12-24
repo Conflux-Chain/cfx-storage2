@@ -17,17 +17,37 @@ pub enum StorageError {
     #[error("backend db fails consistency check")]
     ConsistencyCheckFailure,
 
-    #[error("io error {0:?}")]
-    IoError(#[from] std::io::Error),
-
-    #[error("decode error {0:?}")]
-    DecodeError(#[from] DecodeError),
+    #[error("database error {0:?}")]
+    DatabaseError(#[from] DatabaseError),
 
     #[error("pending error {0:?}")]
     PendingError(#[from] PendingError<CommitID>),
 }
 
+impl From<DecodeError> for StorageError {
+    fn from(value: DecodeError) -> Self {
+        Self::DatabaseError(DatabaseError::DecodeError(value))
+    }
+}
+
+impl From<std::io::Error> for StorageError {
+    fn from(value: std::io::Error) -> Self {
+        Self::DatabaseError(DatabaseError::IoError(value))
+    }
+}
+
 pub type Result<T> = ::std::result::Result<T, StorageError>;
+
+#[derive(Error, Debug)]
+pub enum DatabaseError {
+    #[error("decode error {0:?}")]
+    DecodeError(#[from] DecodeError),
+
+    #[error("io error {0:?}")]
+    IoError(std::io::Error),
+}
+
+pub type DbResult<T> = ::std::result::Result<T, DatabaseError>;
 
 #[derive(Error, Debug, Clone, Copy, PartialEq)]
 pub enum DecodeError {
@@ -57,9 +77,21 @@ impl PartialEq for StorageError {
             (VersionNotFound, VersionNotFound) => true,
             (CommitIDNotFound, CommitIDNotFound) => true,
             (CommitIdAlreadyExistsInHistory, CommitIdAlreadyExistsInHistory) => true,
-            (IoError(_), IoError(_)) => true,
-            (DecodeError(e1), DecodeError(e2)) => e1 == e2,
+            (ConsistencyCheckFailure, ConsistencyCheckFailure) => true,
+            (DatabaseError(e1), DatabaseError(e2)) => e1 == e2,
             (PendingError(e1), PendingError(e2)) => e1 == e2,
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+impl PartialEq for DatabaseError {
+    fn eq(&self, other: &Self) -> bool {
+        use DatabaseError::*;
+        match (self, other) {
+            (DecodeError(e1), DecodeError(e2)) => e1 == e2,
+            (IoError(_), IoError(_)) => true,
             _ => false,
         }
     }
