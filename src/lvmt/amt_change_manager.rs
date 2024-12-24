@@ -62,9 +62,7 @@ impl AmtChangeManager {
             }
         } else {
             for (key, value) in self.0.iter() {
-                let mut curve_point: CurvePointWithVersion = Default::default();
-                curve_point.point += commitment_diff(value, pp); // TODO: remove +
-                curve_point.version += 1;
+                let curve_point = CurvePointWithVersion::new(1, commitment_diff(value, pp));
                 result.push((*key, curve_point));
             }
         }

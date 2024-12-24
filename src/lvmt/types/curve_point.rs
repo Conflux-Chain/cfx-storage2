@@ -98,6 +98,15 @@ pub struct CurvePointWithVersion {
     pub(in crate::lvmt) point: CurvePoint,
 }
 
+impl CurvePointWithVersion {
+    pub fn new(version: u64, point: G1) -> Self {
+        Self {
+            version,
+            point: CurvePoint::Projective(point),
+        }
+    }
+}
+
 impl Encode for CurvePointWithVersion {
     fn encode(&self) -> Cow<[u8]> {
         let mut writer = self.version.to_be_bytes()[3..].to_vec();

@@ -623,7 +623,7 @@ enum KeyType {
     Novel,
 }
 
-fn get_rng_for_test() -> ChaChaRng {
+pub fn get_rng_for_test() -> ChaChaRng {
     ChaChaRng::from_seed([123; 32])
 }
 
@@ -642,7 +642,7 @@ fn select_vec_element<T: Clone>(rng: &mut ChaChaRng, vec: &[T]) -> T {
     vec[rng.next_u64() as usize % num_elements].clone()
 }
 
-fn gen_updates(
+pub fn gen_updates(
     rng: &mut ChaChaRng,
     previous_keys: &BTreeSet<u64>,
     num_gen_new_keys: usize,
@@ -731,6 +731,7 @@ fn gen_init(
             .into_iter()
             .zip(history_updates.clone())
             .collect(),
+        true,
     )
     .unwrap();
 
@@ -744,10 +745,11 @@ fn gen_novel_u64(rng: &mut ChaChaRng, previous: &BTreeSet<u64>) -> u64 {
             return novel;
         }
     }
-    panic!()
+
+    panic!("Failed to generate a novel u64 after {} attempts", 1 << 4)
 }
 
-fn gen_random_commit_id(rng: &mut ChaChaRng) -> CommitID {
+pub fn gen_random_commit_id(rng: &mut ChaChaRng) -> CommitID {
     let mut bytes = [0u8; 32];
     for i in 0..4 {
         let num = rng.next_u64().to_ne_bytes();
@@ -803,7 +805,11 @@ where
                 return novel;
             }
         }
-        panic!()
+
+        panic!(
+            "Failed to generate a novel commit ID after {} attempts",
+            1 << 4
+        )
     }
 
     fn gen_commit_id(&self, rng: &mut ChaChaRng) -> (CommitIDType, CommitID) {
@@ -1231,7 +1237,7 @@ fn test_versioned_store(
                 let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
 
                 drop(real_versioned_store);
-                let real_res = confirmed_pending_to_history(db, &mut pending_part, commit_id);
+                let real_res = confirmed_pending_to_history(db, &mut pending_part, commit_id, true);
                 real_versioned_store = VersionedStore::new(db, &mut pending_part).unwrap();
                 real_versioned_store.check_consistency().unwrap();
 
@@ -1296,7 +1302,7 @@ fn test_versioned_store(
     }
 }
 
-fn empty_rocksdb(db_path: &str) -> Result<kvdb_rocksdb::Database> {
+pub fn empty_rocksdb(db_path: &str) -> Result<kvdb_rocksdb::Database> {
     use crate::backends::TableName;
 
     if std::path::Path::new(db_path).exists() {
@@ -1315,7 +1321,7 @@ fn tests_versioned_store_inmemory() {
 
 #[test]
 fn tests_versioned_store_rocksdb() {
-    let db_path = "__test_database";
+    let db_path = "__test_versioned_store";
 
     let mut db = empty_rocksdb(db_path).unwrap();
     test_versioned_store(&mut db, 2, 10, 1000);

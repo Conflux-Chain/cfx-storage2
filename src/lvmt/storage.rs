@@ -11,7 +11,12 @@ use super::{
     types::{AllocatePosition, AmtNodeId, AuthChangeKey, AuthChangeNode, CurvePointWithVersion},
 };
 use crate::{
-    backends::WriteSchemaTrait, errors::Result, lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE}, middlewares::table_schema::KeyValueSnapshotRead, traits::KeyValueStoreBulksTrait, StorageError
+    backends::WriteSchemaTrait,
+    errors::Result,
+    lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
+    middlewares::table_schema::KeyValueSnapshotRead,
+    traits::KeyValueStoreBulksTrait,
+    StorageError,
 };
 use crate::{
     lvmt::types::LvmtValue,
@@ -109,162 +114,6 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             write_schema,
         )?;
 
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub fn check_consistency(&mut self, commit: H256, pp: &AmtParams<PE>) -> Result<()> {
-        use std::collections::BTreeSet;
-
-        use ark_ec::CurveGroup;
-
-        use crate::lvmt::{
-            crypto::{FrInt, VariableBaseMSM, G1},
-            types::SLOT_SIZE,
-        };
-
-        let amt_node_view = self.amt_node_store.get_versioned_store(&commit)?;
-        let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit)?;
-        let key_value_view = self.key_value_store.get_versioned_store(&commit)?;
-
-        // Each Amt subtree (amt_id) (except the children of the root Amt)
-        // should be a fully-allocated leaf node of its parent Amt tree.
-        // The expection of the children of the root Amt is due to the design that the root Amt does not allocate slots.
-        let amt_node_iter = amt_node_view.iter_pending();
-        for (amt_id, curve_point_with_version) in amt_node_iter {
-            if amt_id.len() > 1 {
-                let amt_node_id = amt_id;
-                let alloc_key_info = slot_alloc_view.get(&amt_node_id)?.unwrap();
-                assert_eq!(alloc_key_info.index as usize, KEY_SLOT_SIZE - 1);
-            }
-
-            if curve_point_with_version == crate::types::ValueEntry::Deleted {
-                panic!("amt node should not contain deletion")
-            }
-        }
-
-        // Each AmtNode should be in an Amt tree
-        let slot_alloc_iter = slot_alloc_view.iter_pending();
-        for (amt_node_id, alloc_key_info) in slot_alloc_iter {
-            let mut parent_amt_id = amt_node_id;
-            parent_amt_id.pop().unwrap();
-
-            amt_node_view.get(&parent_amt_id)?.unwrap();
-
-            if alloc_key_info == crate::types::ValueEntry::Deleted {
-                panic!("slot alloc should not contain deletion")
-            }
-        }
-
-        // Gather the version of each allocated slot
-        let mut slot_versions = BTreeMap::new();
-        let key_value_iter = key_value_view.iter_pending();
-        for (key, lvmt_value) in key_value_iter {
-            match lvmt_value {
-                crate::types::ValueEntry::Value(lvmt_value) => {
-                    let LvmtValue {
-                        allocation,
-                        version,
-                        ..
-                    } = lvmt_value;
-                    let (amt_id, node_index, slot_index) = allocation.amt_info(&key);
-                    let node_map = slot_versions.entry(amt_id).or_insert_with(BTreeMap::new);
-                    let slot_map = node_map.entry(node_index).or_insert_with(BTreeMap::new);
-                    slot_map.insert(slot_index, version);
-                }
-                crate::types::ValueEntry::Deleted => {
-                    panic!("key value should not contain deletion")
-                }
-            }
-        }
-
-        // Gather each allocated slot
-        let mut slot_allocs = BTreeMap::new();
-        let slot_alloc_iter = slot_alloc_view.iter_pending();
-        for (amt_node_id, alloc_key_info) in slot_alloc_iter {
-            let mut parent_amt_id = amt_node_id;
-            let node_index = parent_amt_id.pop().unwrap();
-
-            match alloc_key_info {
-                crate::types::ValueEntry::Value(alloc_key_info) => {
-                    for slot_index in 0..=alloc_key_info.index {
-                        let node_map = slot_allocs
-                            .entry(parent_amt_id)
-                            .or_insert_with(BTreeMap::new);
-                        let slot_map = node_map.entry(node_index).or_insert_with(BTreeSet::new);
-                        slot_map.insert(slot_index);
-                    }
-                }
-                crate::types::ValueEntry::Deleted => {
-                    panic!("slot alloc should not contain deletion")
-                }
-            }
-        }
-
-        // Check consistency between `slot_versions` and `slot_allocs`
-        let slot_versions_simple: BTreeMap<_, _> = slot_versions
-            .iter()
-            .map(|(amt_id, node_map)| {
-                let node_map_simple: BTreeMap<_, _> = node_map
-                    .iter()
-                    .map(|(node_index, slot_map)| {
-                        let slot_set: BTreeSet<_> = slot_map.keys().cloned().collect();
-                        (*node_index, slot_set)
-                    })
-                    .collect();
-                (amt_id.clone(), node_map_simple)
-            })
-            .collect();
-        assert_eq!(
-            slot_versions_simple, slot_allocs,
-            "Inconsistent allocations."
-        );
-
-        // Add amt node to `slot_versions`
-        let amt_node_iter = amt_node_view.iter_pending();
-        for (amt_id, curve_point_with_version) in amt_node_iter {
-            if amt_id.len() > 0 {
-                let mut parent_amt_id = amt_id;
-                let node_index = parent_amt_id.pop().unwrap();
-                let slot_index = SLOT_SIZE - 1;
-                let version = {
-                    match curve_point_with_version {
-                        crate::types::ValueEntry::Value(curve_point_with_version) => {
-                            curve_point_with_version.version
-                        }
-                        crate::types::ValueEntry::Deleted => {
-                            panic!("amt node should not contain deletion")
-                        }
-                    }
-                };
-                let node_map = slot_versions
-                    .entry(parent_amt_id)
-                    .or_insert_with(BTreeMap::new);
-                let slot_map = node_map.entry(node_index).or_insert_with(BTreeMap::new);
-                slot_map.insert(slot_index as u8, version);
-            }
-        }
-
-        // Compute the commitment of each Amt tree
-        for (amt_id, node_map) in slot_versions {
-            let mut basis = vec![];
-            let mut bigints = vec![];
-            for (node_index, slot_map) in node_map {
-                let basis_power = pp.get_basis_power_at(node_index as usize);
-                for (slot_index, version) in slot_map {
-                    basis.push(basis_power[slot_index as usize]);
-                    bigints.push(FrInt::from(version));
-                }
-            }
-            let commitment = G1::msm_bigint(&basis[..], &bigints[..]).into_affine();
-            let stored_commitment = amt_node_view
-                .get(&amt_id)?
-                .unwrap()
-                .point
-                .affine()
-                .into_owned();
-            assert_eq!(commitment, stored_commitment);
-        }
         Ok(())
     }
 
@@ -465,5 +314,20 @@ fn resolve_allocation_slot(
             depth: depth as u8,
             slot_index: next_index as u8,
         };
+    }
+}
+
+#[cfg(test)]
+impl<'cache, 'db> LvmtStore<'cache, 'db> {
+    pub fn get_key_value_store(&self) -> &VersionedStore<'cache, 'db, FlatKeyValue> {
+        &self.key_value_store
+    }
+
+    pub fn get_amt_node_store(&self) -> &VersionedStore<'cache, 'db, AmtNodes> {
+        &self.amt_node_store
+    }
+
+    pub fn get_slot_alloc_store(&self) -> &VersionedStore<'cache, 'db, SlotAllocations> {
+        &self.slot_alloc_store
     }
 }

@@ -4,3 +4,6 @@ pub mod crypto;
 mod storage;
 pub mod table_schema;
 pub mod types;
+
+#[cfg(test)]
+mod tests;
