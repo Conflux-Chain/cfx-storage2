@@ -24,6 +24,18 @@ pub enum StorageError {
     PendingError(#[from] PendingError<CommitID>),
 }
 
+impl From<DecodeError> for StorageError {
+    fn from(value: DecodeError) -> Self {
+        Self::DatabaseError(DatabaseError::DecodeError(value))
+    }
+}
+
+impl From<std::io::Error> for StorageError {
+    fn from(value: std::io::Error) -> Self {
+        Self::DatabaseError(DatabaseError::IoError(value))
+    }
+}
+
 pub type Result<T> = ::std::result::Result<T, StorageError>;
 
 #[derive(Error, Debug)]

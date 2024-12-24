@@ -22,17 +22,13 @@ pub struct RocksDBColumn<'a> {
 pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database> {
     let config = DatabaseConfig::with_columns(num_cols);
     let db_path = PathBuf::from(path);
-    Ok(kvdb_rocksdb::Database::open(&config, db_path).map_err(DatabaseError::IoError)?)
+    Ok(kvdb_rocksdb::Database::open(&config, db_path)?)
 }
 
 impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
-        if let Some(v) = KeyValueDB::get(self.inner, self.col, key.encode().borrow())
-            .map_err(DatabaseError::IoError)?
-        {
-            let owned = <T::Value>::decode(&v)
-                .map_err(DatabaseError::DecodeError)?
-                .into_owned();
+        if let Some(v) = KeyValueDB::get(self.inner, self.col, key.encode().borrow())? {
+            let owned = <T::Value>::decode_owned(v)?;
             Ok(Some(Cow::Owned(owned)))
         } else {
             Ok(None)
@@ -45,8 +41,8 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
             .iter_from(self.col, &key.encode())
             .map(|kv| match kv {
                 Ok((k, v)) => Ok((
-                    Cow::Owned(<T::Key>::decode(&k)?.into_owned()),
-                    Cow::Owned(<T::Value>::decode(&v)?.into_owned()),
+                    Cow::Owned(<T::Key>::decode_owned(k.to_vec())?),
+                    Cow::Owned(<T::Value>::decode_owned(v)?),
                 )),
                 Err(e) => Err(DatabaseError::IoError(e)),
             });
@@ -57,8 +53,8 @@ impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
     fn iter_from_start(&self) -> Result<TableIter<T>> {
         let iter = self.inner.iter(self.col).map(|kv| match kv {
             Ok((k, v)) => Ok((
-                Cow::Owned(<T::Key>::decode(&k)?.into_owned()),
-                Cow::Owned(<T::Value>::decode(&v)?.into_owned()),
+                Cow::Owned(<T::Key>::decode_owned(k.into_vec())?),
+                Cow::Owned(<T::Value>::decode_owned(v)?),
             )),
             Err(e) => Err(DatabaseError::IoError(e)),
         });
@@ -92,6 +88,6 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
             }
         }
 
-        Ok(KeyValueDB::write(self, tx).map_err(DatabaseError::IoError)?)
+        Ok(KeyValueDB::write(self, tx)?)
     }
 }
