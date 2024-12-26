@@ -7,7 +7,7 @@ pub use commit_id_schema::{
 };
 pub use key_value_store_bulks::{ChangeKey, KeyValueStoreBulks};
 pub use versioned_flat_key_value::{
-    table_schema, PendingError, VersionedStore, VersionedStoreCache,
+    table_schema, PendingError, SnapshotView, VersionedStore, VersionedStoreCache,
 };
 
 #[cfg(test)]

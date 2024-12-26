@@ -317,7 +317,6 @@ fn resolve_allocation_slot(
     }
 }
 
-#[cfg(test)]
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
     pub fn get_key_value_store(&self) -> &VersionedStore<'cache, 'db, FlatKeyValue> {
         &self.key_value_store
@@ -329,5 +328,9 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
     pub fn get_slot_alloc_store(&self) -> &VersionedStore<'cache, 'db, SlotAllocations> {
         &self.slot_alloc_store
+    }
+
+    pub fn get_auth_changes(&self) -> &KeyValueStoreBulks<'db, AuthChangeTable> {
+        &self.auth_changes
     }
 }

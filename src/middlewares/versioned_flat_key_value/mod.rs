@@ -13,6 +13,8 @@ use std::sync::Arc;
 
 pub use pending_part::PendingError;
 
+pub use manager_impl::SnapshotView;
+
 use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 use pending_part::VersionedMap;
