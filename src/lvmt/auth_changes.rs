@@ -4,9 +4,11 @@ use blake2::Blake2s;
 use ethereum_types::H256;
 
 use crate::backends::serde::Encode;
+use crate::backends::serde::FixedLengthEncoded;
 use crate::backends::TableName;
 use crate::backends::TableSchema;
 use crate::lvmt::types::auth_changes::log2_ceil;
+use crate::middlewares::ChangeKey;
 
 use super::types::{
     auth_changes::{MAX_NODE_SIZE, MAX_NODE_SIZE_LOG},
@@ -19,8 +21,12 @@ pub struct AuthChangeTable;
 impl TableSchema for AuthChangeTable {
     const NAME: TableName = TableName::AuthNodeChange;
 
-    type Key = AuthChangeKey;
+    type Key = ChangeKey<H256, AuthChangeKey>;
     type Value = AuthChangeNode;
+}
+
+impl FixedLengthEncoded for H256 {
+    const LENGTH: usize = std::mem::size_of::<H256>();
 }
 
 const KEY_VALUE_CHANGE_FLAG: u8 = 0;
