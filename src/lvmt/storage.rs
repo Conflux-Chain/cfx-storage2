@@ -28,6 +28,8 @@ pub struct LvmtStore<'cache, 'db> {
     auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
 }
 
+const ALLOC_START_VERSION: u64 = 1;
+
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
     fn commit(
         &self,
@@ -52,7 +54,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             } else {
                 let allocation = allocate_version_slot(&key, &slot_alloc_view)?;
                 allocations.push(AllocationKeyInfo::new(allocation.slot_index, key.clone()));
-                (allocation, 0)
+                (allocation, ALLOC_START_VERSION)
             };
 
             amt_change_manager.record_with_allocation(allocation, &key);
