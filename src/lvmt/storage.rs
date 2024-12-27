@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use amt::AmtParams;
 use ethereum_types::H256;
@@ -15,6 +15,7 @@ use crate::{
     errors::Result,
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::table_schema::KeyValueSnapshotRead,
+    StorageError,
 };
 use crate::{
     lvmt::types::LvmtValue,
@@ -49,8 +50,14 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let mut allocations = BTreeMap::new();
         let mut amt_change_manager = AmtChangeManager::default();
 
+        let mut set_of_keys = HashSet::new();
+
         // Update version number
         for (key, value) in changes {
+            if !set_of_keys.insert(key.clone()) {
+                return Err(StorageError::DuplicateKeysInOneCommit);
+            }
+
             let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
                 (old_value.allocation, old_value.version + 1)
             } else {
