@@ -46,7 +46,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let key_value_view = self.key_value_store.get_versioned_store(&old_commit)?;
 
         let mut key_value_changes = vec![];
-        let mut cached_allocations = BTreeMap::new();
+        let mut allocations = AllocationCacheDb::new(&slot_alloc_view);
         let mut amt_change_manager = AmtChangeManager::default();
 
         let mut set_of_keys = HashSet::new();
@@ -61,8 +61,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
                 (old_value.allocation, old_value.version + 1)
             } else {
-                let allocation =
-                    allocate_version_slot(&key, &slot_alloc_view, &mut cached_allocations)?;
+                let allocation = allocate_version_slot(&key, &mut allocations)?;
                 (allocation, ALLOC_START_VERSION)
             };
 
@@ -100,17 +99,41 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
     }
 }
 
+struct AllocationCacheDb<'db> {
+    db: &'db KeyValueSnapshotRead<'db, SlotAllocations>,
+    cache: BTreeMap<AmtNodeId, AllocationKeyInfo>,
+}
+
+impl<'db> AllocationCacheDb<'db> {
+    fn new(db: &'db KeyValueSnapshotRead<SlotAllocations>) -> Self {
+        Self {
+            db,
+            cache: Default::default(),
+        }
+    }
+
+    fn get(&self, amt_node_id: &AmtNodeId) -> Result<Option<AllocationKeyInfo>> {
+        match self.cache.get(amt_node_id) {
+            Some(cached_value) => Ok(Some(cached_value.clone())),
+            None => Ok(self.db.get(amt_node_id)?),
+        }
+    }
+
+    fn set_cache(&mut self, amt_node_id: AmtNodeId, alloc_info: AllocationKeyInfo) {
+        self.cache.insert(amt_node_id, alloc_info);
+    }
+}
+
 fn allocate_version_slot(
     key: &[u8],
-    db: &KeyValueSnapshotRead<SlotAllocations>,
-    cached_allocations: &mut BTreeMap<AmtNodeId, AllocationKeyInfo>,
+    allocation_cache_db: &mut AllocationCacheDb,
 ) -> Result<AllocatePosition> {
     let key_digest = blake2s(key);
 
     let mut depth = 1;
     loop {
         let amt_node_id = compute_amt_node_id(key_digest, depth);
-        let slot_alloc = db.get(&amt_node_id)?;
+        let slot_alloc = allocation_cache_db.get(&amt_node_id)?;
         let next_index = match slot_alloc {
             None => 0,
             Some(x) if (x.index as usize) < KEY_SLOT_SIZE - 1 => x.index + 1,
@@ -120,59 +143,11 @@ fn allocate_version_slot(
             }
         };
 
-        let allocation_wrt_db = AllocatePosition {
+        allocation_cache_db.set_cache(amt_node_id, AllocationKeyInfo::new(next_index, key.into()));
+
+        return Ok(AllocatePosition {
             depth: depth as u8,
             slot_index: next_index as u8,
-        };
-
-        return Ok(resolve_allocation_slot(
-            key,
-            allocation_wrt_db,
-            key_digest,
-            cached_allocations,
-        ));
-    }
-}
-
-fn resolve_allocation_slot(
-    key: &[u8],
-    allocation_wrt_db: AllocatePosition,
-    key_digest: H256,
-    cached_allocations: &mut BTreeMap<AmtNodeId, AllocationKeyInfo>,
-) -> AllocatePosition {
-    let mut depth = allocation_wrt_db.depth as usize;
-
-    loop {
-        let amt_node_id = compute_amt_node_id(key_digest, depth);
-        let slot_alloc = cached_allocations.get(&amt_node_id);
-        let next_index = match slot_alloc {
-            None => {
-                if depth > allocation_wrt_db.depth as usize {
-                    0
-                } else {
-                    allocation_wrt_db.slot_index
-                }
-            }
-            Some(alloc) => {
-                if (alloc.index as usize) < KEY_SLOT_SIZE - 1 {
-                    alloc.index + 1
-                } else {
-                    depth += 1;
-                    continue;
-                }
-            }
-        };
-
-        assert!(depth >= allocation_wrt_db.depth as usize);
-        if depth == allocation_wrt_db.depth as usize {
-            assert!(next_index >= allocation_wrt_db.slot_index);
-        }
-
-        cached_allocations.insert(amt_node_id, AllocationKeyInfo::new(next_index, key.into()));
-
-        return AllocatePosition {
-            depth: depth as u8,
-            slot_index: next_index as u8,
-        };
+        });
     }
 }
