@@ -15,7 +15,6 @@ use crate::{
     errors::Result,
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::table_schema::KeyValueSnapshotRead,
-    StorageError,
 };
 use crate::{
     lvmt::types::LvmtValue,
@@ -54,8 +53,9 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
         // Update version number
         for (key, value) in changes {
+            // skip the duplicated keys
             if !set_of_keys.insert(key.clone()) {
-                return Err(StorageError::DuplicateKeysInOneCommit);
+                continue;
             }
 
             let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
