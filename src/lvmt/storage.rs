@@ -119,7 +119,7 @@ impl<'db> AllocationCacheDb<'db> {
         }
     }
 
-    fn set_cache(&mut self, amt_node_id: AmtNodeId, alloc_info: AllocationKeyInfo) {
+    fn set(&mut self, amt_node_id: AmtNodeId, alloc_info: AllocationKeyInfo) {
         self.cache.insert(amt_node_id, alloc_info);
     }
 }
@@ -143,7 +143,7 @@ fn allocate_version_slot(
             }
         };
 
-        allocation_cache_db.set_cache(amt_node_id, AllocationKeyInfo::new(next_index, key.into()));
+        allocation_cache_db.set(amt_node_id, AllocationKeyInfo::new(next_index, key.into()));
 
         return Ok(AllocatePosition {
             depth: depth as u8,
