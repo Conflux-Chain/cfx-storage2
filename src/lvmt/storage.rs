@@ -8,13 +8,14 @@ use super::{
     auth_changes::{amt_change_hash, key_value_hash, process_dump_items, AuthChangeTable},
     crypto::PE,
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
-    types::{AllocatePosition, AmtNodeId},
+    types::{AllocatePosition, AmtNodeId, AuthChangeKey, AuthChangeNode, CurvePointWithVersion},
 };
 use crate::{
     backends::WriteSchemaTrait,
     errors::Result,
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::table_schema::KeyValueSnapshotRead,
+    traits::KeyValueStoreBulksTrait,
 };
 use crate::{
     lvmt::types::LvmtValue,
@@ -34,7 +35,7 @@ const ALLOC_START_VERSION: u64 = 1;
 
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
     fn commit(
-        &self,
+        &mut self,
         old_commit: H256,
         new_commit: H256,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
@@ -93,7 +94,55 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             process_dump_items(hashes)
         };
 
-        // TODO: write down to db
+        self.write_to_db(
+            Some(old_commit),
+            new_commit,
+            amt_changes,
+            key_value_changes,
+            allocations.into_cache(),
+            auth_changes,
+            write_schema,
+        )?;
+
+        Ok(())
+    }
+
+    /// Write to the pending part of db.
+    /// # Notes
+    /// - Write to the history part is beyond the range of [`LvmtStore`].
+    /// - The `auth_changes` in [`LvmtStore`] includes all commits, even if they are removed but not confirmed,
+    ///   so consider `gc_commit` elsewhere.
+    #[allow(clippy::too_many_arguments)]
+    fn write_to_db(
+        &mut self,
+        parent_commit: Option<H256>,
+        new_commit: H256,
+        amt_changes: Vec<(AmtNodeId, CurvePointWithVersion)>,
+        key_value_changes: Vec<(Box<[u8]>, LvmtValue)>,
+        allocations: BTreeMap<AmtNodeId, AllocationKeyInfo>,
+        auth_changes: BTreeMap<AuthChangeKey, AuthChangeNode>,
+        write_schema: &impl WriteSchemaTrait,
+    ) -> Result<()> {
+        let amt_node_updates: BTreeMap<_, _> =
+            amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
+        self.amt_node_store
+            .add_to_pending_part(parent_commit, new_commit, amt_node_updates)?;
+
+        let key_value_updates: BTreeMap<_, _> = key_value_changes
+            .into_iter()
+            .map(|(k, v)| (k, Some(v)))
+            .collect();
+        self.key_value_store
+            .add_to_pending_part(parent_commit, new_commit, key_value_updates)?;
+
+        let slot_alloc_updates: BTreeMap<_, _> =
+            allocations.into_iter().map(|(k, v)| (k, Some(v))).collect();
+        self.slot_alloc_store
+            .add_to_pending_part(parent_commit, new_commit, slot_alloc_updates)?;
+
+        let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
+        self.auth_changes
+            .commit(new_commit, auth_change_bulk, write_schema)?;
 
         Ok(())
     }
@@ -121,6 +170,10 @@ impl<'db> AllocationCacheDb<'db> {
 
     fn set(&mut self, amt_node_id: AmtNodeId, alloc_info: AllocationKeyInfo) {
         self.cache.insert(amt_node_id, alloc_info);
+    }
+
+    fn into_cache(self) -> BTreeMap<AmtNodeId, AllocationKeyInfo> {
+        self.cache
     }
 }
 
