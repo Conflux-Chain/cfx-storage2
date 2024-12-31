@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
 use amt::AmtParams;
-use ethereum_types::H256;
 
 use super::{
     amt_change_manager::AmtChangeManager,
@@ -14,7 +13,7 @@ use crate::{
     backends::WriteSchemaTrait,
     errors::Result,
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
-    middlewares::table_schema::KeyValueSnapshotRead,
+    middlewares::{table_schema::KeyValueSnapshotRead, CommitID},
     traits::KeyValueStoreBulksTrait,
 };
 use crate::{
@@ -36,8 +35,8 @@ const ALLOC_START_VERSION: u64 = 1;
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
     fn commit(
         &mut self,
-        old_commit: H256,
-        new_commit: H256,
+        old_commit: CommitID,
+        new_commit: CommitID,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
