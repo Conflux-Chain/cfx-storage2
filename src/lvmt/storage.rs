@@ -35,15 +35,22 @@ const ALLOC_START_VERSION: u64 = 1;
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
     fn commit(
         &mut self,
-        old_commit: CommitID,
+        old_commit: Option<CommitID>,
         new_commit: CommitID,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
     ) -> Result<()> {
-        let amt_node_view = self.amt_node_store.get_versioned_store(&old_commit)?;
-        let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&old_commit)?;
-        let key_value_view = self.key_value_store.get_versioned_store(&old_commit)?;
+        let (amt_node_view, slot_alloc_view, key_value_view) = if let Some(old_commit) = old_commit
+        {
+            (
+                Some(self.amt_node_store.get_versioned_store(&old_commit)?),
+                Some(self.slot_alloc_store.get_versioned_store(&old_commit)?),
+                Some(self.key_value_store.get_versioned_store(&old_commit)?),
+            )
+        } else {
+            (None, None, None)
+        };
 
         let mut key_value_changes = vec![];
         let mut allocations = AllocationCacheDb::new(&slot_alloc_view);
@@ -100,28 +107,22 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let amt_node_updates: BTreeMap<_, _> =
             amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
         self.amt_node_store
-            .add_to_pending_part(Some(old_commit), new_commit, amt_node_updates)?;
+            .add_to_pending_part(old_commit, new_commit, amt_node_updates)?;
 
         let key_value_updates: BTreeMap<_, _> = key_value_changes
             .into_iter()
             .map(|(k, v)| (k, Some(v)))
             .collect();
-        self.key_value_store.add_to_pending_part(
-            Some(old_commit),
-            new_commit,
-            key_value_updates,
-        )?;
+        self.key_value_store
+            .add_to_pending_part(old_commit, new_commit, key_value_updates)?;
 
         let slot_alloc_updates: BTreeMap<_, _> = allocations
             .into_changes()
             .into_iter()
             .map(|(k, v)| (k, Some(v)))
             .collect();
-        self.slot_alloc_store.add_to_pending_part(
-            Some(old_commit),
-            new_commit,
-            slot_alloc_updates,
-        )?;
+        self.slot_alloc_store
+            .add_to_pending_part(old_commit, new_commit, slot_alloc_updates)?;
 
         let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
         self.auth_changes
