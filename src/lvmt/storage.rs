@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, HashSet};
+
 use amt::AmtParams;
 use ethereum_types::H256;
 
@@ -6,7 +8,7 @@ use super::{
     auth_changes::{amt_change_hash, key_value_hash, process_dump_items, AuthChangeTable},
     crypto::PE,
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
-    types::AllocatePosition,
+    types::{AllocatePosition, AmtNodeId},
 };
 use crate::{
     backends::WriteSchemaTrait,
@@ -44,16 +46,22 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let key_value_view = self.key_value_store.get_versioned_store(&old_commit)?;
 
         let mut key_value_changes = vec![];
-        let mut allocations = vec![];
+        let mut allocations = AllocationCacheDb::new(&slot_alloc_view);
         let mut amt_change_manager = AmtChangeManager::default();
+
+        let mut set_of_keys = HashSet::new();
 
         // Update version number
         for (key, value) in changes {
+            // skip the duplicated keys
+            if !set_of_keys.insert(key.clone()) {
+                continue;
+            }
+
             let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
                 (old_value.allocation, old_value.version + 1)
             } else {
-                let allocation = allocate_version_slot(&key, &slot_alloc_view)?;
-                allocations.push(AllocationKeyInfo::new(allocation.slot_index, key.clone()));
+                let allocation = allocate_version_slot(&key, &mut allocations)?;
                 (allocation, ALLOC_START_VERSION)
             };
 
@@ -91,16 +99,45 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
     }
 }
 
+struct AllocationCacheDb<'db> {
+    db: &'db KeyValueSnapshotRead<'db, SlotAllocations>,
+    cache: BTreeMap<AmtNodeId, AllocationKeyInfo>,
+}
+
+impl<'db> AllocationCacheDb<'db> {
+    fn new(db: &'db KeyValueSnapshotRead<SlotAllocations>) -> Self {
+        Self {
+            db,
+            cache: Default::default(),
+        }
+    }
+
+    fn get(&self, amt_node_id: &AmtNodeId) -> Result<Option<AllocationKeyInfo>> {
+        match self.cache.get(amt_node_id) {
+            Some(cached_value) => Ok(Some(cached_value.clone())),
+            None => Ok(self.db.get(amt_node_id)?),
+        }
+    }
+
+    fn set(&mut self, amt_node_id: AmtNodeId, alloc_info: AllocationKeyInfo) {
+        self.cache.insert(amt_node_id, alloc_info);
+    }
+
+    fn into_changes(self) -> BTreeMap<AmtNodeId, AllocationKeyInfo> {
+        self.cache
+    }
+}
+
 fn allocate_version_slot(
     key: &[u8],
-    db: &KeyValueSnapshotRead<SlotAllocations>,
+    allocation_cache_db: &mut AllocationCacheDb,
 ) -> Result<AllocatePosition> {
     let key_digest = blake2s(key);
 
     let mut depth = 1;
     loop {
         let amt_node_id = compute_amt_node_id(key_digest, depth);
-        let slot_alloc = db.get(&amt_node_id)?;
+        let slot_alloc = allocation_cache_db.get(&amt_node_id)?;
         let next_index = match slot_alloc {
             None => 0,
             Some(x) if (x.index as usize) < KEY_SLOT_SIZE - 1 => x.index + 1,
@@ -109,6 +146,8 @@ fn allocate_version_slot(
                 continue;
             }
         };
+
+        allocation_cache_db.set(amt_node_id, AllocationKeyInfo::new(next_index, key.into()));
 
         return Ok(AllocatePosition {
             depth: depth as u8,
