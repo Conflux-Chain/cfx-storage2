@@ -94,10 +94,9 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         };
 
         // Write to the pending part of db.
-        // # Notes
-        // - Write to the history part is beyond the range of [`LvmtStore`].
-        // - The `auth_changes` in [`LvmtStore`] includes all commits, even if they are removed but not confirmed,
-        //   so consider `gc_commit` elsewhere.
+        // TODO: Write to the history part is beyond the range of LvmtStore.
+        // TODO: LvmtStore.auth_changes includes all commits, even if they are removed but not confirmed,
+        //       so consider gc_commit elsewhere.
         let amt_node_updates: BTreeMap<_, _> =
             amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
         self.amt_node_store
