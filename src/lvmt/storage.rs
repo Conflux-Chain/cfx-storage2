@@ -122,6 +122,10 @@ impl<'db> AllocationCacheDb<'db> {
     fn set(&mut self, amt_node_id: AmtNodeId, alloc_info: AllocationKeyInfo) {
         self.cache.insert(amt_node_id, alloc_info);
     }
+
+    fn into_changes(self) -> BTreeMap<AmtNodeId, AllocationKeyInfo> {
+        self.cache
+    }
 }
 
 fn allocate_version_slot(
