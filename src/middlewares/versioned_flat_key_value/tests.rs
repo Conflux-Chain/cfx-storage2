@@ -731,6 +731,7 @@ fn gen_init(
             .into_iter()
             .zip(history_updates.clone())
             .collect(),
+        true,
     )
     .unwrap();
 
@@ -1231,7 +1232,7 @@ fn test_versioned_store(
                 let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
 
                 drop(real_versioned_store);
-                let real_res = confirmed_pending_to_history(db, &mut pending_part, commit_id);
+                let real_res = confirmed_pending_to_history(db, &mut pending_part, commit_id, true);
                 real_versioned_store = VersionedStore::new(db, &mut pending_part).unwrap();
                 real_versioned_store.check_consistency().unwrap();
 

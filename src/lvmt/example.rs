@@ -3,7 +3,10 @@ use std::sync::Arc;
 use crate::{
     backends::DatabaseTrait,
     errors::Result,
-    middlewares::{KeyValueStoreBulks, VersionedStore, VersionedStoreCache},
+    middlewares::{
+        confirmed_pending_to_history, CommitID, KeyValueStoreBulks, VersionedStore,
+        VersionedStoreCache,
+    },
 };
 
 use super::{
@@ -46,5 +49,30 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
 
     pub fn commit_auth(&mut self, write_schema: <D as DatabaseTrait>::WriteSchema) -> Result<()> {
         self.backend.commit(write_schema)
+    }
+
+    pub fn confirmed_pending_to_history(&mut self, new_root_commit_id: CommitID) -> Result<()> {
+        confirmed_pending_to_history(
+            &mut self.backend,
+            &mut self.key_value_cache,
+            new_root_commit_id,
+            true,
+        )?;
+
+        confirmed_pending_to_history(
+            &mut self.backend,
+            &mut self.amt_node_cache,
+            new_root_commit_id,
+            false,
+        )?;
+
+        confirmed_pending_to_history(
+            &mut self.backend,
+            &mut self.slot_alloc_cache,
+            new_root_commit_id,
+            false,
+        )?;
+
+        Ok(())
     }
 }
