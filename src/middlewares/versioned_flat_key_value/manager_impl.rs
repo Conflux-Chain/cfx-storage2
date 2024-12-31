@@ -47,6 +47,18 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value> for Sn
     }
 }
 
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for Option<SnapshotView<'db, T>>
+{
+    fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
+        if let Some(view) = self {
+            view.get(key)
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     for VersionedStore<'cache, 'db, T>
 {
