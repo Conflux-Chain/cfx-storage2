@@ -3,12 +3,11 @@ use std::collections::BTreeMap;
 use blake2::Blake2s;
 use ethereum_types::H256;
 
-use crate::backends::serde::Encode;
-use crate::backends::TableName;
-use crate::backends::TableSchema;
-use crate::lvmt::types::auth_changes::log2_ceil;
-use crate::middlewares::ChangeKey;
-use crate::middlewares::CommitID;
+use crate::{
+    backends::{serde::Encode, TableName, TableSchema},
+    lvmt::types::auth_changes::log2_ceil,
+    middlewares::{ChangeKey, CommitID},
+};
 
 use super::types::{
     auth_changes::{MAX_NODE_SIZE, MAX_NODE_SIZE_LOG},

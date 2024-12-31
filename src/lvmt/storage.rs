@@ -107,13 +107,22 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             .into_iter()
             .map(|(k, v)| (k, Some(v)))
             .collect();
-        self.key_value_store
-            .add_to_pending_part(Some(old_commit), new_commit, key_value_updates)?;
+        self.key_value_store.add_to_pending_part(
+            Some(old_commit),
+            new_commit,
+            key_value_updates,
+        )?;
 
-        let slot_alloc_updates: BTreeMap<_, _> =
-            allocations.into_changes().into_iter().map(|(k, v)| (k, Some(v))).collect();
-        self.slot_alloc_store
-            .add_to_pending_part(Some(old_commit), new_commit, slot_alloc_updates)?;
+        let slot_alloc_updates: BTreeMap<_, _> = allocations
+            .into_changes()
+            .into_iter()
+            .map(|(k, v)| (k, Some(v)))
+            .collect();
+        self.slot_alloc_store.add_to_pending_part(
+            Some(old_commit),
+            new_commit,
+            slot_alloc_updates,
+        )?;
 
         let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
         self.auth_changes
