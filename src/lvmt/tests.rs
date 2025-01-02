@@ -21,13 +21,6 @@ fn u64_to_boxed_u8(value: u64) -> Box<[u8]> {
     byte_array.into()
 }
 
-fn option_u64_to_boxed_u8(opt: Option<u64>) -> Box<[u8]> {
-    match opt {
-        Some(value) => u64_to_boxed_u8(value),
-        None => Box::new([]),
-    }
-}
-
 pub const TEST_LEVEL: usize = 16;
 pub const TEST_LENGTH: usize = 1 << TEST_LEVEL;
 
@@ -38,10 +31,10 @@ pub static AMT: Lazy<AmtParams<PE>> =
 
 fn get_changes_from_updates(
     updates: BTreeMap<u64, Option<u64>>,
-) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> {
+) -> impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)> {
     updates
         .into_iter()
-        .map(|(k, v)| (u64_to_boxed_u8(k), option_u64_to_boxed_u8(v)))
+        .map(|(k, v)| (u64_to_boxed_u8(k), v.map(u64_to_boxed_u8)))
 }
 
 fn gen_novel_commit_id(rng: &mut ChaChaRng, previous: &mut HashSet<CommitID>) -> CommitID {
