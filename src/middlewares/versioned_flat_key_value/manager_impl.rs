@@ -22,6 +22,88 @@ pub struct SnapshotView<'db, T: VersionedKeyValueSchema> {
     history: Option<SnapshotHistorical<'db, T>>,
 }
 
+#[cfg(test)]
+const MIN_HISTORY_NUMBER_MINUS_ONE: u64 = 0;
+
+impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
+    #[cfg(test)]
+    fn iter_history(&self) -> Result<BTreeMap<T::Key, ValueEntry<T::Value>>> {
+        if let Some(ref history) = self.history {
+            let (key_with_history_number, _) =
+                match history.history_index_table.iter_from_start()?.next() {
+                    Some(item) => item.unwrap(),
+                    None => return Ok(BTreeMap::new()),
+                };
+
+            let HistoryIndexKey(mut key, mut history_number) =
+                key_with_history_number.as_ref().clone();
+
+            let mut history_map = BTreeMap::new();
+
+            loop {
+                let found_version_number = if history_number <= history.history_number {
+                    history_number
+                } else {
+                    let range_query_key = HistoryIndexKey(key.clone(), history.history_number);
+                    match history.history_index_table.iter(&range_query_key)?.next() {
+                        None => break,
+                        Some(Err(e)) => return Err(e.into()),
+                        Some(Ok((next_key_with_history_number, _)))
+                            if next_key_with_history_number.as_ref().0 != key =>
+                        {
+                            HistoryIndexKey(key, history_number) =
+                                next_key_with_history_number.as_ref().clone();
+                            continue;
+                        }
+                        Some(Ok((k, indices))) => {
+                            let HistoryIndexKey(_, found_history_number) = k.as_ref();
+                            indices.as_ref().last(*found_history_number)
+                        }
+                    }
+                };
+
+                let value = history
+                    .change_history_table
+                    .get_versioned_key(&found_version_number, &key)?;
+
+                history_map.insert(key.clone(), ValueEntry::from_option(value));
+
+                let next_range_query_key =
+                    HistoryIndexKey(key.clone(), MIN_HISTORY_NUMBER_MINUS_ONE);
+                match history
+                    .history_index_table
+                    .iter(&next_range_query_key)?
+                    .next()
+                {
+                    None => break,
+                    Some(Err(e)) => return Err(e.into()),
+                    Some(Ok((next_key_with_history_number, _))) => {
+                        HistoryIndexKey(key, history_number) =
+                            next_key_with_history_number.as_ref().clone();
+                    }
+                }
+            }
+
+            Ok(history_map)
+        } else {
+            Ok(BTreeMap::new())
+        }
+    }
+
+    #[cfg(test)]
+    pub fn iter(&self) -> Result<impl Iterator<Item = (T::Key, ValueEntry<T::Value>)>> {
+        let mut map = self.iter_history()?;
+
+        if let Some(ref pending_map) = self.pending_updates {
+            for (k, v) in pending_map {
+                map.insert(k.clone(), v.clone());
+            }
+        }
+
+        Ok(map.into_iter())
+    }
+}
+
 pub struct SnapshotHistorical<'db, T: VersionedKeyValueSchema> {
     history_number: HistoryNumber,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,

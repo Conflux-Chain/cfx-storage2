@@ -47,7 +47,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         }
     }
 
-    fn commit(
+    pub fn commit(
         &mut self,
         old_commit: Option<CommitID>,
         new_commit: CommitID,
@@ -200,5 +200,18 @@ fn allocate_version_slot(
             depth: depth as u8,
             slot_index: next_index as u8,
         });
+    }
+}
+
+#[cfg(test)]
+impl<'cache, 'db> LvmtStore<'cache, 'db> {
+    pub fn get_key_value_store(&self) -> &VersionedStore<'cache, 'db, FlatKeyValue> {
+        &self.key_value_store
+    }
+    pub fn get_amt_node_store(&self) -> &VersionedStore<'cache, 'db, AmtNodes> {
+        &self.amt_node_store
+    }
+    pub fn get_slot_alloc_store(&self) -> &VersionedStore<'cache, 'db, SlotAllocations> {
+        &self.slot_alloc_store
     }
 }
