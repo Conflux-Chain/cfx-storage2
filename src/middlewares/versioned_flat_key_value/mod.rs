@@ -11,6 +11,9 @@ use std::sync::Arc;
 
 pub use pending_part::PendingError;
 
+#[cfg(test)]
+pub use tests::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test};
+
 use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 use pending_part::VersionedMap;

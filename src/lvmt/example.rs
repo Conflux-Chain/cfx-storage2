@@ -47,7 +47,7 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         ))
     }
 
-    pub fn commit_auth(&mut self, write_schema: <D as DatabaseTrait>::WriteSchema) -> Result<()> {
+    pub fn commit(&mut self, write_schema: <D as DatabaseTrait>::WriteSchema) -> Result<()> {
         self.backend.commit(write_schema)
     }
 
