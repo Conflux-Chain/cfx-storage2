@@ -147,6 +147,10 @@ impl Decode for [H256; 4] {
     }
 }
 
+impl FixedLengthEncoded for H256 {
+    const LENGTH: usize = std::mem::size_of::<H256>();
+}
+
 #[macro_export]
 macro_rules! subkey_not_support {
     ($($t:ty),+) => {

@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
 use amt::AmtParams;
-use ethereum_types::H256;
 
 use super::{
     amt_change_manager::AmtChangeManager,
@@ -14,7 +13,8 @@ use crate::{
     backends::WriteSchemaTrait,
     errors::Result,
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
-    middlewares::table_schema::KeyValueSnapshotRead,
+    middlewares::{table_schema::KeyValueSnapshotRead, CommitID},
+    traits::KeyValueStoreBulksTrait,
 };
 use crate::{
     lvmt::types::LvmtValue,
@@ -34,9 +34,9 @@ const ALLOC_START_VERSION: u64 = 1;
 
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
     fn commit(
-        &self,
-        old_commit: H256,
-        new_commit: H256,
+        &mut self,
+        old_commit: CommitID,
+        new_commit: CommitID,
         changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
@@ -93,7 +93,39 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             process_dump_items(hashes)
         };
 
-        // TODO: write down to db
+        // Write to the pending part of db.
+        // TODO: Write to the history part is beyond the range of LvmtStore.
+        // TODO: LvmtStore.auth_changes includes all commits, even if they are removed but not confirmed,
+        //       so consider gc_commit elsewhere.
+        let amt_node_updates: BTreeMap<_, _> =
+            amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
+        self.amt_node_store
+            .add_to_pending_part(Some(old_commit), new_commit, amt_node_updates)?;
+
+        let key_value_updates: BTreeMap<_, _> = key_value_changes
+            .into_iter()
+            .map(|(k, v)| (k, Some(v)))
+            .collect();
+        self.key_value_store.add_to_pending_part(
+            Some(old_commit),
+            new_commit,
+            key_value_updates,
+        )?;
+
+        let slot_alloc_updates: BTreeMap<_, _> = allocations
+            .into_changes()
+            .into_iter()
+            .map(|(k, v)| (k, Some(v)))
+            .collect();
+        self.slot_alloc_store.add_to_pending_part(
+            Some(old_commit),
+            new_commit,
+            slot_alloc_updates,
+        )?;
+
+        let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
+        self.auth_changes
+            .commit(new_commit, auth_change_bulk, write_schema)?;
 
         Ok(())
     }
