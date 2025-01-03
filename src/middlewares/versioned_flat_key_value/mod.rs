@@ -133,50 +133,36 @@ fn get_versioned_key<'db, T: VersionedKeyValueSchema>(
     change_history_table.get_versioned_key(&found_version_number, key)
 }
 
+pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
+    db: &D,
+    pending_part: &mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+    new_root_commit_id: CommitID,
+    write_schema: &D::WriteSchema,
+) -> Result<()> {
+    // old root..=new root's parent
+    let (to_confirm_start_height, to_confirm_ids, to_confirm_maps) =
+        pending_part.change_root(new_root_commit_id)?;
+
+    confirm_ids_to_history::<D, T>(db, to_confirm_start_height, &to_confirm_ids, write_schema)?;
+    confirm_maps_to_history::<D, T>(db, to_confirm_start_height, to_confirm_maps, write_schema)?;
+
+    Ok(())
+}
+
 #[allow(clippy::type_complexity)]
-fn confirm_series_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
-    db: &mut D,
+fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
+    db: &D,
     to_confirm_start_height: usize,
-    to_confirm_ids_maps: Vec<(CommitID, BTreeMap<T::Key, impl Into<Option<T::Value>>>)>,
-    is_first_t: bool,
+    to_confirm_maps: Vec<BTreeMap<T::Key, impl Into<Option<T::Value>>>>,
+    write_schema: &D::WriteSchema,
 ) -> Result<()> {
     let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
-    let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
-    let history_number_table = Arc::new(db.view::<HistoryNumberSchema>()?);
     let change_history_table =
         KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
 
-    let write_schema = D::write_schema();
-
-    for (delta_height, (confirmed_commit_id, updates)) in
-        to_confirm_ids_maps.into_iter().enumerate()
-    {
+    for (delta_height, updates) in to_confirm_maps.into_iter().enumerate() {
         let height = to_confirm_start_height + delta_height;
         let history_number = height_to_history_number(height);
-
-        if is_first_t {
-            if commit_id_table.get(&confirmed_commit_id)?.is_some()
-                || history_number_table.get(&history_number)?.is_some()
-            {
-                return Err(StorageError::ConsistencyCheckFailure);
-            }
-
-            let commit_id_table_op = (
-                Cow::Owned(confirmed_commit_id),
-                Some(Cow::Owned(history_number)),
-            );
-            write_schema.write::<CommitIDSchema>(commit_id_table_op);
-
-            let history_number_table_op = (
-                Cow::Owned(history_number),
-                Some(Cow::Owned(confirmed_commit_id)),
-            );
-            write_schema.write::<HistoryNumberSchema>(history_number_table_op);
-        } else if commit_id_table.get(&confirmed_commit_id)?.is_none()
-            || history_number_table.get(&history_number)?.is_none()
-        {
-            return Err(StorageError::ConsistencyCheckFailure);
-        }
 
         let history_indices_table_op = updates.keys().map(|key| {
             (
@@ -194,31 +180,45 @@ fn confirm_series_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     }
 
     std::mem::drop(history_index_table);
-    std::mem::drop(commit_id_table);
-    std::mem::drop(history_number_table);
     std::mem::drop(change_history_table);
-
-    db.commit(write_schema)?;
 
     Ok(())
 }
 
-pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
-    db: &mut D,
-    pending_part: &mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
-    new_root_commit_id: CommitID,
-    is_first_t: bool,
+fn confirm_ids_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
+    db: &D,
+    to_confirm_start_height: usize,
+    to_confirm_ids: &[CommitID],
+    write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    // old root..=new root's parent
-    let (to_confirm_start_height, to_confirm_ids_maps) =
-        pending_part.change_root(new_root_commit_id)?;
+    let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
+    let history_number_table = Arc::new(db.view::<HistoryNumberSchema>()?);
 
-    confirm_series_to_history::<D, T>(
-        db,
-        to_confirm_start_height,
-        to_confirm_ids_maps,
-        is_first_t,
-    )?;
+    for (delta_height, confirmed_commit_id) in to_confirm_ids.iter().enumerate() {
+        let height = to_confirm_start_height + delta_height;
+        let history_number = height_to_history_number(height);
+
+        if commit_id_table.get(confirmed_commit_id)?.is_some()
+            || history_number_table.get(&history_number)?.is_some()
+        {
+            return Err(StorageError::ConsistencyCheckFailure);
+        }
+
+        let commit_id_table_op = (
+            Cow::Owned(*confirmed_commit_id),
+            Some(Cow::Owned(history_number)),
+        );
+        write_schema.write::<CommitIDSchema>(commit_id_table_op);
+
+        let history_number_table_op = (
+            Cow::Owned(history_number),
+            Some(Cow::Owned(*confirmed_commit_id)),
+        );
+        write_schema.write::<HistoryNumberSchema>(history_number_table_op);
+    }
+
+    std::mem::drop(commit_id_table);
+    std::mem::drop(history_number_table);
 
     Ok(())
 }
