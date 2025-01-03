@@ -3,7 +3,10 @@ use std::sync::Arc;
 use crate::{
     backends::DatabaseTrait,
     errors::Result,
-    middlewares::{CommitID, KeyValueStoreBulks, VersionedStore, VersionedStoreCache},
+    middlewares::{
+        confirm_ids_to_history, confirm_maps_to_history, CommitID, KeyValueStoreBulks,
+        VersionedStore, VersionedStoreCache,
+    },
 };
 
 use super::{
@@ -48,30 +51,68 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         self.backend.commit(write_schema)
     }
 
-    pub fn confirmed_pending_to_history(&mut self, new_root_commit_id: CommitID) -> Result<()> {
-        todo!()
+    pub fn confirmed_pending_to_history(
+        &mut self,
+        new_root_commit_id: CommitID,
+        write_schema: &D::WriteSchema,
+    ) -> Result<()> {
+        // old root..=new root's parent
+        let (
+            key_value_to_confirm_start_height,
+            key_value_to_confirm_ids,
+            key_value_to_confirm_maps,
+        ) = self.key_value_cache.change_root(new_root_commit_id)?;
+
+        let (amt_node_to_confirm_start_height, amt_node_to_confirm_ids, amt_node_to_confirm_maps) =
+            self.amt_node_cache.change_root(new_root_commit_id)?;
+
+        let (
+            slot_alloc_to_confirm_start_height,
+            slot_alloc_to_confirm_ids,
+            slot_alloc_to_confirm_maps,
+        ) = self.slot_alloc_cache.change_root(new_root_commit_id)?;
+
+        assert_eq!(
+            key_value_to_confirm_start_height,
+            amt_node_to_confirm_start_height
+        );
+        assert_eq!(
+            key_value_to_confirm_start_height,
+            slot_alloc_to_confirm_start_height
+        );
+
+        assert_eq!(key_value_to_confirm_ids, amt_node_to_confirm_ids);
+        assert_eq!(key_value_to_confirm_ids, slot_alloc_to_confirm_ids);
+
+        let to_confirm_start_height = key_value_to_confirm_start_height;
+        let to_confirm_ids = key_value_to_confirm_ids;
+
+        confirm_ids_to_history::<D>(
+            &self.backend,
+            to_confirm_start_height,
+            &to_confirm_ids,
+            write_schema,
+        )?;
+
+        confirm_maps_to_history::<D, FlatKeyValue>(
+            &self.backend,
+            to_confirm_start_height,
+            key_value_to_confirm_maps,
+            write_schema,
+        )?;
+        confirm_maps_to_history::<D, AmtNodes>(
+            &self.backend,
+            to_confirm_start_height,
+            amt_node_to_confirm_maps,
+            write_schema,
+        )?;
+        confirm_maps_to_history::<D, SlotAllocations>(
+            &self.backend,
+            to_confirm_start_height,
+            slot_alloc_to_confirm_maps,
+            write_schema,
+        )?;
+
+        Ok(())
     }
-    //     confirmed_pending_to_history(
-    //         &mut self.backend,
-    //         &mut self.key_value_cache,
-    //         new_root_commit_id,
-    //         true,
-    //     )?;
-
-    //     confirmed_pending_to_history(
-    //         &mut self.backend,
-    //         &mut self.amt_node_cache,
-    //         new_root_commit_id,
-    //         false,
-    //     )?;
-
-    //     confirmed_pending_to_history(
-    //         &mut self.backend,
-    //         &mut self.slot_alloc_cache,
-    //         new_root_commit_id,
-    //         false,
-    //     )?;
-
-    //     Ok(())
-    // }
 }

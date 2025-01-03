@@ -724,8 +724,7 @@ fn gen_init<D: DatabaseTrait>(
 
     let pending_part = VersionedMap::new(history_cids.items().last().copied(), history_cids.len());
 
-    confirm_ids_to_history::<D, TestSchema>(db, 0, &history_cids.clone().into_vec(), write_schema)
-        .unwrap();
+    confirm_ids_to_history::<D>(db, 0, &history_cids.clone().into_vec(), write_schema).unwrap();
     confirm_maps_to_history::<D, TestSchema>(db, 0, history_updates.clone(), write_schema).unwrap();
 
     (history_cids, history_updates, pending_part)

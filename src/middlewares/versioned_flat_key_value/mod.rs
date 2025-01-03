@@ -143,14 +143,14 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
     let (to_confirm_start_height, to_confirm_ids, to_confirm_maps) =
         pending_part.change_root(new_root_commit_id)?;
 
-    confirm_ids_to_history::<D, T>(db, to_confirm_start_height, &to_confirm_ids, write_schema)?;
+    confirm_ids_to_history::<D>(db, to_confirm_start_height, &to_confirm_ids, write_schema)?;
     confirm_maps_to_history::<D, T>(db, to_confirm_start_height, to_confirm_maps, write_schema)?;
 
     Ok(())
 }
 
 #[allow(clippy::type_complexity)]
-fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
+pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     db: &D,
     to_confirm_start_height: usize,
     to_confirm_maps: Vec<BTreeMap<T::Key, impl Into<Option<T::Value>>>>,
@@ -185,7 +185,7 @@ fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     Ok(())
 }
 
-fn confirm_ids_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
+pub fn confirm_ids_to_history<D: DatabaseTrait>(
     db: &D,
     to_confirm_start_height: usize,
     to_confirm_ids: &[CommitID],
