@@ -123,7 +123,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
+    ) -> PendResult<(usize, Vec<S::CommitId>, Vec<KeyValueMap<S>>), S> {
         // to_commit: old_root..=new_root's parent
         let (start_height_to_commit, to_commit) = self.tree.change_root(commit_id)?;
 
@@ -136,7 +136,8 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             }
         }
 
-        Ok((start_height_to_commit, to_commit))
+        let (to_commit_ids, to_commit_maps) = to_commit.into_iter().unzip();
+        Ok((start_height_to_commit, to_commit_ids, to_commit_maps))
     }
 }
 
