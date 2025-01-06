@@ -4,8 +4,8 @@ use crate::{
     backends::DatabaseTrait,
     errors::Result,
     middlewares::{
-        confirm_ids_to_history, confirm_maps_to_history, CommitID, KeyValueStoreBulks,
-        VersionedStore, VersionedStoreCache,
+        confirm_ids_to_history, confirm_maps_to_history, CommitID, ConfirmedPathInfo,
+        KeyValueStoreBulks, VersionedStore, VersionedStoreCache,
     },
 };
 
@@ -57,20 +57,23 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         write_schema: &D::WriteSchema,
     ) -> Result<()> {
         // old root..=new root's parent
-        let (
-            key_value_to_confirm_start_height,
-            key_value_to_confirm_ids,
-            key_value_to_confirm_maps,
-        ) = self.key_value_cache.change_root(new_root_commit_id)?;
+        let ConfirmedPathInfo {
+            start_height: key_value_to_confirm_start_height,
+            commit_ids: key_value_to_confirm_ids,
+            key_value_maps: key_value_to_confirm_maps,
+        } = self.key_value_cache.change_root(new_root_commit_id)?;
 
-        let (amt_node_to_confirm_start_height, amt_node_to_confirm_ids, amt_node_to_confirm_maps) =
-            self.amt_node_cache.change_root(new_root_commit_id)?;
+        let ConfirmedPathInfo {
+            start_height: amt_node_to_confirm_start_height,
+            commit_ids: amt_node_to_confirm_ids,
+            key_value_maps: amt_node_to_confirm_maps,
+        } = self.amt_node_cache.change_root(new_root_commit_id)?;
 
-        let (
-            slot_alloc_to_confirm_start_height,
-            slot_alloc_to_confirm_ids,
-            slot_alloc_to_confirm_maps,
-        ) = self.slot_alloc_cache.change_root(new_root_commit_id)?;
+        let ConfirmedPathInfo {
+            start_height: slot_alloc_to_confirm_start_height,
+            commit_ids: slot_alloc_to_confirm_ids,
+            key_value_maps: slot_alloc_to_confirm_maps,
+        } = self.slot_alloc_cache.change_root(new_root_commit_id)?;
 
         assert_eq!(
             key_value_to_confirm_start_height,

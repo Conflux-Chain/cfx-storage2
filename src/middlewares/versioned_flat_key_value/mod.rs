@@ -9,6 +9,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+pub use pending_part::pending_schema::ConfirmedPathInfo;
 pub use pending_part::PendingError;
 
 use self::pending_part::pending_schema::PendingKeyValueConfig;
@@ -140,11 +141,14 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
     // old root..=new root's parent
-    let (to_confirm_start_height, to_confirm_ids, to_confirm_maps) =
-        pending_part.change_root(new_root_commit_id)?;
+    let ConfirmedPathInfo {
+        start_height,
+        commit_ids,
+        key_value_maps,
+    } = pending_part.change_root(new_root_commit_id)?;
 
-    confirm_ids_to_history::<D>(db, to_confirm_start_height, &to_confirm_ids, write_schema)?;
-    confirm_maps_to_history::<D, T>(db, to_confirm_start_height, to_confirm_maps, write_schema)?;
+    confirm_ids_to_history::<D>(db, start_height, &commit_ids, write_schema)?;
+    confirm_maps_to_history::<D, T>(db, start_height, key_value_maps, write_schema)?;
 
     Ok(())
 }

@@ -25,6 +25,12 @@ pub struct ApplyRecord<S: PendingKeyValueSchema> {
     pub commit_id: S::CommitId,
 }
 
+pub struct ConfirmedPathInfo<S: PendingKeyValueSchema> {
+    pub start_height: usize,
+    pub commit_ids: Vec<S::CommitId>,
+    pub key_value_maps: Vec<KeyValueMap<S>>,
+}
+
 pub type KeyValueMap<S> = BTreeMap<Key<S>, ValueEntry<Value<S>>>;
 pub type RecoverMap<S> = BTreeMap<Key<S>, RecoverRecord<S>>;
 pub type ApplyMap<S> = BTreeMap<Key<S>, ApplyRecord<S>>;
