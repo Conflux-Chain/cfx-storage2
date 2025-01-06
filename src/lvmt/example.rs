@@ -56,60 +56,36 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         new_root_commit_id: CommitID,
         write_schema: &D::WriteSchema,
     ) -> Result<()> {
-        // old root..=new root's parent
-        let (
-            key_value_to_confirm_start_height,
-            key_value_to_confirm_ids,
-            key_value_to_confirm_maps,
-        ) = self.key_value_cache.change_root(new_root_commit_id)?;
+        let key_value_confirmed_path = self.key_value_cache.change_root(new_root_commit_id)?;
+        let amt_node_confirmed_path = self.amt_node_cache.change_root(new_root_commit_id)?;
+        let slot_alloc_confirmed_path = self.slot_alloc_cache.change_root(new_root_commit_id)?;
 
-        let (amt_node_to_confirm_start_height, amt_node_to_confirm_ids, amt_node_to_confirm_maps) =
-            self.amt_node_cache.change_root(new_root_commit_id)?;
-
-        let (
-            slot_alloc_to_confirm_start_height,
-            slot_alloc_to_confirm_ids,
-            slot_alloc_to_confirm_maps,
-        ) = self.slot_alloc_cache.change_root(new_root_commit_id)?;
-
-        assert_eq!(
-            key_value_to_confirm_start_height,
-            amt_node_to_confirm_start_height
-        );
-        assert_eq!(
-            key_value_to_confirm_start_height,
-            slot_alloc_to_confirm_start_height
-        );
-
-        assert_eq!(key_value_to_confirm_ids, amt_node_to_confirm_ids);
-        assert_eq!(key_value_to_confirm_ids, slot_alloc_to_confirm_ids);
-
-        let to_confirm_start_height = key_value_to_confirm_start_height;
-        let to_confirm_ids = key_value_to_confirm_ids;
+        assert!(key_value_confirmed_path.is_same_path(&amt_node_confirmed_path));
+        assert!(key_value_confirmed_path.is_same_path(&slot_alloc_confirmed_path));
 
         confirm_ids_to_history::<D>(
             &self.backend,
-            to_confirm_start_height,
-            &to_confirm_ids,
+            key_value_confirmed_path.start_height,
+            &key_value_confirmed_path.commit_ids,
             write_schema,
         )?;
 
         confirm_maps_to_history::<D, FlatKeyValue>(
             &self.backend,
-            to_confirm_start_height,
-            key_value_to_confirm_maps,
+            key_value_confirmed_path.start_height,
+            key_value_confirmed_path.key_value_maps,
             write_schema,
         )?;
         confirm_maps_to_history::<D, AmtNodes>(
             &self.backend,
-            to_confirm_start_height,
-            amt_node_to_confirm_maps,
+            amt_node_confirmed_path.start_height,
+            amt_node_confirmed_path.key_value_maps,
             write_schema,
         )?;
         confirm_maps_to_history::<D, SlotAllocations>(
             &self.backend,
-            to_confirm_start_height,
-            slot_alloc_to_confirm_maps,
+            slot_alloc_confirmed_path.start_height,
+            slot_alloc_confirmed_path.key_value_maps,
             write_schema,
         )?;
 

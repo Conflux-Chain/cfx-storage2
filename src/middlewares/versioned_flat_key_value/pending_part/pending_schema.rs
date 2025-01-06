@@ -25,6 +25,22 @@ pub struct ApplyRecord<S: PendingKeyValueSchema> {
     pub commit_id: S::CommitId,
 }
 
+/// `commit_ids` and `key_value_maps` should be ordered from the smallest height to the largest height.
+pub struct ConfirmedPathInfo<S: PendingKeyValueSchema> {
+    pub start_height: usize,
+    pub commit_ids: Vec<S::CommitId>,
+    pub key_value_maps: Vec<KeyValueMap<S>>,
+}
+
+impl<S: PendingKeyValueSchema> ConfirmedPathInfo<S> {
+    pub fn is_same_path<T: PendingKeyValueSchema>(&self, other: &ConfirmedPathInfo<T>) -> bool
+    where
+        S::CommitId: PartialEq<T::CommitId>,
+    {
+        self.start_height == other.start_height && self.commit_ids == other.commit_ids
+    }
+}
+
 pub type KeyValueMap<S> = BTreeMap<Key<S>, ValueEntry<Value<S>>>;
 pub type RecoverMap<S> = BTreeMap<Key<S>, RecoverRecord<S>>;
 pub type ApplyMap<S> = BTreeMap<Key<S>, ApplyRecord<S>>;
