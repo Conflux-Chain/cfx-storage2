@@ -156,7 +156,7 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     to_confirm_maps: Vec<BTreeMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
+    let history_index_table = db.view::<HistoryIndicesTable<T>>()?;
     let change_history_table =
         KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
 
@@ -179,9 +179,6 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
         )?;
     }
 
-    std::mem::drop(history_index_table);
-    std::mem::drop(change_history_table);
-
     Ok(())
 }
 
@@ -191,8 +188,8 @@ pub fn confirm_ids_to_history<D: DatabaseTrait>(
     to_confirm_ids: &[CommitID],
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
-    let history_number_table = Arc::new(db.view::<HistoryNumberSchema>()?);
+    let commit_id_table = db.view::<CommitIDSchema>()?;
+    let history_number_table = db.view::<HistoryNumberSchema>()?;
 
     for (delta_height, confirmed_commit_id) in to_confirm_ids.iter().enumerate() {
         let height = to_confirm_start_height + delta_height;
@@ -216,9 +213,6 @@ pub fn confirm_ids_to_history<D: DatabaseTrait>(
         );
         write_schema.write::<HistoryNumberSchema>(history_number_table_op);
     }
-
-    std::mem::drop(commit_id_table);
-    std::mem::drop(history_number_table);
 
     Ok(())
 }
