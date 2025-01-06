@@ -139,17 +139,25 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
     new_root_commit_id: CommitID,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    // old root..=new root's parent
-    let (to_confirm_start_height, to_confirm_ids, to_confirm_maps) =
-        pending_part.change_root(new_root_commit_id)?;
+    let confirmed_path = pending_part.change_root(new_root_commit_id)?;
 
-    confirm_ids_to_history::<D>(db, to_confirm_start_height, &to_confirm_ids, write_schema)?;
-    confirm_maps_to_history::<D, T>(db, to_confirm_start_height, to_confirm_maps, write_schema)?;
+    confirm_ids_to_history::<D>(
+        db,
+        confirmed_path.start_height,
+        &confirmed_path.commit_ids,
+        write_schema,
+    )?;
+
+    confirm_maps_to_history::<D, T>(
+        db,
+        confirmed_path.start_height,
+        confirmed_path.key_value_maps,
+        write_schema,
+    )?;
 
     Ok(())
 }
 
-#[allow(clippy::type_complexity)]
 pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     db: &D,
     to_confirm_start_height: usize,
