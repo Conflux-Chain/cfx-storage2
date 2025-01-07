@@ -31,8 +31,11 @@ pub mod test_utils {
         prop_oneof![0u64..10000, 0u64..(1 << 40)]
     }
 
-    pub fn value_strategy() -> impl Strategy<Value = Box<[u8]>> {
-        vec(0u8..=255, 0..128).prop_map(|x| x.into_boxed_slice())
+    pub fn value_strategy() -> impl Strategy<Value = Option<Box<[u8]>>> {
+        prop_oneof![
+            vec(0u8..=255, 0..128).prop_map(|x| Some(x.into_boxed_slice())),
+            Just(None),
+        ]
     }
 
     pub fn bytes32_strategy() -> impl Strategy<Value = H256> {
