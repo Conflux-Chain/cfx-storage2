@@ -1,18 +1,14 @@
 use std::collections::VecDeque;
 
 use crate::middlewares::versioned_flat_key_value::pending_part::pending_schema::{
-    KeyValueMap, PendingKeyValueSchema, Result as PendResult,
+    ConfirmedPathInfo, KeyValueMap, PendingKeyValueSchema, Result as PendResult,
 };
 
 use super::{SlabIndex, Tree};
 
 // methods to support VersionedMap::change_root()
 impl<S: PendingKeyValueSchema> Tree<S> {
-    #[allow(clippy::type_complexity)]
-    pub fn change_root(
-        &mut self,
-        commit_id: S::CommitId,
-    ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
+    pub fn change_root(&mut self, commit_id: S::CommitId) -> PendResult<ConfirmedPathInfo<S>, S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // old_root..=new_root's parent
@@ -35,8 +31,15 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             self.parent_of_root = Some(last.0);
         }
 
-        // (height of old_root, old_root..=new_root's parent)
-        Ok((self.height_of_root - to_commit.len(), to_commit))
+        // height of old_root
+        let start_height_to_commit = self.height_of_root - to_commit.len();
+        let (to_commit_ids, to_commit_maps) = to_commit.into_iter().unzip();
+
+        Ok(ConfirmedPathInfo {
+            start_height: start_height_to_commit,
+            commit_ids: to_commit_ids,
+            key_value_maps: to_commit_maps,
+        })
     }
 
     // excluding target

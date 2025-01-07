@@ -33,6 +33,20 @@ pub struct LvmtStore<'cache, 'db> {
 const ALLOC_START_VERSION: u64 = 1;
 
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
+    pub fn new(
+        key_value_store: VersionedStore<'cache, 'db, FlatKeyValue>,
+        amt_node_store: VersionedStore<'cache, 'db, AmtNodes>,
+        slot_alloc_store: VersionedStore<'cache, 'db, SlotAllocations>,
+        auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
+    ) -> Self {
+        Self {
+            key_value_store,
+            amt_node_store,
+            slot_alloc_store,
+            auth_changes,
+        }
+    }
+
     fn commit(
         &mut self,
         old_commit: Option<CommitID>,

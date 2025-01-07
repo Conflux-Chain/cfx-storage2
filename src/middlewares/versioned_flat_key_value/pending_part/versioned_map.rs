@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::traits::{IsCompleted, NeedNext};
 use crate::types::ValueEntry;
 
+use super::pending_schema::ConfirmedPathInfo;
 use super::{
     current_map::CurrentMap,
     pending_schema::{KeyValueMap, PendingKeyValueSchema, RecoverRecord, Result as PendResult},
@@ -118,16 +119,10 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
 // change_root
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    #[allow(clippy::type_complexity)]
-    // old_root..=new_root's parent: (commit_id, key_value_map)
-    pub fn change_root(
-        &mut self,
-        commit_id: S::CommitId,
-    ) -> PendResult<(usize, Vec<(S::CommitId, KeyValueMap<S>)>), S> {
-        // to_commit: old_root..=new_root's parent
-        let (start_height_to_commit, to_commit) = self.tree.change_root(commit_id)?;
+    pub fn change_root(&mut self, commit_id: S::CommitId) -> PendResult<ConfirmedPathInfo<S>, S> {
+        let confirm_path_info = self.tree.change_root(commit_id)?;
 
-        if let Some(parent_of_new_root) = to_commit.last() {
+        if confirm_path_info.commit_ids.last().is_some() {
             // clear current is necessary
             // because apply_commit_id in current.map may be removed from pending part
             self.clear_removed_current();
@@ -136,7 +131,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             }
         }
 
-        Ok((start_height_to_commit, to_commit))
+        Ok(confirm_path_info)
     }
 }
 

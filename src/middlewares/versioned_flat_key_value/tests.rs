@@ -11,7 +11,8 @@ use crate::{
     errors::Result,
     middlewares::{
         versioned_flat_key_value::{
-            confirm_series_to_history, confirmed_pending_to_history, pending_part::VersionedMap,
+            confirm_ids_to_history, confirm_maps_to_history, confirmed_pending_to_history,
+            pending_part::VersionedMap,
         },
         CommitID, PendingError,
     },
@@ -683,13 +684,14 @@ fn gen_updates(
 }
 
 #[allow(clippy::type_complexity)]
-fn gen_init(
-    db: &mut impl DatabaseTrait,
+fn gen_init<D: DatabaseTrait>(
+    db: &D,
     num_history: usize,
     rng: &mut ChaChaRng,
     max_num_new_keys: usize,
     max_num_previous_keys: usize,
     all_keys: &mut BTreeSet<u64>,
+    write_schema: &D::WriteSchema,
 ) -> (
     UniqueVec<CommitID>,
     Vec<BTreeMap<u64, Option<u64>>>,
@@ -722,17 +724,8 @@ fn gen_init(
 
     let pending_part = VersionedMap::new(history_cids.items().last().copied(), history_cids.len());
 
-    confirm_series_to_history::<_, TestSchema>(
-        db,
-        0,
-        history_cids
-            .clone()
-            .into_vec()
-            .into_iter()
-            .zip(history_updates.clone())
-            .collect(),
-    )
-    .unwrap();
+    confirm_ids_to_history::<D>(db, 0, &history_cids.clone().into_vec(), write_schema).unwrap();
+    confirm_maps_to_history::<D, TestSchema>(db, 0, history_updates.clone(), write_schema).unwrap();
 
     (history_cids, history_updates, pending_part)
 }
@@ -1148,8 +1141,8 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
     }
 }
 
-fn test_versioned_store(
-    db: &mut impl DatabaseTrait,
+fn test_versioned_store<D: DatabaseTrait>(
+    db: &mut D,
     num_history: usize,
     num_pending: usize,
     num_operations: usize,
@@ -1161,6 +1154,7 @@ fn test_versioned_store(
     let mut all_keys = BTreeSet::new();
 
     // init history part
+    let write_schema = D::write_schema();
     let (history_cids, history_updates, mut pending_part) = gen_init(
         db,
         num_history,
@@ -1168,8 +1162,11 @@ fn test_versioned_store(
         num_gen_new_keys,
         num_gen_previous_keys,
         &mut all_keys,
+        &write_schema,
     );
+    db.commit(write_schema).unwrap();
 
+    // build proxy
     let mut mock_versioned_store =
         MockVersionedStore::build(history_cids.clone(), history_updates.clone());
 
@@ -1231,7 +1228,12 @@ fn test_versioned_store(
                 let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
 
                 drop(real_versioned_store);
-                let real_res = confirmed_pending_to_history(db, &mut pending_part, commit_id);
+
+                let write_schema = D::write_schema();
+                let real_res =
+                    confirmed_pending_to_history(db, &mut pending_part, commit_id, &write_schema);
+                db.commit(write_schema).unwrap();
+
                 real_versioned_store = VersionedStore::new(db, &mut pending_part).unwrap();
                 real_versioned_store.check_consistency().unwrap();
 
