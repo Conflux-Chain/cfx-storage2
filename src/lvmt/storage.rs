@@ -51,7 +51,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         &mut self,
         old_commit: Option<CommitID>,
         new_commit: CommitID,
-        changes: impl Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
+        changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
     ) -> Result<()> {
