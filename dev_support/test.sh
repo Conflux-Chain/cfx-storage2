@@ -27,8 +27,3 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 echoStep "Test"
 cargo test -r --all
-
-if [ "$1" == "run-ignored" ]; then
-    echoStep "Test ignored"
-    cargo test -r --all -- --ignored
-fi

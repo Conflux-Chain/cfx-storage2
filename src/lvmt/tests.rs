@@ -132,7 +132,6 @@ fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
 }
 
 #[test]
-#[ignore]
 fn test_lvmt_store_rocksdb() {
     let db_path = "__test_lvmt_store";
 
@@ -145,7 +144,6 @@ fn test_lvmt_store_rocksdb() {
 }
 
 #[test]
-#[ignore]
 fn test_lvmt_store_inmemory() {
     let backend = InMemoryDatabase::empty();
     test_lvmt_store::<InMemoryDatabase>(backend, 100000);
