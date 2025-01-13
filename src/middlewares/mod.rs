@@ -10,3 +10,8 @@ pub use versioned_flat_key_value::{
     confirm_ids_to_history, confirm_maps_to_history, table_schema, PendingError, VersionedStore,
     VersionedStoreCache,
 };
+
+#[cfg(test)]
+pub use versioned_flat_key_value::{
+    empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test,
+};
