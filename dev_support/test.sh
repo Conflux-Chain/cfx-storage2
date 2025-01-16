@@ -11,19 +11,26 @@ set -e
 echoStep "Clean"
 cargo clean
 
-echoStep "Check fmt"
-./cargo_fmt.sh -- --check
+echoStep "Download AMT parameters"
+wget -P pp/ https://conflux-rust-dev.s3.ap-east-1.amazonaws.com/amt-params/amt-prove-mont-nxssWC-16-16.bin &
 
-export RUSTFLAGS="-D warnings" 
+( # Start of the block that should run concurrently with the download
+    echoStep "Check fmt"
+    ./cargo_fmt.sh -- --check
 
-echoStep "Check all"
-cargo check --all
+    export RUSTFLAGS="-D warnings" 
 
-echoStep "Check all tests"
-cargo check --all --tests --benches
+    echoStep "Check all"
+    cargo check --all
 
-echoStep "Check clippy"
-cargo clippy --all-targets --all-features -- -D warnings
+    echoStep "Check all tests"
+    cargo check --all --tests --benches
 
+    echoStep "Check clippy"
+    cargo clippy --all-targets --all-features -- -D warnings
+) & # End of the block, run this block in the background
+
+# Wait for both the download and the block of cargo operations to finish
+wait
 echoStep "Test"
 cargo test -r --all
