@@ -38,11 +38,18 @@ proptest = "1.5"
 
 amt = { git = "https://github.com/Conflux-Chain/amt", rev = "828c4c6", features = ["bls12-381"] }
 
+once_cell = "1.19"
+asb-tasks = { git = "https://github.com/rongma7/authenticated-storage-benchmarks", rev = "7ce7b99" }
+asb-options = { git = "https://github.com/rongma7/authenticated-storage-benchmarks", rev = "7ce7b99" }
+fs_extra = "1.2.0"
+
+pprof = { version = "0.14", features = ["protobuf", "prost-codec"] }
+asb-profile = { git = "https://github.com/rongma7/authenticated-storage-benchmarks", rev = "7ce7b99" }
+
 [dev-dependencies]
 rand = "0.8.0"
 rand_distr = "0.4.0"
 rand_chacha = "0.2.1"
-once_cell = "1.19"
 
 [features]
 default = ["parallel-crypto"]
