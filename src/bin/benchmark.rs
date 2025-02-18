@@ -205,18 +205,18 @@ pub fn run_tasks<D: DatabaseTrait>(
     reporter.collect_profiling(profiler);
 }
 
-pub fn initialize_lvmt<'a, D: DatabaseTrait>(
+pub fn initialize_lvmt<D: DatabaseTrait>(
     backend: D,
-    opts: &'a Options,
-) -> (LvmtStorage<D>, Reporter<'a>) {
+    opts: &Options,
+) -> (LvmtStorage<D>, Reporter<'_>) {
     // omit opts.algorithm, use LVMT directly
     let db = LvmtStorage::<D>::new(backend).unwrap();
-    let counter = Box::new(Counter::default());
+    let counter = Box::<Counter>::default();
 
     let mut reporter = Reporter::new(opts);
     reporter.set_counter(counter);
 
-    return (db, reporter);
+    (db, reporter)
 }
 
 fn main() {
