@@ -1,6 +1,9 @@
 use crate::{
     errors::Result,
-    middlewares::{table_schema::KeyValueSnapshotRead, CommitID},
+    middlewares::{
+        table_schema::{KeyValueSnapshotRead, VersionedKeyValueSchema},
+        CommitID,
+    },
     traits::KeyValueStoreManager,
 };
 
@@ -11,11 +14,20 @@ pub struct LvmtSnapshot<'db> {
 }
 
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
-    fn get_state(&self, commit: CommitID) -> Result<LvmtSnapshot> {
+    pub fn get_state(&self, commit: CommitID) -> Result<LvmtSnapshot> {
         let key_value_view = self.get_key_value_store().get_versioned_store(&commit)?;
 
         Ok(LvmtSnapshot {
             key_value_view: Box::new(key_value_view),
         })
+    }
+}
+
+impl<'db> LvmtSnapshot<'db> {
+    pub fn get(
+        &self,
+        key: &<FlatKeyValue as VersionedKeyValueSchema>::Key,
+    ) -> Result<Option<<FlatKeyValue as VersionedKeyValueSchema>::Value>> {
+        self.key_value_view.get(key)
     }
 }
