@@ -203,14 +203,17 @@ fn allocate_version_slot(
     }
 }
 
-#[cfg(test)]
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
     pub fn get_key_value_store(&self) -> &VersionedStore<'cache, 'db, FlatKeyValue> {
         &self.key_value_store
     }
+
+    #[cfg(test)]
     pub fn get_amt_node_store(&self) -> &VersionedStore<'cache, 'db, AmtNodes> {
         &self.amt_node_store
     }
+
+    #[cfg(test)]
     pub fn get_slot_alloc_store(&self) -> &VersionedStore<'cache, 'db, SlotAllocations> {
         &self.slot_alloc_store
     }
