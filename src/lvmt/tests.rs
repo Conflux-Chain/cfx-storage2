@@ -17,8 +17,9 @@ use super::{crypto::PE, example::LvmtStorage, storage::LvmtStore};
 
 pub const TEST_LEVEL: usize = 16;
 
-pub static AMT: Lazy<AmtParams<PE>> =
-    Lazy::new(|| AmtParams::from_dir_mont("./pp", TEST_LEVEL, TEST_LEVEL, CreateMode::Both, None));
+pub static AMT: Lazy<AmtParams<PE>> = Lazy::new(|| {
+    AmtParams::from_dir_mont("./pp", TEST_LEVEL, TEST_LEVEL, CreateMode::Neither, None)
+});
 
 fn u64_to_boxed_u8(value: u64) -> Box<[u8]> {
     let byte_array: [u8; 8] = value.to_ne_bytes();
