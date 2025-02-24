@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, collections::BTreeMap};
+use std::borrow::Borrow;
 
 use crate::{
     backends::TableReader,
@@ -7,25 +7,30 @@ use crate::{
     traits::{
         IsCompleted, KeyValueStoreBulksTrait, KeyValueStoreManager, KeyValueStoreRead, NeedNext,
     },
-    types::ValueEntry,
     StorageError,
 };
 
 use super::{
     get_versioned_key,
+    pending_part::{pending_schema::PendingKeyValueConfig, VersionedMap},
     table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema},
     HistoryIndexKey, PendingError, VersionedStore,
 };
 
-pub struct SnapshotView<'db, T: VersionedKeyValueSchema> {
-    pending_updates: Option<BTreeMap<T::Key, ValueEntry<T::Value>>>,
+#[cfg(test)]
+use crate::types::ValueEntry;
+#[cfg(test)]
+use std::collections::BTreeMap;
+
+pub struct SnapshotView<'cache, 'db, T: VersionedKeyValueSchema> {
+    pending_updates: Option<SnapshotPending<'cache, T>>,
     history: Option<SnapshotHistorical<'db, T>>,
 }
 
 #[cfg(test)]
 const MIN_HISTORY_NUMBER_MINUS_ONE: u64 = 0;
 
-impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
+impl<'cache, 'db, T: VersionedKeyValueSchema> SnapshotView<'cache, 'db, T> {
     #[cfg(test)]
     fn iter_history(&self) -> Result<BTreeMap<T::Key, ValueEntry<T::Value>>> {
         if let Some(ref history) = self.history {
@@ -94,7 +99,10 @@ impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
     pub fn iter(&self) -> Result<impl Iterator<Item = (T::Key, ValueEntry<T::Value>)>> {
         let mut map = self.iter_history()?;
 
-        if let Some(ref pending_map) = self.pending_updates {
+        if let Some(ref pending_updates) = self.pending_updates {
+            let pending_map = pending_updates
+                .inner
+                .get_versioned_store(pending_updates.commit_id)?;
             for (k, v) in pending_map {
                 map.insert(k.clone(), v.clone());
             }
@@ -104,16 +112,28 @@ impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
     }
 }
 
+struct SnapshotPending<'cache, T: VersionedKeyValueSchema> {
+    commit_id: CommitID,
+    inner: &'cache VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+}
+
 pub struct SnapshotHistorical<'db, T: VersionedKeyValueSchema> {
     history_number: HistoryNumber,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value> for SnapshotView<'db, T> {
+impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for SnapshotView<'cache, 'db, T>
+{
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
-        if let Some(opt_v) = self.pending_updates.as_ref().and_then(|u| u.get(key)) {
-            return Ok(opt_v.to_option());
+        if let Some(pending_updates) = &self.pending_updates {
+            let pending_optv = pending_updates
+                .inner
+                .get_versioned_key(&pending_updates.commit_id, key)?;
+            if let Some(pending_v) = pending_optv {
+                return Ok(pending_v.into_option());
+            }
         }
 
         if let Some(history) = &self.history {
@@ -129,8 +149,8 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value> for Sn
     }
 }
 
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for Option<SnapshotView<'db, T>>
+impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for Option<SnapshotView<'cache, 'db, T>>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         if let Some(view) = self {
@@ -144,38 +164,35 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
 impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     for VersionedStore<'cache, 'db, T>
 {
-    type Store = SnapshotView<'db, T>;
-    fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
-        let pending_res = self.pending_part.get_versioned_store(*commit);
-        match pending_res {
-            Ok(pending_map) => {
-                let history = if let Some(history_commit) = self.pending_part.get_parent_of_root() {
-                    Some(SnapshotHistorical {
-                        history_number: self.get_history_number_by_commit_id(history_commit)?,
-                        history_index_table: self.history_index_table.clone(),
-                        change_history_table: self.change_history_table.clone(),
-                    })
-                } else {
-                    None
-                };
-                Ok(SnapshotView {
-                    pending_updates: Some(pending_map),
-                    history,
-                })
-            }
-            Err(PendingError::CommitIDNotFound(target_commit_id)) => {
-                assert_eq!(target_commit_id, *commit);
-                let history = SnapshotHistorical {
-                    history_number: self.get_history_number_by_commit_id(*commit)?,
+    type Store<'a> = SnapshotView<'a, 'db, T> where Self: 'a;
+    fn get_versioned_store<'a>(&'a self, commit: &CommitID) -> Result<Self::Store<'a>> {
+        if self.pending_part.contains_commit_id(commit) {
+            let history = if let Some(history_commit) = self.pending_part.get_parent_of_root() {
+                Some(SnapshotHistorical {
+                    history_number: self.get_history_number_by_commit_id(history_commit)?,
                     history_index_table: self.history_index_table.clone(),
                     change_history_table: self.change_history_table.clone(),
-                };
-                Ok(SnapshotView {
-                    pending_updates: None,
-                    history: Some(history),
                 })
-            }
-            Err(other_err) => Err(StorageError::PendingError(other_err)),
+            } else {
+                None
+            };
+            Ok(SnapshotView {
+                pending_updates: Some(SnapshotPending {
+                    commit_id: *commit,
+                    inner: &*self.pending_part,
+                }),
+                history,
+            })
+        } else {
+            let history = SnapshotHistorical {
+                history_number: self.get_history_number_by_commit_id(*commit)?,
+                history_index_table: self.history_index_table.clone(),
+                change_history_table: self.change_history_table.clone(),
+            };
+            Ok(SnapshotView {
+                pending_updates: None,
+                history: Some(history),
+            })
         }
     }
 

@@ -195,6 +195,10 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
     }
 
+    pub fn contains_commit_id(&self, commit_id: &S::CommitId) -> bool {
+        self.tree.contains_commit_id(commit_id)
+    }
+
     pub fn get_versioned_store(&self, commit_id: S::CommitId) -> PendResult<KeyValueMap<S>, S> {
         // let query node to be self.current
         let mut guard = self.current.write();

@@ -167,9 +167,9 @@ struct MockNode<T: VersionedKeyValueSchema> {
 impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     for MockVersionedStore<T>
 {
-    type Store = MockOneStore<T::Key, T::Value>;
+    type Store<'a> = MockOneStore<T::Key, T::Value> where Self: 'a;
 
-    fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
+    fn get_versioned_store<'a>(&'a self, commit: &CommitID) -> Result<Self::Store<'a>> {
         if let Some(pending_res) = self.pending.tree.get(commit) {
             Ok(MockOneStore::from_mock_map(&pending_res.store))
         } else if let Some((_, history_res)) = self.history.get(commit) {
