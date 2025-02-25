@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use once_cell::sync::Lazy;
 use rand_chacha::ChaChaRng;
@@ -28,7 +28,7 @@ fn u64_to_boxed_u8(value: u64) -> Box<[u8]> {
 }
 
 fn get_changes_from_updates(
-    updates: BTreeMap<u64, Option<u64>>,
+    updates: HashMap<u64, Option<u64>>,
 ) -> impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)> {
     updates
         .into_iter()

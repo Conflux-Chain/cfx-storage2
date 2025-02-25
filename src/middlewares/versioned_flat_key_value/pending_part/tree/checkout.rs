@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::middlewares::versioned_flat_key_value::pending_part::{
     current_map::CurrentMap,
@@ -61,7 +61,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         target_commit_id: S::CommitId,
     ) -> PendResult<ApplyMap<S>, S> {
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
-        let mut commits_rev = BTreeMap::new();
+        let mut commits_rev = HashMap::new();
         target_node.export_commit_data::<false>(&mut commits_rev);
         while let Some(parent_slab_index) = target_node.get_parent() {
             target_node = self.get_node_by_slab_index(parent_slab_index);
@@ -76,11 +76,11 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         current_commit_id: S::CommitId,
         target_commit_id: S::CommitId,
-    ) -> PendResult<(BTreeMap<S::Key, Option<ApplyRecord<S>>>, ApplyMap<S>), S> {
+    ) -> PendResult<(HashMap<S::Key, Option<ApplyRecord<S>>>, ApplyMap<S>), S> {
         let mut current_node = self.get_node_by_commit_id(current_commit_id)?;
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
-        let mut rollbacks = BTreeMap::new();
-        let mut commits_rev = BTreeMap::new();
+        let mut rollbacks = HashMap::new();
+        let mut commits_rev = HashMap::new();
 
         while current_node.get_height() > target_node.get_height() {
             current_node.export_rollback_data::<true>(&mut rollbacks);
@@ -100,7 +100,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             target_node = self.get_parent_node(target_node).unwrap();
         }
 
-        let mut rollbacks_with_value = BTreeMap::new();
+        let mut rollbacks_with_value = HashMap::new();
         for (key, old_commit_id) in rollbacks.into_iter() {
             let actual_old_commit_id = if let Some(ref old_commit_id) = old_commit_id {
                 // check rollbacks' old_commit_id because TreeNodes are deleted in a lazy way with respect to TreeNodes.modifications
