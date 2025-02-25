@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     fmt::Debug,
     hash::Hash,
     marker::PhantomData,
@@ -46,10 +46,10 @@ impl<S: PendingKeyValueSchema> ConfirmedPathInfo<S> {
     }
 }
 
-pub type KeyValueMap<S> = BTreeMap<Key<S>, ValueEntry<Value<S>>>;
+pub type KeyValueMap<S> = HashMap<Key<S>, ValueEntry<Value<S>>>;
 pub type RecoverMap<S> = HashMap<Key<S>, RecoverRecord<S>>;
-pub type ApplyMap<S> = BTreeMap<Key<S>, ApplyRecord<S>>;
-pub type LastCommitIdMap<S> = BTreeMap<Key<S>, Option<CommitId<S>>>;
+pub type ApplyMap<S> = HashMap<Key<S>, ApplyRecord<S>>;
+pub type LastCommitIdMap<S> = HashMap<Key<S>, Option<CommitId<S>>>;
 
 pub type CommitIdVec<S> = Vec<CommitId<S>>;
 pub type Result<T, S> = std::result::Result<T, PendingError<CommitId<S>>>;
