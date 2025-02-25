@@ -6,7 +6,7 @@ pub mod table_schema;
 mod tests;
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use pending_part::PendingError;
@@ -77,7 +77,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
         &mut self,
         parent_commit: Option<CommitID>,
         commit: CommitID,
-        updates: BTreeMap<T::Key, Option<T::Value>>,
+        updates: HashMap<T::Key, Option<T::Value>>,
     ) -> Result<()> {
         if self.commit_id_table.get(&commit)?.is_some() {
             return Err(StorageError::CommitIdAlreadyExistsInHistory);
@@ -164,7 +164,7 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
 pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     db: &D,
     to_confirm_start_height: usize,
-    to_confirm_maps: Vec<BTreeMap<T::Key, impl Into<Option<T::Value>>>>,
+    to_confirm_maps: Vec<HashMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
     let history_index_table = db.view::<HistoryIndicesTable<T>>()?;

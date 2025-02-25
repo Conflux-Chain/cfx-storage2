@@ -225,8 +225,7 @@ mod tests {
     use super::*;
     use rand::{rngs::StdRng, Rng, SeedableRng};
     use rand_distr::{Distribution, Uniform};
-    use std::collections::BTreeMap;
-
+    
     pub type CommitId = u64;
 
     #[derive(Clone, Copy)]
@@ -267,7 +266,7 @@ mod tests {
             } else {
                 Some(rng.gen_range(1..i))
             };
-            let mut updates = BTreeMap::new();
+            let mut updates = HashMap::new();
             for _ in 0..5 {
                 let (key, value) = random_key_value(rng);
                 updates.insert(key, value);
@@ -335,14 +334,14 @@ mod tests {
         let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         forward_only_tree.add_root(0, HashMap::new()).unwrap();
-        versioned_map.add_node(BTreeMap::new(), 0, None).unwrap();
+        versioned_map.add_node(HashMap::new(), 0, None).unwrap();
 
         assert_eq!(
             forward_only_tree.add_root(1, HashMap::new()),
             Err(PendingError::MultipleRootsNotAllowed)
         );
         assert_eq!(
-            versioned_map.add_node(BTreeMap::new(), 1, None),
+            versioned_map.add_node(HashMap::new(), 1, None),
             Err(PendingError::MultipleRootsNotAllowed)
         );
     }
@@ -357,7 +356,7 @@ mod tests {
             Err(PendingError::CommitIDNotFound(0))
         );
         assert_eq!(
-            versioned_map.add_node(BTreeMap::new(), 1, Some(0)),
+            versioned_map.add_node(HashMap::new(), 1, Some(0)),
             Err(PendingError::CommitIDNotFound(0))
         );
     }
@@ -368,14 +367,14 @@ mod tests {
         let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         forward_only_tree.add_root(0, HashMap::new()).unwrap();
-        versioned_map.add_node(BTreeMap::new(), 0, None).unwrap();
+        versioned_map.add_node(HashMap::new(), 0, None).unwrap();
 
         assert_eq!(
             forward_only_tree.add_non_root_node(0, 0, HashMap::new()),
             Err(PendingError::CommitIdAlreadyExists(0))
         );
         assert_eq!(
-            versioned_map.add_node(BTreeMap::new(), 0, Some(0)),
+            versioned_map.add_node(HashMap::new(), 0, Some(0)),
             Err(PendingError::CommitIdAlreadyExists(0))
         );
     }
