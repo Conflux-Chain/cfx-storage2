@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, fmt::Debug, hash::Hash, marker::PhantomData};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Debug,
+    hash::Hash,
+    marker::PhantomData,
+};
 
 use crate::middlewares::versioned_flat_key_value::table_schema::VersionedKeyValueSchema;
 use crate::types::ValueEntry;
@@ -42,7 +47,7 @@ impl<S: PendingKeyValueSchema> ConfirmedPathInfo<S> {
 }
 
 pub type KeyValueMap<S> = BTreeMap<Key<S>, ValueEntry<Value<S>>>;
-pub type RecoverMap<S> = BTreeMap<Key<S>, RecoverRecord<S>>;
+pub type RecoverMap<S> = HashMap<Key<S>, RecoverRecord<S>>;
 pub type ApplyMap<S> = BTreeMap<Key<S>, ApplyRecord<S>>;
 pub type LastCommitIdMap<S> = BTreeMap<Key<S>, Option<CommitId<S>>>;
 
