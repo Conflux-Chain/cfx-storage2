@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::traits::{IsCompleted, NeedNext};
 use crate::types::ValueEntry;
@@ -99,7 +99,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
         // add node to tree
         let current = guard.as_ref().unwrap();
-        let mut modifications = BTreeMap::new();
+        let mut modifications = HashMap::new();
         for (key, value) in updates {
             let last_commit_id = current.get(&key).map(|s| s.commit_id);
             modifications.insert(
@@ -225,6 +225,7 @@ mod tests {
     use super::*;
     use rand::{rngs::StdRng, Rng, SeedableRng};
     use rand_distr::{Distribution, Uniform};
+    use std::collections::BTreeMap;
 
     pub type CommitId = u64;
 
@@ -333,11 +334,11 @@ mod tests {
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
         let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
-        forward_only_tree.add_root(0, BTreeMap::new()).unwrap();
+        forward_only_tree.add_root(0, HashMap::new()).unwrap();
         versioned_map.add_node(BTreeMap::new(), 0, None).unwrap();
 
         assert_eq!(
-            forward_only_tree.add_root(1, BTreeMap::new()),
+            forward_only_tree.add_root(1, HashMap::new()),
             Err(PendingError::MultipleRootsNotAllowed)
         );
         assert_eq!(
@@ -352,7 +353,7 @@ mod tests {
         let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
         assert_eq!(
-            forward_only_tree.add_non_root_node(1, 0, BTreeMap::new()),
+            forward_only_tree.add_non_root_node(1, 0, HashMap::new()),
             Err(PendingError::CommitIDNotFound(0))
         );
         assert_eq!(
@@ -366,11 +367,11 @@ mod tests {
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
         let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
 
-        forward_only_tree.add_root(0, BTreeMap::new()).unwrap();
+        forward_only_tree.add_root(0, HashMap::new()).unwrap();
         versioned_map.add_node(BTreeMap::new(), 0, None).unwrap();
 
         assert_eq!(
-            forward_only_tree.add_non_root_node(0, 0, BTreeMap::new()),
+            forward_only_tree.add_non_root_node(0, 0, HashMap::new()),
             Err(PendingError::CommitIdAlreadyExists(0))
         );
         assert_eq!(
