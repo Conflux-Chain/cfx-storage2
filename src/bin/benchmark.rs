@@ -75,6 +75,7 @@ fn warmup<D: DatabaseTrait>(
     (old_commit, num_epochs)
 }
 
+#[inline]
 fn get_commit_id_from_epoch_id(epoch_id: usize) -> CommitID {
     H256::from_low_u64_be(epoch_id as u64)
 }
@@ -130,7 +131,7 @@ pub fn run_tasks<D: DatabaseTrait>(
 
     // Get a manager for db
     let mut lvmt = db.as_manager().unwrap();
-    let write_schema = D::write_schema();
+    let mut write_schema = D::write_schema();
 
     for (delta_epoch, events) in tasks.tasks().enumerate() {
         // epoch should be different from those in warmup
@@ -191,15 +192,21 @@ pub fn run_tasks<D: DatabaseTrait>(
         old_commit = Some(current_commit);
 
         reporter.notify_epoch(epoch, read_count, write_count, opts);
-    }
 
-    // Persist confirmed commits from caches to the backend.
-    // Must drop the manager first because it holds a read reference to the backend.
-    drop(lvmt);
-    if let Some(last_commit) = old_commit {
-        db.confirmed_pending_to_history(last_commit, &write_schema)
-            .unwrap();
-        db.commit(write_schema).unwrap();
+        if (delta_epoch + 1) % opts.commit_epoch == 0 {
+            // Persist confirmed commits from caches to the backend.
+            // Must drop the manager first because it holds a read reference to the backend.
+            drop(lvmt);
+            if let Some(last_commit) = old_commit {
+                db.confirmed_pending_to_history(last_commit, &write_schema)
+                    .unwrap();
+                db.commit(write_schema).unwrap();
+            }
+
+            // Get a new manager for db
+            lvmt = db.as_manager().unwrap();
+            write_schema = D::write_schema();
+        }
     }
 
     reporter.collect_profiling(profiler);
