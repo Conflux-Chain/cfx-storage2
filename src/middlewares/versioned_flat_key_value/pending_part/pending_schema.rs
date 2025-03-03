@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    hash::Hash,
-    marker::PhantomData,
-};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, marker::PhantomData};
 
 use crate::middlewares::versioned_flat_key_value::table_schema::VersionedKeyValueSchema;
 use crate::types::ValueEntry;

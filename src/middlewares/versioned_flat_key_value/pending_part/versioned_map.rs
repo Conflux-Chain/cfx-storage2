@@ -225,7 +225,7 @@ mod tests {
     use super::*;
     use rand::{rngs::StdRng, Rng, SeedableRng};
     use rand_distr::{Distribution, Uniform};
-    
+
     pub type CommitId = u64;
 
     #[derive(Clone, Copy)]
