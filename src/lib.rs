@@ -2,7 +2,7 @@
 
 pub mod backends;
 pub mod errors;
-mod example;
+pub mod example;
 pub mod lvmt;
 mod macros;
 pub mod middlewares;
