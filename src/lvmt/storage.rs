@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use amt::AmtParams;
 
@@ -148,7 +148,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
 struct AllocationCacheDb<'db> {
     db: &'db KeyValueSnapshotRead<'db, SlotAllocations>,
-    cache: BTreeMap<AmtNodeId, AllocationKeyInfo>,
+    cache: HashMap<AmtNodeId, AllocationKeyInfo>,
 }
 
 impl<'db> AllocationCacheDb<'db> {
@@ -170,7 +170,7 @@ impl<'db> AllocationCacheDb<'db> {
         self.cache.insert(amt_node_id, alloc_info);
     }
 
-    fn into_changes(self) -> BTreeMap<AmtNodeId, AllocationKeyInfo> {
+    fn into_changes(self) -> HashMap<AmtNodeId, AllocationKeyInfo> {
         self.cache
     }
 }
