@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use amt::AmtParams;
 
@@ -118,19 +118,19 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         // TODO: Write to the history part is beyond the range of LvmtStore.
         // TODO: LvmtStore.auth_changes includes all commits, even if they are removed but not confirmed,
         //       so consider gc_commit elsewhere.
-        let amt_node_updates: BTreeMap<_, _> =
+        let amt_node_updates: HashMap<_, _> =
             amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
         self.amt_node_store
             .add_to_pending_part(old_commit, new_commit, amt_node_updates)?;
 
-        let key_value_updates: BTreeMap<_, _> = key_value_changes
+        let key_value_updates: HashMap<_, _> = key_value_changes
             .into_iter()
             .map(|(k, v)| (k, Some(v)))
             .collect();
         self.key_value_store
             .add_to_pending_part(old_commit, new_commit, key_value_updates)?;
 
-        let slot_alloc_updates: BTreeMap<_, _> = allocations
+        let slot_alloc_updates: HashMap<_, _> = allocations
             .into_changes()
             .into_iter()
             .map(|(k, v)| (k, Some(v)))
@@ -148,7 +148,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
 
 struct AllocationCacheDb<'db> {
     db: &'db KeyValueSnapshotRead<'db, SlotAllocations>,
-    cache: BTreeMap<AmtNodeId, AllocationKeyInfo>,
+    cache: HashMap<AmtNodeId, AllocationKeyInfo>,
 }
 
 impl<'db> AllocationCacheDb<'db> {
@@ -170,7 +170,7 @@ impl<'db> AllocationCacheDb<'db> {
         self.cache.insert(amt_node_id, alloc_info);
     }
 
-    fn into_changes(self) -> BTreeMap<AmtNodeId, AllocationKeyInfo> {
+    fn into_changes(self) -> HashMap<AmtNodeId, AllocationKeyInfo> {
         self.cache
     }
 }

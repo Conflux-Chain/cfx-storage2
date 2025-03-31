@@ -272,7 +272,7 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
 
 fn update_last_store_to_store<T: VersionedKeyValueSchema>(
     last_store: &MockStore<T>,
-    updates: BTreeMap<T::Key, Option<T::Value>>,
+    updates: HashMap<T::Key, Option<T::Value>>,
 ) -> MockStore<T> {
     let mut store: BTreeMap<_, _> = last_store
         .iter()
@@ -327,7 +327,7 @@ impl<T: Eq + std::hash::Hash + Clone> UniqueVec<T> {
 impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
     pub fn build(
         history_cids: UniqueVec<CommitID>,
-        history_updates: Vec<BTreeMap<T::Key, Option<T::Value>>>,
+        history_updates: Vec<HashMap<T::Key, Option<T::Value>>>,
     ) -> Self {
         assert_eq!(history_cids.len(), history_updates.len());
         let mut history: HashMap<_, _> = Default::default();
@@ -465,7 +465,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
         &mut self,
         parent_commit: Option<CommitID>,
         commit: CommitID,
-        updates: BTreeMap<T::Key, Option<T::Value>>,
+        updates: HashMap<T::Key, Option<T::Value>>,
     ) -> Result<()> {
         if self.history.contains_key(&commit) {
             return Err(StorageError::CommitIdAlreadyExistsInHistory);
@@ -649,9 +649,9 @@ pub fn gen_updates(
     num_gen_new_keys: usize,
     num_gen_previous_keys: usize,
     all_keys: &mut BTreeSet<u64>,
-) -> BTreeMap<u64, Option<u64>> {
+) -> HashMap<u64, Option<u64>> {
     // gen previous keys (i.e., replace), allow redundant keys and adopt the newest value for the same key
-    let mut updates: BTreeMap<_, _> = if !previous_keys.is_empty() {
+    let mut updates: HashMap<_, _> = if !previous_keys.is_empty() {
         let previous_keys_vec: Vec<_> = previous_keys.iter().cloned().collect();
         (0..num_gen_previous_keys)
             .map(|_| {
@@ -694,7 +694,7 @@ fn gen_init<D: DatabaseTrait>(
     write_schema: &D::WriteSchema,
 ) -> (
     UniqueVec<CommitID>,
-    Vec<BTreeMap<u64, Option<u64>>>,
+    Vec<HashMap<u64, Option<u64>>>,
     VersionedMap<PendingKeyValueConfig<TestSchema, CommitID>>,
 ) {
     let mut history_cids = UniqueVec::new();

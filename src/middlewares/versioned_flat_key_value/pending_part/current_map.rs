@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ops::Deref};
+use std::{collections::HashMap, ops::Deref};
 
 use super::{
     pending_schema::{ApplyMap, ApplyRecord, PendingKeyValueSchema},
@@ -6,12 +6,12 @@ use super::{
 };
 
 pub(super) struct CurrentMap<S: PendingKeyValueSchema> {
-    map: BTreeMap<S::Key, ApplyRecord<S>>,
+    map: HashMap<S::Key, ApplyRecord<S>>,
     commit_id: S::CommitId,
 }
 
 impl<S: PendingKeyValueSchema> Deref for CurrentMap<S> {
-    type Target = BTreeMap<S::Key, ApplyRecord<S>>;
+    type Target = HashMap<S::Key, ApplyRecord<S>>;
 
     fn deref(&self) -> &Self::Target {
         &self.map
@@ -21,7 +21,7 @@ impl<S: PendingKeyValueSchema> Deref for CurrentMap<S> {
 impl<S: PendingKeyValueSchema> CurrentMap<S> {
     pub fn new(commit_id: S::CommitId) -> Self {
         Self {
-            map: BTreeMap::new(),
+            map: HashMap::new(),
             commit_id,
         }
     }
@@ -34,7 +34,7 @@ impl<S: PendingKeyValueSchema> CurrentMap<S> {
         self.commit_id = commit_id;
     }
 
-    pub fn rollback(&mut self, rollbacks: BTreeMap<S::Key, Option<ApplyRecord<S>>>) {
+    pub fn rollback(&mut self, rollbacks: HashMap<S::Key, Option<ApplyRecord<S>>>) {
         for (key, to_rollback) in rollbacks.into_iter() {
             match to_rollback {
                 None => {
