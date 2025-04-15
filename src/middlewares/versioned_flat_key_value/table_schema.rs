@@ -5,7 +5,7 @@ use crate::{
     traits::KeyValueStoreRead,
 };
 
-use super::{HistoryChangeKey, HistoryIndexKey, HistoryIndices};
+use super::{HistoryChangeKey, HistoryIndexKey, history_indices_table::HistoryIndices};
 
 pub trait VersionedKeyValueSchema: 'static + Copy + Send + Sync
 where
@@ -14,7 +14,7 @@ where
 {
     const NAME: VersionedKVName;
     type Key: TableKey + ToOwned<Owned = Self::Key> + Clone + Hash;
-    type Value: TableValue + Clone;
+    type Value: TableValue + ToOwned<Owned = Self::Value> + Clone;
 }
 
 #[derive(Clone, Copy)]
@@ -32,7 +32,7 @@ pub struct HistoryIndicesTable<T: VersionedKeyValueSchema>(T);
 impl<T: VersionedKeyValueSchema> TableSchema for HistoryIndicesTable<T> {
     const NAME: TableName = TableName::HistoryIndex(T::NAME);
     type Key = HistoryIndexKey<T::Key>;
-    type Value = HistoryIndices;
+    type Value = HistoryIndices<T::Value>;
 }
 
 pub type KeyValueSnapshotRead<'a, T> = dyn 'a

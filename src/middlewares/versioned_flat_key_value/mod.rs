@@ -2,6 +2,8 @@ mod manager_impl;
 mod pending_part;
 mod serde;
 pub mod table_schema;
+mod history_indices_table;
+mod history_indices_cache;
 #[cfg(test)]
 mod tests;
 
@@ -14,6 +16,7 @@ pub use pending_part::PendingError;
 #[cfg(test)]
 pub use tests::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test};
 
+use self::history_indices_cache::HistoryIndexCache;
 use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 use pending_part::VersionedMap;
@@ -34,14 +37,6 @@ pub type VersionedStoreCache<Schema> = VersionedMap<PendingKeyValueConfig<Schema
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 
 pub type HistoryChangeKey<K> = ChangeKey<HistoryNumber, K>;
-
-#[derive(Clone, Debug)]
-pub struct HistoryIndices;
-impl HistoryIndices {
-    fn last(&self, offset: HistoryNumber) -> HistoryNumber {
-        offset
-    }
-}
 
 pub struct VersionedStore<'cache, 'db, T: VersionedKeyValueSchema> {
     pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
@@ -171,24 +166,34 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     let change_history_table =
         KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
 
+    let mut history_index_cache = HistoryIndexCache::new();
     for (delta_height, updates) in to_confirm_maps.into_iter().enumerate() {
         let height = to_confirm_start_height + delta_height;
         let history_number = height_to_history_number(height);
 
-        let history_indices_table_op = updates.keys().map(|key| {
-            (
-                Cow::Owned(HistoryIndexKey(key.clone(), history_number)),
-                Some(Cow::Owned(HistoryIndices)),
-            )
-        });
-        write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
-
+        let commit_data = updates
+            .into_iter()
+            .map(|(k, v)| {
+                let value = v.into();
+                history_index_cache.insert(
+                    k.clone(),
+                    value.clone(),
+                    history_number,
+                    &history_index_table,
+                )?;
+                Ok((k, value))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        
         change_history_table.commit(
             history_number,
-            updates.into_iter().map(|(key, value)| (key, value.into())),
+            commit_data.into_iter(),
             &write_schema,
         )?;
     }
+
+    let history_indices_table_op = history_index_cache.into_write_batch();
+    write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op.into_iter());
 
     Ok(())
 }
