@@ -1,9 +1,9 @@
+mod history_indices_cache;
+mod history_indices_table;
 mod manager_impl;
 mod pending_part;
 mod serde;
 pub mod table_schema;
-mod history_indices_table;
-mod history_indices_cache;
 #[cfg(test)]
 mod tests;
 
@@ -17,6 +17,7 @@ pub use pending_part::PendingError;
 pub use tests::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test};
 
 use self::history_indices_cache::HistoryIndexCache;
+use self::history_indices_table::LATEST;
 use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 use pending_part::VersionedMap;
@@ -32,6 +33,11 @@ use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
 
 pub type VersionedStoreCache<Schema> = VersionedMap<PendingKeyValueConfig<Schema, CommitID>>;
+
+#[cfg(test)]
+use crate::types::ValueEntry;
+#[cfg(test)]
+use std::collections::BTreeMap;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
@@ -93,42 +99,108 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
         &self,
         query_version_number: HistoryNumber,
         key: &T::Key,
+        is_latest: bool,
     ) -> Result<Option<T::Value>> {
-        get_versioned_key(
-            query_version_number,
-            key,
-            &self.history_index_table,
-            &self.change_history_table,
-        )
+        if is_latest {
+            get_versioned_key_latest(query_version_number, key, &self.history_index_table)
+        } else {
+            get_versioned_key_previous(
+                query_version_number,
+                key,
+                &self.history_index_table,
+                &self.change_history_table,
+            )
+        }
     }
 }
 
-fn get_versioned_key<'db, T: VersionedKeyValueSchema>(
+fn get_versioned_key_latest<'db, T: VersionedKeyValueSchema>(
+    query_version_number: HistoryNumber,
+    key: &T::Key,
+    history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
+) -> Result<Option<T::Value>> {
+    let range_query_key = HistoryIndexKey(key.clone(), LATEST);
+    match history_index_table.get(&range_query_key)? {
+        Some(history_indices) => history_indices
+            .into_owned()
+            .get_latest_value(query_version_number),
+        None => Ok(None),
+    }
+}
+
+fn get_versioned_key_previous<'db, T: VersionedKeyValueSchema>(
     query_version_number: HistoryNumber,
     key: &T::Key,
     history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
     change_history_table: &KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 ) -> Result<Option<T::Value>> {
     let range_query_key = HistoryIndexKey(key.clone(), query_version_number);
-
-    let found_version_number = match history_index_table.iter(&range_query_key)?.next() {
-        None => {
-            return Ok(None);
-        }
-        Some(Err(e)) => {
-            return Err(e.into());
-        }
-        Some(Ok((k, _))) if &k.as_ref().0 != key => {
-            return Ok(None);
-        }
+    match history_index_table.iter(&range_query_key)?.next() {
+        None => Ok(None),
+        Some(Err(e)) => Err(e.into()),
+        Some(Ok((k, _))) if &k.as_ref().0 != key => Ok(None),
         Some(Ok((k, indices))) => {
-            let HistoryIndexKey(_, history_number) = k.as_ref();
-            // let offset = target_history_number - history_number;
-            indices.as_ref().last(*history_number)
+            let HistoryIndexKey(_, end_history_number) = k.as_ref();
+            if let Some(found_version_number) = indices
+                .as_ref()
+                .last(query_version_number, *end_history_number)?
+            {
+                change_history_table.get_versioned_key(&found_version_number, key)
+            } else {
+                Ok(None)
+            }
         }
+    }
+}
+
+#[cfg(test)]
+fn iter_history<'db, T: VersionedKeyValueSchema>(
+    query_version_number: HistoryNumber,
+    history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
+    maybe_change_history_table: Option<&KeyValueStoreBulks<'db, HistoryChangeTable<T>>>,
+) -> Result<BTreeMap<T::Key, ValueEntry<T::Value>>> {
+    let (history_index_key, _) = match history_index_table.iter_from_start()?.next() {
+        Some(item) => item.unwrap(),
+        None => return Ok(BTreeMap::new()),
     };
 
-    change_history_table.get_versioned_key(&found_version_number, key)
+    let HistoryIndexKey(mut key, _) = history_index_key.as_ref().clone();
+
+    let mut history_map = BTreeMap::new();
+
+    loop {
+        let value = if let Some(change_history_table) = maybe_change_history_table {
+            get_versioned_key_previous(
+                query_version_number,
+                &key,
+                history_index_table,
+                change_history_table,
+            )?
+        } else {
+            get_versioned_key_latest(query_version_number, &key, history_index_table)?
+        };
+
+        history_map.insert(key.clone(), ValueEntry::from_option(value));
+
+        let range_query_key = HistoryIndexKey(key.clone(), LATEST);
+        let mut find_next_key_iter = history_index_table.iter(&range_query_key)?;
+
+        let this_key = match find_next_key_iter.next().transpose()? {
+            Some((this_historical_index_key, _)) => this_historical_index_key.as_ref().0.clone(),
+            None => break,
+        };
+        assert_eq!(this_key, key, "The latest record of a key should exist when there is at least one record of that key.");
+
+        let next_key = match find_next_key_iter.next().transpose()? {
+            Some((next_historical_index_key, _)) => next_historical_index_key.0.clone(),
+            None => break,
+        };
+        assert_ne!(next_key, key, "Iterator should have moved to a different key after processing the lastest record for the current key.");
+
+        key = next_key;
+    }
+
+    Ok(history_map)
 }
 
 pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
@@ -184,12 +256,8 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
                 Ok((k, value))
             })
             .collect::<Result<Vec<_>>>()?;
-        
-        change_history_table.commit(
-            history_number,
-            commit_data.into_iter(),
-            &write_schema,
-        )?;
+
+        change_history_table.commit(history_number, commit_data.into_iter(), &write_schema)?;
     }
 
     let history_indices_table_op = history_index_cache.into_write_batch();

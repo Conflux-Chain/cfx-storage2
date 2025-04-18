@@ -22,6 +22,9 @@ pub enum StorageError {
 
     #[error("pending error {0:?}")]
     PendingError(#[from] PendingError<CommitID>),
+
+    #[error("corrupted history indices")]
+    CorruptedHistoryIndices,
 }
 
 impl From<DecodeError> for StorageError {
@@ -80,7 +83,15 @@ impl PartialEq for StorageError {
             (ConsistencyCheckFailure, ConsistencyCheckFailure) => true,
             (DatabaseError(e1), DatabaseError(e2)) => e1 == e2,
             (PendingError(e1), PendingError(e2)) => e1 == e2,
-            _ => false,
+            (CorruptedHistoryIndices, CorruptedHistoryIndices) => true,
+
+            (VersionNotFound, _) => false,
+            (CommitIDNotFound, _) => false,
+            (CommitIdAlreadyExistsInHistory, _) => false,
+            (ConsistencyCheckFailure, _) => false,
+            (DatabaseError(_), _) => false,
+            (PendingError(_), _) => false,
+            (CorruptedHistoryIndices, _) => false,
         }
     }
 }

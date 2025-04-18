@@ -5,7 +5,7 @@ use crate::{
     traits::KeyValueStoreRead,
 };
 
-use super::{HistoryChangeKey, HistoryIndexKey, history_indices_table::HistoryIndices};
+use super::{history_indices_table::HistoryIndices, HistoryChangeKey, HistoryIndexKey};
 
 pub trait VersionedKeyValueSchema: 'static + Copy + Send + Sync
 where
