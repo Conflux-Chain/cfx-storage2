@@ -1,16 +1,17 @@
 use std::borrow::Cow;
 
 use super::history_indices_table::{OneRange, ONE_RANGE_BYTES};
-use super::{HistoryIndexKey, history_indices_table::HistoryIndices};
+use super::{history_indices_table::HistoryIndices, HistoryIndexKey};
 use crate::backends::serde::{Decode, Encode, EncodeSubKey, FixedLengthEncoded};
 use crate::errors::{DecResult, DecodeError};
-use crate::middlewares::{decode_history_number_rev, encode_history_number_rev, HistoryNumber};
+use crate::middlewares::HistoryNumber;
 
 impl<K: Clone + Encode> Encode for HistoryIndexKey<K> {
     fn encode(&self) -> Cow<[u8]> {
-        let mut ans = self.0.encode().into_owned();
-        ans.extend_from_slice(&encode_history_number_rev(self.1));
-        Cow::Owned(ans)
+        let encoded_key = self.0.encode();
+        let encoded_version = self.1.encode();
+
+        Cow::Owned([encoded_key.as_ref(), encoded_version.as_ref()].concat())
     }
 }
 
@@ -22,16 +23,13 @@ impl<K: Clone + Encode + ToOwned<Owned = K>> EncodeSubKey for HistoryIndexKey<K>
     const HAVE_SUBKEY: bool = true;
 
     fn encode_subkey(&self) -> (Cow<[u8]>, Cow<[u8]>) {
-        (
-            self.0.encode(),
-            Cow::Owned(encode_history_number_rev(self.1.to_owned()).to_vec()),
-        )
+        (self.0.encode(), self.1.encode())
     }
 
     fn encode_subkey_owned(input: <Self as ToOwned>::Owned) -> (Vec<u8>, Vec<u8>) {
         (
             K::encode_owned(input.0),
-            encode_history_number_rev(input.1).to_vec(),
+            HistoryNumber::encode_owned(input.1),
         )
     }
 }
@@ -44,9 +42,11 @@ impl<K: Clone + Decode + ToOwned<Owned = K>> Decode for HistoryIndexKey<K> {
         }
 
         let (key_raw, version_raw) = input.split_at(input.len() - BYTES);
-        let version = decode_history_number_rev(version_raw);
-        let key = K::decode(key_raw)?;
-        Ok(Cow::Owned(HistoryIndexKey(key.into_owned(), version)))
+        let (key, version) = (K::decode(key_raw)?, HistoryNumber::decode(version_raw)?);
+        Ok(Cow::Owned(HistoryIndexKey(
+            key.into_owned(),
+            version.into_owned(),
+        )))
     }
 
     fn decode_owned(mut input: Vec<u8>) -> DecResult<Self> {
@@ -57,8 +57,8 @@ impl<K: Clone + Decode + ToOwned<Owned = K>> Decode for HistoryIndexKey<K> {
 
         let version_raw = input.split_off(input.len() - BYTES);
         let key_raw = input;
-        let version = decode_history_number_rev(&version_raw);
         let key = K::decode_owned(key_raw)?;
+        let version = HistoryNumber::decode_owned(version_raw)?;
         Ok(HistoryIndexKey(key, version))
     }
 }
@@ -67,9 +67,9 @@ impl<V: Clone + Encode> Encode for HistoryIndices<V> {
     fn encode(&self) -> Cow<[u8]> {
         let mut buffer = Vec::new();
         match self {
-            Self::Latest((num, range, v)) => {
+            Self::Latest((version, range, v)) => {
                 range.encode_impl(&mut buffer, v.is_none());
-                buffer.extend(num.to_be_bytes());
+                buffer.extend(version.to_be_bytes());
                 if let Some(value) = v {
                     buffer.extend(value.encode().into_owned());
                 }
@@ -88,29 +88,37 @@ impl<V: Clone + Decode + ToOwned<Owned = V>> Decode for HistoryIndices<V> {
         if input.len() == consumed {
             if let OneRange::Two(ref vec) = one_range {
                 if vec.is_empty() {
-                    return Err(DecodeError::Custom("Two vector should not be empty in Previous"))
+                    return Err(DecodeError::Custom(
+                        "Two vector should not be empty in Previous",
+                    ));
                 }
             }
             if !value_is_none {
-                return Err(DecodeError::Custom("For Previous, value_is_none should always be true"))
+                return Err(DecodeError::Custom(
+                    "For Previous, value_is_none should always be true",
+                ));
             }
             Ok(Cow::Owned(Self::Previous(one_range)))
         } else {
-            let num_start = consumed;
-            let num_end = num_start + 8;
-            if num_end > input.len() {
+            let version_start = consumed;
+            let version_end = version_start + 8;
+            if version_end > input.len() {
                 return Err(DecodeError::IncorrectLength);
             }
-            let num = u64::from_be_bytes(input[num_start..num_end].try_into().unwrap());
+            let version = u64::from_be_bytes(input[version_start..version_end].try_into().unwrap());
             if value_is_none {
-                if num_end < input.len() {
+                if version_end < input.len() {
                     return Err(DecodeError::IncorrectLength);
                 }
-                Ok(Cow::Owned(Self::Latest((num, one_range, None))))
+                Ok(Cow::Owned(Self::Latest((version, one_range, None))))
             } else {
-                let v_raw = input[num_end..].to_vec();
+                let v_raw = input[version_end..].to_vec();
                 let v = V::decode(&v_raw)?;
-                Ok(Cow::Owned(Self::Latest((num, one_range, Some(v.into_owned())))))
+                Ok(Cow::Owned(Self::Latest((
+                    version,
+                    one_range,
+                    Some(v.into_owned()),
+                ))))
             }
         }
     }
@@ -157,8 +165,8 @@ impl OneRange {
                     panic!("Invalid Four length");
                 }
                 buffer.push(0b01 << 6 | len as u8);
-                for num in vec {
-                    buffer.extend(num.to_be_bytes());
+                for version in vec {
+                    buffer.extend(version.to_be_bytes());
                 }
             }
             (Self::Four(vec), false) => {
@@ -167,8 +175,8 @@ impl OneRange {
                     panic!("Invalid Four length");
                 }
                 buffer.push(0b00 << 6 | len as u8);
-                for num in vec {
-                    buffer.extend(num.to_be_bytes());
+                for version in vec {
+                    buffer.extend(version.to_be_bytes());
                 }
             }
 
@@ -183,8 +191,8 @@ impl OneRange {
                 } else {
                     buffer.push(0b10 << 6 | len as u8);
                 }
-                for num in vec {
-                    buffer.extend(num.to_be_bytes());
+                for version in vec {
+                    buffer.extend(version.to_be_bytes());
                 }
             }
             (Self::Two(vec), false) => {
@@ -199,8 +207,8 @@ impl OneRange {
                 } else {
                     buffer.push(0b11 << 6 | len as u8);
                 }
-                for num in vec {
-                    buffer.extend(num.to_be_bytes());
+                for version in vec {
+                    buffer.extend(version.to_be_bytes());
                 }
             }
 
@@ -416,17 +424,15 @@ mod tests {
             Some(vec![0xFF, 0xFE].into()),
             Some((0..16).collect::<Vec<u8>>().into()),
             Some(vec![0; ONE_RANGE_BYTES].into()),
-            Some((0..=255).collect::<Vec<u8>>().into())
+            Some((0..=255).collect::<Vec<u8>>().into()),
         ]
     }
 
     #[test]
     fn test_previous_roundtrip() {
-        for range in generate_one_ranges().into_iter().filter(|r| {
-            match r {
-                OneRange::Two(vec) => !vec.is_empty(),
-                _ => true
-            }
+        for range in generate_one_ranges().into_iter().filter(|r| match r {
+            OneRange::Two(vec) => !vec.is_empty(),
+            _ => true,
         }) {
             let original = HistoryIndices::Previous(range);
             let encoded = original.encode();
@@ -442,7 +448,7 @@ mod tests {
                 let original = HistoryIndices::Latest((u64::MAX, range.clone(), v.clone()));
                 let encoded = original.encode();
                 let decoded = HistoryIndices::decode(&encoded).unwrap();
-                
+
                 assert_eq!(decoded.into_owned(), original);
             }
         }

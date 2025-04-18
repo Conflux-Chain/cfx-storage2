@@ -1,8 +1,15 @@
-use std::{borrow::Cow, collections::{hash_map::Entry, HashMap}};
+use std::{
+    borrow::Cow,
+    collections::{hash_map::Entry, HashMap},
+};
 
 use crate::{backends::TableRead, errors::Result, middlewares::HistoryNumber};
 
-use super::{history_indices_table::{HistoryIndices, OneRange, LATEST, ONE_RANGE_BYTES}, table_schema::{HistoryIndicesTable, VersionedKeyValueSchema}, HistoryIndexKey};
+use super::{
+    history_indices_table::{HistoryIndices, OneRange, LATEST, ONE_RANGE_BYTES},
+    table_schema::{HistoryIndicesTable, VersionedKeyValueSchema},
+    HistoryIndexKey,
+};
 
 pub struct HistoryIndexCache<T: VersionedKeyValueSchema> {
     // Maps each key to its pending state
@@ -27,7 +34,13 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
         }
     }
 
-    pub fn insert(&mut self, k: T::Key, v: Option<T::Value>, version_number: HistoryNumber, db: &impl TableRead<HistoryIndicesTable<T>>) -> Result<()> {
+    pub fn insert(
+        &mut self,
+        k: T::Key,
+        v: Option<T::Value>,
+        version_number: HistoryNumber,
+        db: &impl TableRead<HistoryIndicesTable<T>>,
+    ) -> Result<()> {
         let entry = match self.cache.entry(k) {
             Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
             Entry::Vacant(vacant_entry) => {
@@ -58,7 +71,7 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
                             },
                             previous_entries: Vec::new(),
                         });
-                        return Ok(())
+                        return Ok(());
                     }
                 }
             }
@@ -76,7 +89,8 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
             latest.latest_v = v;
         } else {
             // Split current latest into previous entry
-            let (end_version, prev_range) = Self::convert_to_previous(&latest.version_numbers, latest.start_version);
+            let (end_version, prev_range) =
+                Self::convert_to_previous(&latest.version_numbers, latest.start_version);
             entry.previous_entries.push((end_version, prev_range));
 
             // Create new latest entry
@@ -95,7 +109,7 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
             };
         }
 
-        return Ok(())
+        return Ok(());
     }
 
     fn try_add_to_range(range: &mut OneRange, offset_minus_1: HistoryNumber) -> bool {
@@ -143,7 +157,10 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
         }
     }
 
-    fn convert_to_previous(range: &OneRange, start_version: HistoryNumber) -> (HistoryNumber, OneRange) {
+    fn convert_to_previous(
+        range: &OneRange,
+        start_version: HistoryNumber,
+    ) -> (HistoryNumber, OneRange) {
         match range {
             OneRange::OnlyEnd(offset) => (start_version + offset + 1, range.clone()),
             OneRange::Four(vec) => {
@@ -170,7 +187,12 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
     }
 
     // Convert cache entries into write batch
-    pub fn into_write_batch(self) -> Vec<(Cow<'static, HistoryIndexKey<T::Key>>, Option<Cow<'static, HistoryIndices<T::Value>>>)> {
+    pub fn into_write_batch(
+        self,
+    ) -> Vec<(
+        Cow<'static, HistoryIndexKey<T::Key>>,
+        Option<Cow<'static, HistoryIndices<T::Value>>>,
+    )> {
         let mut batch = Vec::new();
         for (k, entry) in self.cache {
             // Add previous entries
@@ -185,7 +207,11 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
             let latest = entry.latest;
             batch.push((
                 Cow::Owned(HistoryIndexKey(k, LATEST)),
-                Some(Cow::Owned(HistoryIndices::Latest((latest.start_version, latest.version_numbers, latest.latest_v)))),
+                Some(Cow::Owned(HistoryIndices::Latest((
+                    latest.start_version,
+                    latest.version_numbers,
+                    latest.latest_v,
+                )))),
             ));
         }
         batch

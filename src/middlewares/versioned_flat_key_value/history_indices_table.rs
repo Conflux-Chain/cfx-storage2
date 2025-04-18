@@ -1,3 +1,4 @@
+use crate::errors::{Result, StorageError};
 use crate::middlewares::HistoryNumber; // u64
 
 /// Represents the set of version numbers in a value's history.
@@ -31,7 +32,7 @@ impl<V: Clone> HistoryIndices<V> {
     /// The `last` function finds the **largest version number** `found_version_number` such that
     /// `found_version_number <= version_number` and `found_version_number` exists in this history range.
     ///
-    /// - The `&self` always references the record range with the **smallest `end_version_number` such that
+    /// - The `&self` should always references the record range with the **smallest `end_version_number` such that
     ///   `end_version_number >= version_number`**.
     /// - There are two cases:
     ///     1. **If a previous record exists:**  
@@ -47,19 +48,82 @@ impl<V: Clone> HistoryIndices<V> {
     /// # Returns
     /// - `Some(version_number)` if such a version exists.
     /// - `None` if no such version is found.
-    pub fn last(&self, version_number: HistoryNumber, end_version_number: HistoryNumber) -> Option<HistoryNumber> {
+    pub fn last(
+        &self,
+        version_number: HistoryNumber,
+        end_version_number: HistoryNumber,
+    ) -> Result<Option<HistoryNumber>> {
+        if version_number > end_version_number {
+            return Err(StorageError::CorruptedHistoryIndices);
+        };
+
+        let (start_version_number, one_range) = self.compute_start_version(end_version_number)?;
+
+        Ok(one_range.last_le(start_version_number, version_number))
+    }
+
+    /// This can only be called when &self is the latest record and version_number is the latest version.
+    /// Returns the latest_value corresponding to the latest version, otherwise returns Error.
+    pub fn get_latest_value(&self, version_number: HistoryNumber) -> Result<Option<V>> {
         match self {
-            HistoryIndices::Latest((start_version_number, one_range, _)) => {
-                assert!(end_version_number == LATEST);
+            HistoryIndices::Latest((start_version_number, one_range, latest_value)) => {
+                let end_version_number = start_version_number + one_range.max_offset();
+                if end_version_number != version_number {
+                    Err(StorageError::CorruptedHistoryIndices)
+                } else {
+                    Ok(latest_value.clone())
+                }
+            }
+            HistoryIndices::Previous(_) => Err(StorageError::CorruptedHistoryIndices),
+        }
+    }
 
-                one_range.last_le(*start_version_number, version_number)
-            },
-            HistoryIndices::Previous(one_range) => {
-                assert!(end_version_number < LATEST);
-                let start_version_number = end_version_number - one_range.max_offset();
+    /// Generates a list of existing version numbers in increasing order (from lowest to highest)
+    /// that are less than or equal to the given `version_number` and belong to this history range.
+    ///
+    /// # Parameters
+    /// - The `&self` should always references the record range with the **smallest `end_version_number` such that
+    ///   `end_version_number >= version_number`**.
+    /// - `version_number`: The upper bound version number to consider.
+    /// - `end_version_number`: The end version number of this history range. For the latest record, this must be `LATEST`.
+    pub fn collect_versions_le(
+        &self,
+        version_number: HistoryNumber,
+        end_version_number: HistoryNumber,
+    ) -> Result<Vec<HistoryNumber>> {
+        if version_number > end_version_number {
+            return Err(StorageError::CorruptedHistoryIndices);
+        }
 
-                one_range.last_le(start_version_number, version_number)
-            },
+        let (start_version_number, one_range) = self.compute_start_version(end_version_number)?;
+
+        one_range.collect_versions_le(start_version_number, version_number)
+    }
+
+    fn compute_start_version(
+        &self,
+        end_version_number: HistoryNumber,
+    ) -> Result<(HistoryNumber, &OneRange)> {
+        match self {
+            HistoryIndices::Latest((start, range, _)) => {
+                if end_version_number != LATEST {
+                    return Err(StorageError::CorruptedHistoryIndices);
+                }
+                Ok((*start, range))
+            }
+            HistoryIndices::Previous(range) => {
+                if end_version_number >= LATEST {
+                    return Err(StorageError::CorruptedHistoryIndices);
+                }
+
+                let max_offset = range.max_offset();
+                if end_version_number < max_offset {
+                    return Err(StorageError::CorruptedHistoryIndices);
+                }
+
+                let start = end_version_number - max_offset;
+                Ok((start, range))
+            }
         }
     }
 }
@@ -122,7 +186,8 @@ impl OneRange {
             OneRange::Two(vec) => vec.last().map(|&v| v as u64),
             OneRange::Bitmap(bitmap) => {
                 for (byte_idx, &byte) in bitmap.iter().enumerate().rev() {
-                    if byte != 0 { // then byte.leading_zeros() <= 7
+                    if byte != 0 {
+                        // then byte.leading_zeros() <= 7
                         let bit_pos = 7 - byte.leading_zeros() as u64;
                         return Some(byte_idx as u64 * 8 + bit_pos);
                     }
@@ -144,14 +209,14 @@ impl OneRange {
         if upper_bound < start_version_number {
             return None;
         }
-        
+
         // The start version is always present
         if upper_bound == start_version_number {
             return Some(start_version_number);
         }
-        
+
         let offset_minus_1 = upper_bound - start_version_number - 1;
-        
+
         match self {
             OneRange::OnlyEnd(end_offset_minus_1) => {
                 if offset_minus_1 >= *end_offset_minus_1 {
@@ -196,17 +261,18 @@ impl OneRange {
 
                 for byte_idx in (0..=max_byte).rev() {
                     let byte = bitmap[byte_idx];
-                    
+
                     // Generate a mask to handle truncation of the last byte
                     let mask = if byte_idx == max_byte {
                         (1 << (max_bit_in_byte + 1)) - 1
                     } else {
                         0xFF
                     };
-                    
+
                     let masked_byte = byte & mask;
-                    
-                    if masked_byte != 0 { // then masked_byte.leading_zeros() <= 7
+
+                    if masked_byte != 0 {
+                        // then masked_byte.leading_zeros() <= 7
                         let bit_pos = 7 - masked_byte.leading_zeros() as u64;
                         let i = byte_idx as u64 * 8 + bit_pos;
                         return Some(start_version_number + i + 1);
@@ -215,6 +281,74 @@ impl OneRange {
 
                 Some(start_version_number)
             }
+        }
+    }
+
+    /// Collects the version numbers in increasing order in this range such that
+    /// start_version_number <= version <= version_number, and version exists.
+    /// Note that `version_number <= start_version_number` is possible.
+    // By design, the `vec` in `Four` is guaranteed to be non-empty, and `Bitmap` is guaranteed to not be all zeros.
+    // However, this function is robust: if these cases ever occur, it will safely return `Some(start_version_number)`.
+    pub fn collect_versions_le(
+        &self,
+        start_version_number: HistoryNumber,
+        version_number: HistoryNumber,
+    ) -> Result<Vec<HistoryNumber>> {
+        let mut versions = Vec::new();
+
+        if start_version_number <= version_number {
+            versions.push(start_version_number);
+
+            match self {
+                OneRange::OnlyEnd(end_offset_minus_1) => {
+                    let end_version = start_version_number + end_offset_minus_1 + 1;
+                    if end_version <= version_number {
+                        versions.push(end_version);
+                    }
+                }
+                OneRange::Four(vec) => {
+                    handle_vec(vec, start_version_number, version_number, &mut versions)
+                }
+                OneRange::Two(vec) => {
+                    handle_vec(vec, start_version_number, version_number, &mut versions)
+                }
+                OneRange::Bitmap(bitmap) => {
+                    if let Some(max_possible_offset_minus_1) =
+                        version_number.checked_sub(start_version_number + 1)
+                    {
+                        let max_bit =
+                            max_possible_offset_minus_1.min((ONE_RANGE_BYTES * 8 - 1) as u64);
+
+                        for i in 0..=max_bit {
+                            let byte_idx = (i / 8) as usize;
+                            let bit = i % 8;
+                            let mask = 1 << bit;
+                            if (bitmap[byte_idx] & mask) != 0 {
+                                let v = start_version_number + i + 1;
+                                versions.push(v);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(versions)
+    }
+}
+
+fn handle_vec<T: Into<u64> + Copy>(
+    vec: &[T],
+    start_version_number: u64,
+    version_number: u64,
+    versions: &mut Vec<u64>,
+) {
+    for offset_minus_1 in vec {
+        let v = start_version_number + (*offset_minus_1).into() + 1;
+        if v <= version_number {
+            versions.push(v);
+        } else {
+            break;
         }
     }
 }

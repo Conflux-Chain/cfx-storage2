@@ -156,7 +156,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         commit_id: &S::CommitId,
         key: &S::Key,
     ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
-        self.tree.get_versioned_key(commit_id, key)
+        let guard = self.current.read();
+
+        let current = guard.as_ref().unwrap();
+        if current.get_commit_id() == *commit_id {
+            Ok(current.get(key).map(|c| c.value.clone()))
+        } else {
+            self.tree.get_versioned_key(commit_id, key)
+        }
     }
 
     // alternative method of self.get_versioned_key(),
@@ -197,6 +204,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     pub fn contains_commit_id(&self, commit_id: &S::CommitId) -> bool {
         self.tree.contains_commit_id(commit_id)
+    }
+
+    pub fn checkout_current(&self, commit_id: S::CommitId) -> PendResult<(), S> {
+        // let query node to be self.current
+        let mut guard = self.current.write();
+        self.tree.checkout_current(commit_id, &mut guard)?;
+
+        Ok(())
     }
 
     pub fn get_versioned_store(&self, commit_id: S::CommitId) -> PendResult<KeyValueMap<S>, S> {

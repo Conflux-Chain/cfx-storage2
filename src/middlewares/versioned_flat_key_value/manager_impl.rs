@@ -11,7 +11,8 @@ use crate::{
 };
 
 use super::{
-    get_versioned_key,
+    get_versioned_key_latest, get_versioned_key_previous,
+    history_indices_table::HistoryIndices,
     pending_part::{pending_schema::PendingKeyValueConfig, VersionedMap},
     table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema},
     HistoryIndexKey, PendingError, VersionedStore,
@@ -22,129 +23,153 @@ use crate::types::ValueEntry;
 #[cfg(test)]
 use std::collections::BTreeMap;
 
-pub struct SnapshotView<'cache, 'db, T: VersionedKeyValueSchema> {
-    pending_updates: Option<SnapshotPending<'cache, T>>,
-    history: Option<SnapshotHistorical<'db, T>>,
+/// Enum explicitly distinguishing between view types
+pub enum SnapshotView<'cache, 'db, T: VersionedKeyValueSchema> {
+    /// Pending view can be any pending version
+    Pending(PendingSnapshot<'cache, 'db, T>),
+    /// Historical view can be any historical version
+    Historical(HistoricalSnapshot<'db, T>),
 }
 
-#[cfg(test)]
-const MIN_HISTORY_NUMBER_MINUS_ONE: u64 = 0;
+/// Pending view contains unconfirmed updates combined with the latest historical snapshot (if the latest historical snapshot exists)
+pub struct PendingSnapshot<'cache, 'db, T: VersionedKeyValueSchema> {
+    pending: PendingUpdates<'cache, T>,
+    latest: Option<LatestHistoricalSnapshot<'db, T>>,
+}
+
+struct PendingUpdates<'cache, T: VersionedKeyValueSchema> {
+    commit_id: CommitID,
+    inner: &'cache VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+}
+
+/// Explicitly distinguishes historical snapshot types (Latest/Previous) with different algorithms
+pub enum HistoricalSnapshot<'db, T: VersionedKeyValueSchema> {
+    Latest(LatestHistoricalSnapshot<'db, T>),
+    Previous(PreviousHistoricalSnapshot<'db, T>),
+}
+
+/// Historical view for the latest historical version
+pub struct LatestHistoricalSnapshot<'db, T: VersionedKeyValueSchema> {
+    history_number: HistoryNumber,
+    history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
+}
+
+/// Historical view for previous (i.e., not the latest) historical versions
+pub struct PreviousHistoricalSnapshot<'db, T: VersionedKeyValueSchema> {
+    history_number: HistoryNumber,
+    history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
+    change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
+}
 
 impl<'cache, 'db, T: VersionedKeyValueSchema> SnapshotView<'cache, 'db, T> {
     #[cfg(test)]
-    fn iter_history(&self) -> Result<BTreeMap<T::Key, ValueEntry<T::Value>>> {
-        if let Some(ref history) = self.history {
-            let (key_with_history_number, _) =
-                match history.history_index_table.iter_from_start()?.next() {
-                    Some(item) => item.unwrap(),
-                    None => return Ok(BTreeMap::new()),
-                };
-
-            let HistoryIndexKey(mut key, mut history_number) =
-                key_with_history_number.as_ref().clone();
-
-            let mut history_map = BTreeMap::new();
-
-            loop {
-                let found_version_number = if history_number <= history.history_number {
-                    history_number
-                } else {
-                    let range_query_key = HistoryIndexKey(key.clone(), history.history_number);
-                    match history.history_index_table.iter(&range_query_key)?.next() {
-                        None => break,
-                        Some(Err(e)) => return Err(e.into()),
-                        Some(Ok((next_key_with_history_number, _)))
-                            if next_key_with_history_number.as_ref().0 != key =>
-                        {
-                            HistoryIndexKey(key, history_number) =
-                                next_key_with_history_number.as_ref().clone();
-                            continue;
-                        }
-                        Some(Ok((k, indices))) => {
-                            let HistoryIndexKey(_, found_history_number) = k.as_ref();
-                            indices.as_ref().last(*found_history_number)
-                        }
-                    }
-                };
-
-                let value = history
-                    .change_history_table
-                    .get_versioned_key(&found_version_number, &key)?;
-
-                history_map.insert(key.clone(), ValueEntry::from_option(value));
-
-                let next_range_query_key =
-                    HistoryIndexKey(key.clone(), MIN_HISTORY_NUMBER_MINUS_ONE);
-                match history
-                    .history_index_table
-                    .iter(&next_range_query_key)?
-                    .next()
-                {
-                    None => break,
-                    Some(Err(e)) => return Err(e.into()),
-                    Some(Ok((next_key_with_history_number, _))) => {
-                        HistoryIndexKey(key, history_number) =
-                            next_key_with_history_number.as_ref().clone();
-                    }
-                }
-            }
-
-            Ok(history_map)
-        } else {
-            Ok(BTreeMap::new())
-        }
-    }
-
-    #[cfg(test)]
     pub fn iter(&self) -> Result<impl Iterator<Item = (T::Key, ValueEntry<T::Value>)>> {
-        let mut map = self.iter_history()?;
+        use super::iter_history;
 
-        if let Some(ref pending_updates) = self.pending_updates {
-            let pending_map = pending_updates
-                .inner
-                .get_versioned_store(pending_updates.commit_id)?;
-            for (k, v) in pending_map {
-                map.insert(k.clone(), v.clone());
+        let map = match self {
+            SnapshotView::Pending(pending_snapshot) => {
+                let mut map = if let Some(latest_history_snapshot) = &pending_snapshot.latest {
+                    iter_history(
+                        latest_history_snapshot.history_number,
+                        &latest_history_snapshot.history_index_table,
+                        None,
+                    )?
+                } else {
+                    BTreeMap::new()
+                };
+
+                let pending_updates = &pending_snapshot.pending;
+                let pending_map = pending_updates
+                    .inner
+                    .get_versioned_store(pending_updates.commit_id)?;
+                for (k, v) in pending_map {
+                    map.insert(k.clone(), v.clone());
+                }
+
+                map
             }
-        }
+            SnapshotView::Historical(historical_snapshot) => match historical_snapshot {
+                HistoricalSnapshot::Latest(latest_history_snapshot) => iter_history(
+                    latest_history_snapshot.history_number,
+                    &latest_history_snapshot.history_index_table,
+                    None,
+                )?,
+                HistoricalSnapshot::Previous(previous_history_snapshot) => iter_history(
+                    previous_history_snapshot.history_number,
+                    &previous_history_snapshot.history_index_table,
+                    Some(&previous_history_snapshot.change_history_table),
+                )?,
+            },
+        };
 
         Ok(map.into_iter())
     }
 }
 
-struct SnapshotPending<'cache, T: VersionedKeyValueSchema> {
-    commit_id: CommitID,
-    inner: &'cache VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for LatestHistoricalSnapshot<'db, T>
+{
+    fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
+        get_versioned_key_latest(self.history_number, key, &self.history_index_table)
+    }
 }
 
-pub struct SnapshotHistorical<'db, T: VersionedKeyValueSchema> {
-    history_number: HistoryNumber,
-    history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
-    change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
+impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for PreviousHistoricalSnapshot<'db, T>
+{
+    fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
+        get_versioned_key_previous(
+            self.history_number,
+            key,
+            &self.history_index_table,
+            &self.change_history_table,
+        )
+    }
+}
+
+impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for HistoricalSnapshot<'db, T>
+{
+    fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
+        match self {
+            HistoricalSnapshot::Latest(latest_historical_snapshot) => {
+                latest_historical_snapshot.get(key)
+            }
+            HistoricalSnapshot::Previous(previous_historical_snapshot) => {
+                previous_historical_snapshot.get(key)
+            }
+        }
+    }
+}
+
+impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for PendingSnapshot<'cache, 'db, T>
+{
+    fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
+        let pending_optv = self
+            .pending
+            .inner
+            .get_versioned_key(&self.pending.commit_id, key)?;
+
+        if let Some(pending_v) = pending_optv {
+            Ok(pending_v.into_option())
+        } else {
+            if let Some(latest) = &self.latest {
+                latest.get(key)
+            } else {
+                Ok(None)
+            }
+        }
+    }
 }
 
 impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
     for SnapshotView<'cache, 'db, T>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
-        if let Some(pending_updates) = &self.pending_updates {
-            let pending_optv = pending_updates
-                .inner
-                .get_versioned_key(&pending_updates.commit_id, key)?;
-            if let Some(pending_v) = pending_optv {
-                return Ok(pending_v.into_option());
-            }
-        }
-
-        if let Some(history) = &self.history {
-            get_versioned_key(
-                history.history_number,
-                key,
-                &history.history_index_table,
-                &history.change_history_table,
-            )
-        } else {
-            Ok(None)
+        match self {
+            SnapshotView::Pending(pending_snapshot) => pending_snapshot.get(key),
+            SnapshotView::Historical(historical_snapshot) => historical_snapshot.get(key),
         }
     }
 }
@@ -167,32 +192,46 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
     type Store<'a> = SnapshotView<'a, 'db, T> where Self: 'a;
     fn get_versioned_store<'a>(&'a self, commit: &CommitID) -> Result<Self::Store<'a>> {
         if self.pending_part.contains_commit_id(commit) {
-            let history = if let Some(history_commit) = self.pending_part.get_parent_of_root() {
-                Some(SnapshotHistorical {
-                    history_number: self.get_history_number_by_commit_id(history_commit)?,
-                    history_index_table: self.history_index_table.clone(),
-                    change_history_table: self.change_history_table.clone(),
-                })
-            } else {
-                None
-            };
-            Ok(SnapshotView {
-                pending_updates: Some(SnapshotPending {
+            let latest_history =
+                if let Some(history_commit) = self.pending_part.get_parent_of_root() {
+                    Some(LatestHistoricalSnapshot {
+                        history_number: self.get_history_number_by_commit_id(history_commit)?,
+                        history_index_table: self.history_index_table.clone(),
+                    })
+                } else {
+                    None
+                };
+
+            // TODO: checkout_current or not?
+            self.pending_part.checkout_current(*commit)?;
+
+            Ok(SnapshotView::Pending(PendingSnapshot {
+                pending: PendingUpdates {
                     commit_id: *commit,
                     inner: &*self.pending_part,
-                }),
-                history,
-            })
+                },
+                latest: latest_history,
+            }))
         } else {
-            let history = SnapshotHistorical {
-                history_number: self.get_history_number_by_commit_id(*commit)?,
-                history_index_table: self.history_index_table.clone(),
-                change_history_table: self.change_history_table.clone(),
-            };
-            Ok(SnapshotView {
-                pending_updates: None,
-                history: Some(history),
-            })
+            let history_number = self.get_history_number_by_commit_id(*commit)?;
+            let latest_history_commit = self.pending_part.get_parent_of_root().expect("The parent of pending root should exists when there is at least one commit in the historical part.");
+
+            if commit == &latest_history_commit {
+                Ok(SnapshotView::Historical(HistoricalSnapshot::Latest(
+                    LatestHistoricalSnapshot {
+                        history_number,
+                        history_index_table: self.history_index_table.clone(),
+                    },
+                )))
+            } else {
+                Ok(SnapshotView::Historical(HistoricalSnapshot::Previous(
+                    PreviousHistoricalSnapshot {
+                        history_number,
+                        history_index_table: self.history_index_table.clone(),
+                        change_history_table: self.change_history_table.clone(),
+                    },
+                )))
+            }
         }
     }
 
@@ -231,7 +270,6 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
     }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        // let pending_res = self.pending_part.get_versioned_key_with_checkout(commit, key); // this will checkout_current
         let pending_res = self.pending_part.get_versioned_key(commit, key);
         let history_commit = match pending_res {
             Ok(Some(value)) => {
@@ -254,12 +292,61 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
         };
 
         let history_number = self.get_history_number_by_commit_id(history_commit)?;
-        self.get_historical_part(history_number, key)
+        let latest_history_commit = self.pending_part.get_parent_of_root().expect("The parent of pending root should exists when there is at least one commit in the historical part.");
+
+        self.get_historical_part(history_number, key, latest_history_commit == history_commit)
     }
 }
 
 // Helper methods used in trait implementations
 impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
+    fn iter_historical_changes_one_range(
+        &self,
+        mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,
+        maybe_version_number: Option<HistoryNumber>,
+        key: &T::Key,
+        history_indices: HistoryIndices<T::Value>,
+        end_version_number: HistoryNumber,
+    ) -> Result<(IsCompleted, Option<HistoryNumber>)> {
+        let version_numbers = if let Some(version_number) = maybe_version_number {
+            history_indices.collect_versions_le(version_number, end_version_number)?
+        } else {
+            let mut all_version_numbers =
+                history_indices.collect_versions_le(end_version_number, end_version_number)?;
+
+            match all_version_numbers.pop() {
+                None => return Err(StorageError::CorruptedHistoryIndices),
+                Some(largest_version_number) => {
+                    if largest_version_number != end_version_number {
+                        return Err(StorageError::CorruptedHistoryIndices);
+                    }
+                }
+            }
+
+            all_version_numbers
+        };
+
+        let start_version_number = version_numbers.first().cloned();
+
+        for found_version_number in version_numbers.into_iter().rev() {
+            let found_value = self
+                .change_history_table
+                .get_versioned_key(&found_version_number, key)?;
+            let found_commit_id = self.history_number_table.get(&found_version_number)?;
+
+            if let Some(found_commit_id) = found_commit_id {
+                let need_next = accept(found_commit_id.borrow(), key, found_value.as_ref());
+                if !need_next {
+                    return Ok((false, None));
+                }
+            } else {
+                return Err(StorageError::VersionNotFound);
+            }
+        }
+
+        Ok((true, start_version_number))
+    }
+
     fn iter_historical_changes_history_part(
         &self,
         mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,
@@ -269,27 +356,62 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
         let query_number = self.get_history_number_by_commit_id(*commit_id)?;
 
         let range_query_key = HistoryIndexKey(key.clone(), query_number);
-        for item in self.history_index_table.iter(&range_query_key)? {
-            let (k_with_history_number, indices) = item?;
-            let HistoryIndexKey(k, history_number) = k_with_history_number.as_ref();
-            if k != key {
-                break;
-            }
+        let mut prev_end_version_number =
+            match self.history_index_table.iter(&range_query_key)?.next() {
+                None => return Ok(true),
+                Some(item) => {
+                    let (history_index_k, history_indices) = item?;
+                    let HistoryIndexKey(k, end_version_number) = history_index_k.as_ref().clone();
+                    if &k != key {
+                        return Ok(true);
+                    }
 
-            let found_version_number = indices.as_ref().last(*history_number);
-            let found_value = self
-                .change_history_table
-                .get_versioned_key(&found_version_number, key)?;
-            let found_commit_id = self.history_number_table.get(&found_version_number)?;
-            if let Some(found_commit_id) = found_commit_id {
-                let need_next = accept(found_commit_id.borrow(), key, found_value.as_ref());
-                if !need_next {
-                    return Ok(false);
+                    let (this_range_is_completed, maybe_start_version_number) = self
+                        .iter_historical_changes_one_range(
+                            &mut accept,
+                            Some(query_number),
+                            key,
+                            history_indices.into_owned(),
+                            end_version_number,
+                        )?;
+                    if !this_range_is_completed {
+                        return Ok(false);
+                    }
+                    if let Some(start_version_number) = maybe_start_version_number {
+                        start_version_number
+                    } else {
+                        return Ok(true);
+                    }
                 }
-            } else {
-                return Err(StorageError::VersionNotFound);
-            }
+            };
+
+        loop {
+            let this_end_version_number = prev_end_version_number;
+
+            let history_index_k = HistoryIndexKey(key.clone(), this_end_version_number);
+            prev_end_version_number = match self.history_index_table.get(&history_index_k)? {
+                None => return Ok(true),
+                Some(history_indices) => {
+                    let (this_range_is_completed, maybe_start_version_number) = self
+                        .iter_historical_changes_one_range(
+                            &mut accept,
+                            None,
+                            key,
+                            history_indices.into_owned(),
+                            this_end_version_number,
+                        )?;
+                    if !this_range_is_completed {
+                        return Ok(false);
+                    }
+                    if let Some(start_version_number) = maybe_start_version_number {
+                        start_version_number
+                    } else {
+                        return Ok(true);
+                    }
+                }
+            };
+
+            assert!(prev_end_version_number < this_end_version_number);
         }
-        Ok(true)
     }
 }
