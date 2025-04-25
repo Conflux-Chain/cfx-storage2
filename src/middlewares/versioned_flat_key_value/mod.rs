@@ -114,10 +114,10 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
     }
 }
 
-fn get_versioned_key_latest<'db, T: VersionedKeyValueSchema>(
+fn get_versioned_key_latest<T: VersionedKeyValueSchema>(
     query_version_number: HistoryNumber,
     key: &T::Key,
-    history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
+    history_index_table: &TableReader<'_, HistoryIndicesTable<T>>,
 ) -> Result<Option<T::Value>> {
     let range_query_key = HistoryIndexKey(key.clone(), LATEST);
     match history_index_table.get(&range_query_key)? {

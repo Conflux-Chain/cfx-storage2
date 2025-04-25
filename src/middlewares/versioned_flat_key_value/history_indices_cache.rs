@@ -109,7 +109,7 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
             };
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn try_add_to_range(range: &mut OneRange, offset_minus_1: HistoryNumber) -> bool {
@@ -187,6 +187,7 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
     }
 
     // Convert cache entries into write batch
+    #[allow(clippy::type_complexity)]
     pub fn into_write_batch(
         self,
     ) -> Vec<(

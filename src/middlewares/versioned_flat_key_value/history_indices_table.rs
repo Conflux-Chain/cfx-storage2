@@ -112,7 +112,7 @@ impl<V: Clone> HistoryIndices<V> {
                 Ok((*start, range))
             }
             HistoryIndices::Previous(range) => {
-                if end_version_number >= LATEST {
+                if end_version_number == LATEST {
                     return Err(StorageError::CorruptedHistoryIndices);
                 }
 

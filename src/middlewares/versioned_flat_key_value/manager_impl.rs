@@ -106,7 +106,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> SnapshotView<'cache, 'db, T> {
     }
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
     for LatestHistoricalSnapshot<'db, T>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
@@ -114,7 +114,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value
     }
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
     for PreviousHistoricalSnapshot<'db, T>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
@@ -127,7 +127,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value
     }
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
     for HistoricalSnapshot<'db, T>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
@@ -153,12 +153,10 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value
 
         if let Some(pending_v) = pending_optv {
             Ok(pending_v.into_option())
+        } else if let Some(latest) = &self.latest {
+            latest.get(key)
         } else {
-            if let Some(latest) = &self.latest {
-                latest.get(key)
-            } else {
-                Ok(None)
-            }
+            Ok(None)
         }
     }
 }
