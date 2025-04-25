@@ -8,10 +8,12 @@ pub enum HistoryIndices<V: Clone> {
     /// The latest record in the history.
     /// - `start_version_number`: The start version number of this range.
     /// - `one_range`: The structure encoding all version numbers in this range.
-    /// - `latest_v`: Optionally, the value at the latest version.
+    /// - `latest_v`: The value at the latest version. `None` means deletion.
+    /// `OneRange` in `Latest` may be empty (i.e., `OneRange::Two(Vec::new())`).
     Latest((HistoryNumber, OneRange, Option<V>)),
     /// Previous (non-latest) record in the history.
     /// - `one_range`: The structure encoding all version numbers in this range.
+    /// `OneRange` in `Previous` should not be empty.
     Previous(OneRange),
 }
 

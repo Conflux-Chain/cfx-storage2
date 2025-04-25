@@ -75,6 +75,11 @@ impl<V: Clone + Encode> Encode for HistoryIndices<V> {
                 }
             }
             Self::Previous(range) => {
+                if let OneRange::Two(vec) = range {
+                    if vec.is_empty() {
+                        panic!("Two vector should not be empty in Previous");
+                    }
+                }
                 range.encode_impl(&mut buffer, true);
             }
         }
@@ -266,15 +271,7 @@ impl OneRange {
                 0b111110 => {
                     // Two(64) (value_is_none = false)
                     value_is_none = false;
-                    if offset + 64 * 2 > input.len() {
-                        return Err(DecodeError::IncorrectLength);
-                    }
-                    let vec = input[offset..offset + 128]
-                        .chunks_exact(2)
-                        .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
-                        .collect();
-                    offset += 128;
-                    Self::Two(vec)
+                    decode_two_or_four(input, &mut offset, 64, true)?
                 }
                 0b111111 => {
                     // OnlyEnd (value_is_none = false)
@@ -289,61 +286,22 @@ impl OneRange {
                 len => {
                     // Four (value_is_none = false)
                     value_is_none = false;
-                    if len == 0 || len as usize > ONE_RANGE_BYTES / 4 {
-                        return Err(DecodeError::Custom("Invalid Four length"));
-                    }
-                    if offset + len as usize * 4 > input.len() {
-                        return Err(DecodeError::IncorrectLength);
-                    }
-                    let vec = input[offset..offset + len as usize * 4]
-                        .chunks_exact(4)
-                        .map(|chunk| u32::from_be_bytes(chunk.try_into().unwrap()))
-                        .collect();
-                    offset += len as usize * 4;
-                    Self::Four(vec)
+                    decode_two_or_four(input, &mut offset, len as usize, false)?
                 }
             },
             0b01 => match len_or_end {
                 0 => {
                     // Two(64) (value_is_none = true)
-                    if offset + 64 * 2 > input.len() {
-                        return Err(DecodeError::IncorrectLength);
-                    }
-                    let vec = input[offset..offset + 128]
-                        .chunks_exact(2)
-                        .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
-                        .collect();
-                    offset += 128;
-                    Self::Two(vec)
+                    decode_two_or_four(input, &mut offset, 64, true)?
                 }
                 len => {
                     // Four (value_is_none = true)
-                    if len as usize > ONE_RANGE_BYTES / 4 {
-                        return Err(DecodeError::Custom("Invalid Four length"));
-                    }
-                    if offset + len as usize * 4 > input.len() {
-                        return Err(DecodeError::IncorrectLength);
-                    }
-                    let vec = input[offset..offset + len as usize * 4]
-                        .chunks_exact(4)
-                        .map(|chunk| u32::from_be_bytes(chunk.try_into().unwrap()))
-                        .collect();
-                    offset += len as usize * 4;
-                    Self::Four(vec)
+                    decode_two_or_four(input, &mut offset, len as usize, false)?
                 }
             },
             0b10 => {
                 // Two (value_is_none = true)
-                let len = len_or_end as usize;
-                if offset + len * 2 > input.len() {
-                    return Err(DecodeError::IncorrectLength);
-                }
-                let vec = input[offset..offset + len * 2]
-                    .chunks_exact(2)
-                    .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
-                    .collect();
-                offset += len * 2;
-                Self::Two(vec)
+                decode_two_or_four(input, &mut offset, len_or_end as usize, true)?
             }
             0b11 => match len_or_end {
                 0 => {
@@ -360,19 +318,7 @@ impl OneRange {
                 len => {
                     // Two (value_is_none = false)
                     value_is_none = false;
-                    let len = len as usize;
-                    if len == 0 || len > ONE_RANGE_BYTES / 2 {
-                        return Err(DecodeError::Custom("Invalid Two length"));
-                    }
-                    if offset + len * 2 > input.len() {
-                        return Err(DecodeError::IncorrectLength);
-                    }
-                    let vec = input[offset..offset + len * 2]
-                        .chunks_exact(2)
-                        .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
-                        .collect();
-                    offset += len * 2;
-                    Self::Two(vec)
+                    decode_two_or_four(input, &mut offset, len as usize, true)?
                 }
             },
             _ => unreachable!(),
@@ -380,6 +326,45 @@ impl OneRange {
 
         // Validation checks remain similar
         Ok((one_range, offset, value_is_none))
+    }
+}
+
+fn decode_two_or_four(
+    input: &[u8],
+    offset: &mut usize,
+    len: usize,
+    is_two: bool,
+) -> DecResult<OneRange> {
+    let (bytes, error_msg) = if is_two {
+        (2, "Invalid Two length")
+    } else {
+        (4, "Invalid Four length")
+    };
+
+    if !is_two && len == 0 {
+        return Err(DecodeError::Custom(error_msg));
+    }
+    if len > ONE_RANGE_BYTES / bytes {
+        return Err(DecodeError::Custom(error_msg));
+    }
+    if *offset + len * bytes > input.len() {
+        return Err(DecodeError::IncorrectLength);
+    }
+
+    if is_two {
+        let vec = input[*offset..*offset + len * 2]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+            .collect();
+        *offset += len * 2;
+        Ok(OneRange::Two(vec))
+    } else {
+        let vec = input[*offset..*offset + len * 4]
+            .chunks_exact(4)
+            .map(|chunk| u32::from_be_bytes(chunk.try_into().unwrap()))
+            .collect();
+        *offset += len * 4;
+        Ok(OneRange::Four(vec))
     }
 }
 
@@ -455,35 +440,35 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid Four length in Previous")]
+    #[should_panic(expected = "Invalid Four length")]
     fn test_encode_panic_four_zero_length_in_previous() {
         let invalid_four = OneRange::Four(vec![]);
         HistoryIndices::<Box<[u8]>>::Previous(invalid_four).encode();
     }
 
     #[test]
-    #[should_panic(expected = "Invalid Four length in Latest")]
+    #[should_panic(expected = "Invalid Four length")]
     fn test_encode_panic_four_zero_length_in_latest() {
         let invalid_four = OneRange::Four(vec![]);
         HistoryIndices::<Box<[u8]>>::Latest((0_u64, invalid_four, Some(vec![].into()))).encode();
     }
 
     #[test]
-    #[should_panic(expected = "Invalid Four length in Latest")]
+    #[should_panic(expected = "Invalid Four length")]
     fn test_encode_panic_four_zero_length_in_latest_none() {
         let invalid_four = OneRange::Four(vec![]);
         HistoryIndices::<Box<[u8]>>::Latest((0_u64, invalid_four, None)).encode();
     }
 
     #[test]
-    #[should_panic(expected = "Invalid Two length in Previous")]
+    #[should_panic(expected = "Two vector should not be empty in Previous")]
     fn test_encode_panic_two_zero_length_in_previous() {
         let invalid_two = OneRange::Two(vec![]);
         HistoryIndices::<Box<[u8]>>::Previous(invalid_two).encode();
     }
 
     #[test]
-    #[should_panic(expected = "Invalid Four length in Previous")]
+    #[should_panic(expected = "Invalid Four length")]
     fn test_encode_panic_four_exceed_max_in_previous() {
         let vec = vec![0u32; ONE_RANGE_BYTES / 4 + 1];
         let invalid_four = OneRange::Four(vec);
@@ -491,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid Four length in Latest")]
+    #[should_panic(expected = "Invalid Four length")]
     fn test_encode_panic_four_exceed_max_in_latest() {
         let vec = vec![0u32; ONE_RANGE_BYTES / 4 + 1];
         let invalid_four = OneRange::Four(vec);
@@ -499,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid Four length in Latest")]
+    #[should_panic(expected = "Invalid Four length")]
     fn test_encode_panic_four_exceed_max_in_latest_none() {
         let vec = vec![0u32; ONE_RANGE_BYTES / 4 + 1];
         let invalid_four = OneRange::Four(vec);
@@ -507,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid Two length in Previous")]
+    #[should_panic(expected = "Invalid Two length")]
     fn test_encode_panic_two_exceed_max_in_previous() {
         let vec = vec![0u16; ONE_RANGE_BYTES / 2 + 1];
         let invalid_two = OneRange::Two(vec);
@@ -515,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid Four length in Latest")]
+    #[should_panic(expected = "Invalid Two length")]
     fn test_encode_panic_two_exceed_max_in_latest() {
         let vec = vec![0u16; ONE_RANGE_BYTES / 2 + 1];
         let invalid_two = OneRange::Two(vec);
@@ -523,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid Four length in Latest")]
+    #[should_panic(expected = "Invalid Two length")]
     fn test_encode_panic_two_exceed_max_in_latest_none() {
         let vec = vec![0u16; ONE_RANGE_BYTES / 2 + 1];
         let invalid_two = OneRange::Two(vec);
@@ -545,9 +530,10 @@ mod tests {
         if ONE_RANGE_BYTES == 128 {
             assert!(HistoryIndices::<Box<[u8]>>::decode(&data).is_ok()); // This should actually be valid
         } else {
+            dbg!(HistoryIndices::<Box<[u8]>>::decode(&data).unwrap_err());
             assert!(matches!(
                 HistoryIndices::<Box<[u8]>>::decode(&data),
-                Err(DecodeError::Custom("Two vector length invalid"))
+                Err(DecodeError::Custom("Invalid Two length"))
             ));
         }
 
