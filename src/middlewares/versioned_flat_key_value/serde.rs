@@ -154,7 +154,7 @@ impl OneRange {
                 buffer.extend(end.to_be_bytes());
             }
             (Self::OnlyEnd(end), false) => {
-                buffer.push(0b00 << 6 | 0b111111);
+                buffer.push(0b111111);
                 buffer.extend(end.to_be_bytes());
             }
 
@@ -174,7 +174,7 @@ impl OneRange {
                 if len == 0 || len > ONE_RANGE_BYTES / 4 {
                     panic!("Invalid Four length");
                 }
-                buffer.push(0b00 << 6 | len as u8);
+                buffer.push(len as u8);
                 for version in vec {
                     buffer.extend(version.to_be_bytes());
                 }
@@ -201,9 +201,9 @@ impl OneRange {
                     panic!("Invalid Two length");
                 }
                 if len == 0 {
-                    buffer.push(0b00 << 6 | 0b111101);
+                    buffer.push(0b111101);
                 } else if len == 64 {
-                    buffer.push(0b00 << 6 | 0b111110);
+                    buffer.push(0b111110);
                 } else {
                     buffer.push(0b11 << 6 | len as u8);
                 }
@@ -218,7 +218,7 @@ impl OneRange {
                 buffer.extend_from_slice(bits);
             }
             (Self::Bitmap(bits), false) => {
-                buffer.push(0b00 << 6 | 0b111100);
+                buffer.push(0b111100);
                 buffer.extend_from_slice(bits);
             }
         }
@@ -408,8 +408,8 @@ mod tests {
         ranges.push(OneRange::Bitmap([0; ONE_RANGE_BYTES]));
         ranges.push(OneRange::Bitmap([0xFF; ONE_RANGE_BYTES]));
         let mut bitmap = [0; ONE_RANGE_BYTES];
-        for i in 0..ONE_RANGE_BYTES {
-            bitmap[i] = if i % 2 == 0 { 0xAA } else { 0x55 };
+        for (i, byte) in bitmap.iter_mut().enumerate().take(ONE_RANGE_BYTES) {
+            *byte = if i % 2 == 0 { 0xAA } else { 0x55 };
         }
         ranges.push(OneRange::Bitmap(bitmap));
 
@@ -465,14 +465,14 @@ mod tests {
     #[should_panic(expected = "Invalid Four length in Latest")]
     fn test_encode_panic_four_zero_length_in_latest() {
         let invalid_four = OneRange::Four(vec![]);
-        HistoryIndices::<Box<[u8]>>::Latest((0 as u64, invalid_four, Some(vec![].into()))).encode();
+        HistoryIndices::<Box<[u8]>>::Latest((0_u64, invalid_four, Some(vec![].into()))).encode();
     }
 
     #[test]
     #[should_panic(expected = "Invalid Four length in Latest")]
     fn test_encode_panic_four_zero_length_in_latest_none() {
         let invalid_four = OneRange::Four(vec![]);
-        HistoryIndices::<Box<[u8]>>::Latest((0 as u64, invalid_four, None)).encode();
+        HistoryIndices::<Box<[u8]>>::Latest((0_u64, invalid_four, None)).encode();
     }
 
     #[test]
@@ -495,7 +495,7 @@ mod tests {
     fn test_encode_panic_four_exceed_max_in_latest() {
         let vec = vec![0u32; ONE_RANGE_BYTES / 4 + 1];
         let invalid_four = OneRange::Four(vec);
-        HistoryIndices::<Box<[u8]>>::Latest((0 as u64, invalid_four, Some(vec![].into()))).encode();
+        HistoryIndices::<Box<[u8]>>::Latest((0_u64, invalid_four, Some(vec![].into()))).encode();
     }
 
     #[test]
@@ -503,7 +503,7 @@ mod tests {
     fn test_encode_panic_four_exceed_max_in_latest_none() {
         let vec = vec![0u32; ONE_RANGE_BYTES / 4 + 1];
         let invalid_four = OneRange::Four(vec);
-        HistoryIndices::<Box<[u8]>>::Latest((0 as u64, invalid_four, None)).encode();
+        HistoryIndices::<Box<[u8]>>::Latest((0_u64, invalid_four, None)).encode();
     }
 
     #[test]
@@ -519,7 +519,7 @@ mod tests {
     fn test_encode_panic_two_exceed_max_in_latest() {
         let vec = vec![0u16; ONE_RANGE_BYTES / 2 + 1];
         let invalid_two = OneRange::Two(vec);
-        HistoryIndices::<Box<[u8]>>::Latest((0 as u64, invalid_two, Some(vec![].into()))).encode();
+        HistoryIndices::<Box<[u8]>>::Latest((0_u64, invalid_two, Some(vec![].into()))).encode();
     }
 
     #[test]
@@ -527,7 +527,7 @@ mod tests {
     fn test_encode_panic_two_exceed_max_in_latest_none() {
         let vec = vec![0u16; ONE_RANGE_BYTES / 2 + 1];
         let invalid_two = OneRange::Two(vec);
-        HistoryIndices::<Box<[u8]>>::Latest((0 as u64, invalid_two, None)).encode();
+        HistoryIndices::<Box<[u8]>>::Latest((0_u64, invalid_two, None)).encode();
     }
 
     #[test]
@@ -540,12 +540,11 @@ mod tests {
         ));
 
         // Test invalid Four length (0 elements)
-        let mut data = vec![0b01 << 6 | 0]; // Len=0 (special Two case)
+        let mut data = vec![0b01 << 6]; // Len=0 (special Two case)
         data.extend(vec![0u8; 64 * 2]); // Valid Two data
         if ONE_RANGE_BYTES == 128 {
             assert!(HistoryIndices::<Box<[u8]>>::decode(&data).is_ok()); // This should actually be valid
         } else {
-            assert!(ONE_RANGE_BYTES == 64);
             assert!(matches!(
                 HistoryIndices::<Box<[u8]>>::decode(&data),
                 Err(DecodeError::Custom("Two vector length invalid"))
