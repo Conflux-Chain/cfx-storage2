@@ -70,7 +70,7 @@ impl<V: Clone> HistoryIndices<V> {
         match self {
             HistoryIndices::Latest((start_version_number, one_range, latest_value)) => {
                 let end_version_number = start_version_number + one_range.max_offset();
-                if end_version_number != version_number {
+                if end_version_number > version_number {
                     Err(StorageError::CorruptedHistoryIndices)
                 } else {
                     Ok(latest_value.clone())
