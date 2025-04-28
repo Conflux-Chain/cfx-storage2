@@ -158,12 +158,13 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
         let guard = self.current.read();
 
-        let current = guard.as_ref().unwrap();
-        if current.get_commit_id() == *commit_id {
-            Ok(current.get(key).map(|c| c.value.clone()))
-        } else {
-            self.tree.get_versioned_key(commit_id, key)
+        if let Some(current) = guard.as_ref() {
+            if current.get_commit_id() == *commit_id {
+                return Ok(current.get(key).map(|c| c.value.clone()));
+            }
         }
+
+        self.tree.get_versioned_key(commit_id, key)
     }
 
     // alternative method of self.get_versioned_key(),
@@ -179,6 +180,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         let mut guard = self.current.write();
         self.tree.checkout_current(commit_id, &mut guard)?;
 
+        // Safety of unwrap: guard is set to be Some if it was None in self.tree.checkout_current.
         let current = guard.as_ref().unwrap();
         Ok(current.get(key).map(|c| c.value.clone()))
     }
