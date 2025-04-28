@@ -50,9 +50,8 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
                     return Err(StorageError::ConsistencyCheckFailure);
                 };
 
-            let mut history_number = parent_history_number;
             let min_history_number = height_to_history_number(0);
-            while history_number >= min_history_number {
+            for history_number in min_history_number..=parent_history_number {
                 let commit_id =
                     if let Some(commit_id) = self.history_number_table.get(&history_number)? {
                         commit_id.into_owned()
@@ -68,7 +67,6 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
                 if history_number != check_history_number {
                     return Err(StorageError::ConsistencyCheckFailure);
                 };
-                history_number -= 1;
             }
 
             let parent_history_number_plus_one = parent_history_number + 1;
