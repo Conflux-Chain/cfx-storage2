@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     get_versioned_key_latest, get_versioned_key_previous,
-    history_indices_table::HistoryIndices,
+    history_indices::HistoryIndices,
     pending_part::{pending_schema::PendingKeyValueConfig, VersionedMap},
     table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema},
     HistoryIndexKey, PendingError, VersionedStore,
