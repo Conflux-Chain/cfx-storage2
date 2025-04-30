@@ -1,5 +1,5 @@
+mod history_indices;
 mod history_indices_cache;
-mod history_indices_table;
 mod manager_impl;
 mod pending_part;
 mod serde;
@@ -16,8 +16,8 @@ pub use pending_part::PendingError;
 #[cfg(test)]
 pub use tests::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test};
 
+use self::history_indices::LATEST;
 use self::history_indices_cache::HistoryIndexCache;
-use self::history_indices_table::LATEST;
 use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 use pending_part::VersionedMap;
@@ -39,6 +39,15 @@ use crate::types::ValueEntry;
 #[cfg(test)]
 use std::collections::BTreeMap;
 
+/// Key for accessing version history records in storage.
+///
+/// Consists of two components:
+/// 1. The database `key` being tracked
+/// 2. A version specifier which is either:
+///    - `LATEST` for the latest (mutable) record
+///    - An `end_version_number` for a previous (immutable) record
+///
+/// Used in conjunction with [`history_indices::HistoryIndices`] to maintain version history through chained records.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 
@@ -143,7 +152,7 @@ fn get_versioned_key_previous<'db, T: VersionedKeyValueSchema>(
             let HistoryIndexKey(_, end_history_number) = k.as_ref();
             if let Some(found_version_number) = indices
                 .as_ref()
-                .last(query_version_number, *end_history_number)?
+                .last_le(query_version_number, *end_history_number)?
             {
                 change_history_table.get_versioned_key(&found_version_number, key)
             } else {

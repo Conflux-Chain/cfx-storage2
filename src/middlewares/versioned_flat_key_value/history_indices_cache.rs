@@ -6,7 +6,9 @@ use std::{
 use crate::{backends::TableRead, errors::Result, middlewares::HistoryNumber};
 
 use super::{
-    history_indices_table::{HistoryIndices, OneRange, LATEST, ONE_RANGE_BYTES},
+    history_indices::{
+        HistoryIndices, OneRange, BITMAP_MAX_INDEX, LATEST, MAX_FOUR_ENTRIES, MAX_TWO_ENTRIES,
+    },
     table_schema::{HistoryIndicesTable, VersionedKeyValueSchema},
     HistoryIndexKey,
 };
@@ -16,8 +18,22 @@ pub struct HistoryIndexCache<T: VersionedKeyValueSchema> {
     cache: HashMap<T::Key, KeyCacheEntry<T::Value>>,
 }
 
+/// Represents all pending changes for a key that will be persisted to the database.
+///
+/// During batch updates, modifications are first accumulated in the latest record. When capacity is
+/// exceeded, the latest record splits into a non-latest record (added to previous_entries) and a new
+/// latest record containing remaining versions.
 struct KeyCacheEntry<V> {
+    /// Represents the current active version range to be written as a `HistoryIndices::Latest` record.
+    /// Contains the start version, `OneRange`, and the latest value (or deletion marker).
+    /// This entry may be modified directly or split into non-latest records during compaction.
     latest: LatestEntry<V>,
+    /// Non-latest version ranges split from the original latest record. Each will be written as a
+    /// `HistoryIndices::Previous(OneRange)` record, where the tuple's `HistoryNumber`
+    /// becomes the `end_version_number` in the database key `HistoryIndexKey(key, end_version_number)`.
+    ///
+    /// Maintained in version-ascending order - newer splits are pushed directly to the end. The actual `OneRange` data
+    /// must always be non-empty as per `HistoryIndices::Previous` requirements.
     previous_entries: Vec<(HistoryNumber, OneRange)>,
 }
 
@@ -66,7 +82,7 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
                         vacant_entry.insert(KeyCacheEntry {
                             latest: LatestEntry {
                                 start_version: version_number,
-                                version_numbers: OneRange::Two(Vec::new()),
+                                version_numbers: OneRange::new(),
                                 latest_v: v,
                             },
                             previous_entries: Vec::new(),
@@ -78,9 +94,11 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
         };
 
         let latest = &mut entry.latest;
-        assert!(version_number > latest.start_version);
+        let end_version = latest.start_version + latest.version_numbers.max_offset();
+        // Important assertion: the version numbers added sequentially should be strictly increasing.
+        assert!(version_number > end_version);
 
-        // Calculate offset_minus_1
+        // Safety of subtraction: from the previous assertion, we can infer version_number > latest.start_version.
         let offset_minus_1 = version_number - latest.start_version - 1;
 
         // Try to add to existing OneRange
@@ -89,18 +107,15 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
             latest.latest_v = v;
         } else {
             // Split current latest into previous entry
-            let (end_version, prev_range) =
-                Self::convert_to_previous(&latest.version_numbers, latest.start_version);
-            entry.previous_entries.push((end_version, prev_range));
+            entry
+                .previous_entries
+                .push((end_version, latest.version_numbers.clone()));
 
             // Create new latest entry
             let new_start = end_version;
-            let new_offset = version_number - new_start - 1;
-            let new_range = match new_offset {
-                o if o < 1 << 16 => OneRange::Two(vec![new_offset as u16]),
-                o if o < 1 << 32 => OneRange::Four(vec![new_offset as u32]),
-                o => OneRange::OnlyEnd(o),
-            };
+            // Safety of subtraction: from the previous assertion: assert!(version_number > end_version);
+            let new_offset_minus_1 = version_number - new_start - 1;
+            let new_range = OneRange::new_with_offset_minus_1(new_offset_minus_1);
 
             entry.latest = LatestEntry {
                 start_version: new_start,
@@ -119,12 +134,11 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
                 false
             }
             OneRange::Four(vec) => {
-                let max_offset = 1 << 32;
-                if offset_minus_1 >= max_offset {
+                if offset_minus_1 > u32::MAX as u64 {
                     return false;
                 }
                 let new_count = vec.len() + 1;
-                if new_count > ONE_RANGE_BYTES / 4 {
+                if new_count > MAX_FOUR_ENTRIES {
                     false
                 } else {
                     vec.push(offset_minus_1 as u32);
@@ -132,12 +146,11 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
                 }
             }
             OneRange::Two(vec) => {
-                let max_offset = 1 << 16;
-                if offset_minus_1 >= max_offset {
+                if offset_minus_1 > u16::MAX as u64 {
                     return false;
                 }
                 let new_count = vec.len() + 1;
-                if new_count > ONE_RANGE_BYTES / 2 {
+                if new_count > MAX_TWO_ENTRIES {
                     false
                 } else {
                     vec.push(offset_minus_1 as u16);
@@ -145,7 +158,7 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
                 }
             }
             OneRange::Bitmap(bits) => {
-                if offset_minus_1 >= ONE_RANGE_BYTES as u64 * 8 {
+                if offset_minus_1 > BITMAP_MAX_INDEX {
                     return false;
                 }
                 let idx = offset_minus_1 as usize;
@@ -153,35 +166,6 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
                 let bit = idx % 8;
                 bits[byte] |= 1 << bit;
                 true
-            }
-        }
-    }
-
-    fn convert_to_previous(
-        range: &OneRange,
-        start_version: HistoryNumber,
-    ) -> (HistoryNumber, OneRange) {
-        match range {
-            OneRange::OnlyEnd(offset) => (start_version + offset + 1, range.clone()),
-            OneRange::Four(vec) => {
-                let max_offset = vec.last().copied().unwrap_or(0) as u64;
-                (start_version + max_offset + 1, range.clone())
-            }
-            OneRange::Two(vec) => {
-                let max_offset = vec.last().copied().unwrap_or(0) as u64;
-                (start_version + max_offset + 1, range.clone())
-            }
-            OneRange::Bitmap(bits) => {
-                let mut max_offset = 0;
-                for (byte_idx, byte) in bits.iter().enumerate() {
-                    for bit in 0..8 {
-                        if (byte & (1 << bit)) != 0 {
-                            let idx = byte_idx * 8 + bit;
-                            max_offset = max_offset.max(idx as u64);
-                        }
-                    }
-                }
-                (start_version + max_offset + 1, range.clone())
             }
         }
     }
