@@ -1,3 +1,4 @@
+mod history_indices;
 mod manager_impl;
 mod pending_part;
 mod serde;
@@ -30,6 +31,15 @@ use crate::StorageError;
 
 pub type VersionedStoreCache<Schema> = VersionedMap<PendingKeyValueConfig<Schema, CommitID>>;
 
+/// Key for accessing version history records in storage.
+///
+/// Consists of two components:
+/// 1. The database `key` being tracked
+/// 2. A version specifier which is either:
+///    - `LATEST` for the latest (mutable) record
+///    - An `end_version_number` for a previous (immutable) record
+///
+/// Used in conjunction with [`history_indices::HistoryIndices`] to maintain version history through chained records.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 
