@@ -222,43 +222,33 @@ impl OneRange {
     }
 }
 
-pub trait Max {
-    const MAX: Self;
+pub trait SaturatingCastable: Ord + Copy + Into<u64> {
+    const DESTINATION_MAX: u64;
+    fn saturating_from(value: u64) -> Self;
 }
 
-impl Max for u16 {
-    const MAX: Self = u16::MAX;
-}
+impl SaturatingCastable for u16 {
+    const DESTINATION_MAX: u64 = u16::MAX as u64;
 
-impl Max for u32 {
-    const MAX: Self = u32::MAX;
-}
-
-trait ContextSafeCast: Sized {
-    fn from_u64_unchecked(value: u64) -> Self;
-}
-
-impl ContextSafeCast for u16 {
-    fn from_u64_unchecked(value: u64) -> Self {
-        value as u16
+    fn saturating_from(value: u64) -> Self {
+        value.min(Self::DESTINATION_MAX) as u16
     }
 }
 
-impl ContextSafeCast for u32 {
-    fn from_u64_unchecked(value: u64) -> Self {
-        value as u32
+impl SaturatingCastable for u32 {
+    const DESTINATION_MAX: u64 = u32::MAX as u64;
+
+    fn saturating_from(value: u64) -> Self {
+        value.min(Self::DESTINATION_MAX) as u32
     }
 }
 
 fn handle_vec_for_last_le<T>(vec: &[T], start_version_number: u64, offset_minus_1: u64) -> u64
 where
-    T: ContextSafeCast + Ord + Copy + Into<u64> + Max,
+    T: SaturatingCastable,
 {
     // TODO: test HistoryIndices::last_le a version_number > Latest record's start_version_number + T::MAX + 1 for empty/non-empty vec
-    let clamped_offset = offset_minus_1.min(T::MAX.into());
-
-    // Safety: assert!(clamped_offset <= T::MAX.into());
-    let target = T::from_u64_unchecked(clamped_offset);
+    let target = T::saturating_from(offset_minus_1);
     match vec.binary_search(&target) {
         Ok(idx) => start_version_number + vec[idx].into() + 1,
         Err(idx) => {
