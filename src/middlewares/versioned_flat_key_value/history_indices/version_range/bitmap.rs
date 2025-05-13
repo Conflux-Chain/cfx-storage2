@@ -188,6 +188,16 @@ impl Bitmap {
     }
 }
 
+impl Bitmap {
+    pub fn new(data: [u8; VERSION_RANGE_BYTES]) -> Self {
+        Bitmap { data }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{BITMAP_MAX_INDEX, U16_VECTOR_CAPACITY, VERSION_RANGE_BYTES};
