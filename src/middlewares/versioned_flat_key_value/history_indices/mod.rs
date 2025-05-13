@@ -1,17 +1,17 @@
-mod one_range;
+mod version_range;
 
-pub use one_range::OneRange;
 use static_assertions::const_assert;
+pub use version_range::OffsetBasedVersionRange;
 
 use crate::errors::{Result, StorageError};
 use crate::middlewares::HistoryNumber;
 
 pub const LATEST: u64 = u64::MAX;
 
-const ONE_RANGE_BYTES_LOG: usize = 6; // 6 for 64 bytes, or 7 for 128 bytes
-pub const ONE_RANGE_BYTES: usize = 1 << ONE_RANGE_BYTES_LOG;
+const VERSION_RANGE_BYTES_LOG: usize = 6; // 6 for 64 bytes, or 7 for 128 bytes
+pub const VERSION_RANGE_BYTES: usize = 1 << VERSION_RANGE_BYTES_LOG;
 
-const_assert!(ONE_RANGE_BYTES == 64 || ONE_RANGE_BYTES == 128);
+const_assert!(VERSION_RANGE_BYTES == 64 || VERSION_RANGE_BYTES == 128);
 
 /// Tracks version history for a database key through chained records.
 ///
@@ -42,11 +42,11 @@ pub enum HistoryIndices<V: Clone> {
     /// - Starting version number for this record
     /// - Range encoding structure (may be empty)
     /// - Current value (None indicates deletion)
-    Latest((HistoryNumber, OneRange, Option<V>)),
+    Latest((HistoryNumber, OffsetBasedVersionRange, Option<V>)),
 
     /// Immutable historical record. Contains:
     /// - Non-empty range encoding ensuring valid version ranges
-    Previous(OneRange),
+    Previous(OffsetBasedVersionRange),
 }
 
 #[cfg(test)]
@@ -67,8 +67,8 @@ impl<V: Clone> HistoryIndices<V> {
     /// Returns the latest_value corresponding to the latest version, otherwise returns Error.
     pub fn get_latest_value(&self, version_number: HistoryNumber) -> Result<Option<V>> {
         match self {
-            HistoryIndices::Latest((start_version_number, one_range, latest_value)) => {
-                let latest_version_number = start_version_number + one_range.max_offset();
+            HistoryIndices::Latest((start_version_number, range_encoding, latest_value)) => {
+                let latest_version_number = start_version_number + range_encoding.max_offset();
                 if latest_version_number > version_number {
                     Err(StorageError::CorruptedHistoryIndices)
                 } else {
@@ -108,9 +108,10 @@ impl<V: Clone> HistoryIndices<V> {
             return Err(StorageError::CorruptedHistoryIndices);
         };
 
-        let (start_version_number, one_range) = self.compute_start_version(version_specifier)?;
+        let (start_version_number, range_encoding) =
+            self.compute_start_version(version_specifier)?;
 
-        Ok(one_range.last_le(start_version_number, version_number))
+        Ok(range_encoding.last_le(start_version_number, version_number))
     }
 
     /// Generates a list of existing version numbers in increasing order
@@ -130,15 +131,16 @@ impl<V: Clone> HistoryIndices<V> {
             return Err(StorageError::CorruptedHistoryIndices);
         }
 
-        let (start_version_number, one_range) = self.compute_start_version(version_specifier)?;
+        let (start_version_number, range_encoding) =
+            self.compute_start_version(version_specifier)?;
 
-        one_range.collect_versions_le(start_version_number, version_number)
+        range_encoding.collect_versions_le(start_version_number, version_number)
     }
 
     fn compute_start_version(
         &self,
         version_specifier: HistoryNumber,
-    ) -> Result<(HistoryNumber, &OneRange)> {
+    ) -> Result<(HistoryNumber, &OffsetBasedVersionRange)> {
         match self {
             HistoryIndices::Latest((start, range, _)) => {
                 if version_specifier != LATEST {

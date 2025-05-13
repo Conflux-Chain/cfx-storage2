@@ -1,8 +1,8 @@
-use super::ONE_RANGE_BYTES;
+use super::VERSION_RANGE_BYTES;
 use crate::errors::Result;
 use crate::middlewares::HistoryNumber;
 
-/// `OneRange` encodes version numbers relative to a base `start_version_number` that is **not stored in this struct**.
+/// `OffsetBasedVersionRange` encodes version numbers relative to a base `start_version_number` that is **not stored in this struct**.
 ///
 /// Key characteristics:
 /// 1. The `start_version_number` exists by default and is **never explicitly recorded** in the struct.
@@ -15,63 +15,63 @@ use crate::middlewares::HistoryNumber;
 ///     - Special case for when the only version number (besides the implicit `start_version_number`)
 ///       is an `end_version_number` whose `offset_minus_1` (i.e., end - start - 1) exceeds `u32::MAX`.
 ///
-/// - `Four(Vec<u32>)`:
-///     - Used when the maximum `offset_minus_1` is in `2^16 ..= 2^32-1` and there are <= (ONE_RANGE_BYTES / 4) version numbers (excluding `start_version_number`).
+/// - `U32Vector(Vec<u32>)`:
+///     - Used when the maximum `offset_minus_1` is in `2^16 ..= 2^32-1` and there are <= (VERSION_RANGE_BYTES / 4) version numbers (excluding `start_version_number`).
 ///     - `offset_minus_1` values are stored as `u32` in increasing order; each entry is (version_number - start_version_number - 1).
 ///     - The `Vec<u32>` must not be empty.
 ///
-/// - `Two(Vec<u16>)`:
-///     - Used when the maximum `offset_minus_1` is in `0 ..= 2^16-1` and there are <= (ONE_RANGE_BYTES / 2) version numbers (excluding `start_version_number`).
+/// - `U16Vector(Vec<u16>)`:
+///     - Used when the maximum `offset_minus_1` is in `0 ..= 2^16-1` and there are <= (VERSION_RANGE_BYTES / 2) version numbers (excluding `start_version_number`).
 ///     - `offset_minus_1` values are stored as `u16` in increasing order; each entry is (version_number - start_version_number - 1).
 ///     - The `Vec<u16>` can be empty.
 ///
-/// - `Bitmap([u8; ONE_RANGE_BYTES])`:
-///     - Used when the maximum `offset_minus_1` is in `0 ..= (ONE_RANGE_BYTES * 8 - 1)` and there are > (ONE_RANGE_BYTES / 2) version numbers (excluding `start_version_number`).
+/// - `Bitmap([u8; VERSION_RANGE_BYTES])`:
+///     - Used when the maximum `offset_minus_1` is in `0 ..= (VERSION_RANGE_BYTES * 8 - 1)` and there are > (VERSION_RANGE_BYTES / 2) version numbers (excluding `start_version_number`).
 ///     - Each bit at index i indicates the existence of `start_version_number + i + 1`.
 ///         Specifically, the `i`th bit is the `(i % 8)`-th **least significant bit** (LSB) in `bits[i / 8]`.
-///     - There are more than `(ONE_RANGE_BYTES / 2)` bits.
+///     - There are more than `(VERSION_RANGE_BYTES / 2)` bits.
 #[derive(Debug, Clone, PartialEq)]
-pub enum OneRange {
+pub enum OffsetBasedVersionRange {
     OnlyEnd(u64),
-    Four(Vec<u32>),
-    Two(Vec<u16>),
-    Bitmap([u8; ONE_RANGE_BYTES]),
+    U32Vector(Vec<u32>),
+    U16Vector(Vec<u16>),
+    Bitmap([u8; VERSION_RANGE_BYTES]),
 }
 
-/// Maximum number of u32 version offsets that can be stored in a OneRange::Four variant
-pub const MAX_FOUR_ENTRIES: usize = ONE_RANGE_BYTES / 4;
+/// Maximum allowed number of u32 entries in an `OffsetBasedVersionRange::U32Vector`
+pub const U32_VECTOR_CAPACITY: usize = VERSION_RANGE_BYTES / 4;
 
-/// Maximum number of u16 version offsets that can be stored in a OneRange::Two variant
-pub const MAX_TWO_ENTRIES: usize = ONE_RANGE_BYTES / 2;
+/// Maximum allowed number of u16 entries in an `OffsetBasedVersionRange::U16Vector`
+pub const U16_VECTOR_CAPACITY: usize = VERSION_RANGE_BYTES / 2;
 
-/// Maximum offset_minus_1 value that can be represented in a OneRange::Bitmap variant
-pub const BITMAP_MAX_INDEX: u64 = ONE_RANGE_BYTES as u64 * 8 - 1;
+/// Maximum offset_minus_1 value that can be represented in a OffsetBasedVersionRange::Bitmap variant
+pub const BITMAP_MAX_INDEX: u64 = VERSION_RANGE_BYTES as u64 * 8 - 1;
 
-impl OneRange {
-    /// Creates an empty `OneRange` containing only the implicit `start_version_number`.
+impl OffsetBasedVersionRange {
+    /// Creates an empty `OffsetBasedVersionRange` containing only the implicit `start_version_number`.
     pub fn new() -> Self {
-        OneRange::Two(Vec::new())
+        OffsetBasedVersionRange::U16Vector(Vec::new())
     }
 
-    /// Creates a new `OneRange` containing only the start version number and one additional version number
-    /// at the specified offset_minus_1.
+    /// Creates a new `OffsetBasedVersionRange` containing only the start version number and one additional
+    /// version number at the specified offset_minus_1.
     pub fn new_with_offset_minus_1(offset_minus_1: u64) -> Self {
         if offset_minus_1 <= u16::MAX as u64 {
-            OneRange::Two(vec![offset_minus_1 as u16])
+            OffsetBasedVersionRange::U16Vector(vec![offset_minus_1 as u16])
         } else if offset_minus_1 <= u32::MAX as u64 {
-            OneRange::Four(vec![offset_minus_1 as u32])
+            OffsetBasedVersionRange::U32Vector(vec![offset_minus_1 as u32])
         } else {
-            OneRange::OnlyEnd(offset_minus_1)
+            OffsetBasedVersionRange::OnlyEnd(offset_minus_1)
         }
     }
 }
 
-// By design, the `vec` in `Four` is guaranteed to be non-empty, and `Bitmap` is guaranteed to contain more than
-// `(ONE_RANGE_BYTES / 2)` bits. These constraints exist for external guarantees (e.g., data validity elsewhere).
+// By design, the `vec` in `U32Vector` is guaranteed to be non-empty, and `Bitmap` is guaranteed to contain more than
+// `(VERSION_RANGE_BYTES / 2)` bits. These constraints exist for external guarantees (e.g., data validity elsewhere).
 // The functions below are fully robust to all inputs — they handle these cases as if the guarantees never existed,
 // with no behavioral dependency on these preconditions.
-impl OneRange {
-    /// Returns the maximum offset (i.e., max version_number - start_version_number) present in this OneRange.
+impl OffsetBasedVersionRange {
+    /// Returns the maximum offset (i.e., max version_number - start_version_number) present in this OffsetBasedVersionRange.
     /// If there are no "extra" versions (only start_version_number), returns 0.
     pub fn max_offset(&self) -> u64 {
         match self.max_offset_minus_1() {
@@ -80,14 +80,14 @@ impl OneRange {
         }
     }
 
-    /// Returns the greatest present offset_minus_1 in this OneRange.
+    /// Returns the greatest present offset_minus_1 in this OffsetBasedVersionRange.
     /// If there are no "extra" versions (only start_version_number), returns None.
     fn max_offset_minus_1(&self) -> Option<u64> {
         match self {
-            OneRange::OnlyEnd(offset) => Some(*offset),
-            OneRange::Four(vec) => vec.last().map(|&v| v as u64),
-            OneRange::Two(vec) => vec.last().map(|&v| v as u64),
-            OneRange::Bitmap(bitmap) => {
+            OffsetBasedVersionRange::OnlyEnd(offset) => Some(*offset),
+            OffsetBasedVersionRange::U32Vector(vec) => vec.last().map(|&v| v as u64),
+            OffsetBasedVersionRange::U16Vector(vec) => vec.last().map(|&v| v as u64),
+            OffsetBasedVersionRange::Bitmap(bitmap) => {
                 for (byte_idx, &byte) in bitmap.iter().enumerate().rev() {
                     if byte != 0 {
                         // then byte.leading_zeros() <= 7
@@ -119,7 +119,7 @@ impl OneRange {
         let offset_minus_1 = upper_bound - start_version_number - 1;
 
         match self {
-            OneRange::OnlyEnd(end_offset_minus_1) => {
+            OffsetBasedVersionRange::OnlyEnd(end_offset_minus_1) => {
                 if offset_minus_1 >= *end_offset_minus_1 {
                     Some(start_version_number + end_offset_minus_1 + 1)
                 } else {
@@ -127,19 +127,19 @@ impl OneRange {
                 }
             }
 
-            OneRange::Four(vec) => Some(handle_vec_for_last_le(
+            OffsetBasedVersionRange::U32Vector(vec) => Some(handle_vec_for_last_le(
                 vec,
                 start_version_number,
                 offset_minus_1,
             )),
 
-            OneRange::Two(vec) => Some(handle_vec_for_last_le(
+            OffsetBasedVersionRange::U16Vector(vec) => Some(handle_vec_for_last_le(
                 vec,
                 start_version_number,
                 offset_minus_1,
             )),
 
-            OneRange::Bitmap(bitmap) => {
+            OffsetBasedVersionRange::Bitmap(bitmap) => {
                 // TODO: test HistoryIndices::last_le for a Bitmap
                 let max_bit = offset_minus_1.min(BITMAP_MAX_INDEX);
                 let max_byte = (max_bit / 8) as usize;
@@ -183,22 +183,22 @@ impl OneRange {
             versions.push(start_version_number);
 
             match self {
-                OneRange::OnlyEnd(end_offset_minus_1) => {
+                OffsetBasedVersionRange::OnlyEnd(end_offset_minus_1) => {
                     let end_version = start_version_number + end_offset_minus_1 + 1;
                     if end_version <= upper_bound {
                         versions.push(end_version);
                     }
                 }
 
-                OneRange::Four(vec) => {
+                OffsetBasedVersionRange::U32Vector(vec) => {
                     handle_vec_for_collect_le(vec, start_version_number, upper_bound, &mut versions)
                 }
 
-                OneRange::Two(vec) => {
+                OffsetBasedVersionRange::U16Vector(vec) => {
                     handle_vec_for_collect_le(vec, start_version_number, upper_bound, &mut versions)
                 }
 
-                OneRange::Bitmap(bitmap) => {
+                OffsetBasedVersionRange::Bitmap(bitmap) => {
                     if let Some(max_possible_offset_minus_1) =
                         upper_bound.checked_sub(start_version_number + 1)
                     {
