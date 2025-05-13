@@ -1,7 +1,9 @@
 mod version_range;
+// pub use version_range::Bitmap;
 
 use static_assertions::const_assert;
-pub use version_range::OffsetBasedVersionRange;
+pub use version_range::{OffsetBasedVersionRange, U16_VECTOR_CAPACITY, U32_VECTOR_CAPACITY};
+mod serde;
 
 use crate::errors::{Result, StorageError};
 use crate::middlewares::HistoryNumber;
@@ -54,7 +56,7 @@ pub enum HistoryIndices<V: Clone> {
 }
 
 #[cfg(test)]
-impl PartialEq for HistoryIndices<Box<[u8]>> {
+impl<V: Clone + PartialEq> PartialEq for HistoryIndices<V> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (
