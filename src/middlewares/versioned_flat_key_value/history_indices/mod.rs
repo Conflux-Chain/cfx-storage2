@@ -1,6 +1,7 @@
 mod one_range;
 
 pub use one_range::OneRange;
+use static_assertions::const_assert;
 
 use crate::errors::{Result, StorageError};
 use crate::middlewares::HistoryNumber;
@@ -10,7 +11,7 @@ pub const LATEST: u64 = u64::MAX;
 const ONE_RANGE_BYTES_LOG: usize = 6; // 6 for 64 bytes, or 7 for 128 bytes
 pub const ONE_RANGE_BYTES: usize = 1 << ONE_RANGE_BYTES_LOG;
 
-const _: () = assert!(ONE_RANGE_BYTES == 64 || ONE_RANGE_BYTES == 128);
+const_assert!(ONE_RANGE_BYTES == 64 || ONE_RANGE_BYTES == 128);
 
 /// Tracks version history for a database key through chained records.
 ///
