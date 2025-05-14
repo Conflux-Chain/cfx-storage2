@@ -1,5 +1,4 @@
 use super::VERSION_RANGE_BYTES;
-use crate::errors::Result;
 use crate::middlewares::HistoryNumber;
 
 /// `OffsetBasedVersionRange` encodes version numbers relative to a base `start_version_number` that is **not stored in this struct**.
@@ -140,7 +139,6 @@ impl OffsetBasedVersionRange {
             )),
 
             OffsetBasedVersionRange::Bitmap(bitmap) => {
-                // TODO: test HistoryIndices::last_le for a Bitmap
                 let max_bit = offset_minus_1.min(BITMAP_MAX_INDEX);
                 let max_byte = (max_bit / 8) as usize;
                 let max_bit_in_byte = (max_bit % 8) as u8;
@@ -150,7 +148,7 @@ impl OffsetBasedVersionRange {
 
                     // Generate a mask to handle truncation of the last byte
                     let mask = if byte_idx == max_byte {
-                        (1 << (max_bit_in_byte + 1)) - 1
+                        0xFFu8 >> (8 - (max_bit_in_byte + 1))
                     } else {
                         0xFF
                     };
@@ -176,7 +174,7 @@ impl OffsetBasedVersionRange {
         &self,
         start_version_number: HistoryNumber,
         upper_bound: HistoryNumber,
-    ) -> Result<Vec<HistoryNumber>> {
+    ) -> Vec<HistoryNumber> {
         let mut versions = Vec::new();
 
         if start_version_number <= upper_bound {
@@ -218,7 +216,7 @@ impl OffsetBasedVersionRange {
             }
         }
 
-        Ok(versions)
+        versions
     }
 }
 
@@ -247,7 +245,6 @@ fn handle_vec_for_last_le<T>(vec: &[T], start_version_number: u64, offset_minus_
 where
     T: SaturatingCastable,
 {
-    // TODO: test HistoryIndices::last_le a version_number > Latest record's start_version_number + T::MAX + 1 for empty/non-empty vec
     let target = T::saturating_from(offset_minus_1);
     match vec.binary_search(&target) {
         Ok(idx) => start_version_number + vec[idx].into() + 1,
@@ -274,5 +271,378 @@ fn handle_vec_for_collect_le<T: Into<u64> + Copy>(
         } else {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new() {
+        let range = OffsetBasedVersionRange::new();
+        assert!(matches!(range, OffsetBasedVersionRange::U16Vector(v) if v.is_empty()));
+    }
+
+    #[test]
+    fn test_new_with_offset_minus_1() {
+        // u16 case
+        let range = OffsetBasedVersionRange::new_with_offset_minus_1(100);
+        assert!(matches!(range, OffsetBasedVersionRange::U16Vector(v) if v == vec![100]));
+
+        // u32 case
+        let range = OffsetBasedVersionRange::new_with_offset_minus_1(70000);
+        assert!(matches!(range, OffsetBasedVersionRange::U32Vector(v) if v == vec![70000]));
+
+        // OnlyEnd case
+        let large_offset_minus_1 = u32::MAX as u64 + 1;
+        let range = OffsetBasedVersionRange::new_with_offset_minus_1(large_offset_minus_1);
+        assert!(
+            matches!(range, OffsetBasedVersionRange::OnlyEnd(offset_minus_1) if offset_minus_1 == large_offset_minus_1)
+        );
+    }
+
+    // Test helper to create a Bitmap with specific bits set
+    fn create_bitmap_with_bits(bits: &[u64]) -> [u8; VERSION_RANGE_BYTES] {
+        let mut bitmap = [0u8; VERSION_RANGE_BYTES];
+        for &bit in bits {
+            let byte_idx = (bit / 8) as usize;
+            let bit_pos = bit % 8;
+            bitmap[byte_idx] |= 1 << bit_pos;
+        }
+        bitmap
+    }
+
+    #[test]
+    fn test_max_offset() {
+        // Test OnlyEnd
+        let only_end = OffsetBasedVersionRange::OnlyEnd(100);
+        assert_eq!(only_end.max_offset(), 101);
+
+        // Test U32Vector with non-empty and empty cases
+        let u32_valid = OffsetBasedVersionRange::U32Vector(vec![10, 20, 30]);
+        assert_eq!(u32_valid.max_offset(), 31);
+        let u32_empty = OffsetBasedVersionRange::U32Vector(vec![]);
+        assert_eq!(u32_empty.max_offset(), 0);
+
+        // Test U16Vector with non-empty and empty cases
+        let u16_valid = OffsetBasedVersionRange::U16Vector(vec![5]);
+        assert_eq!(u16_valid.max_offset(), 6);
+        let u16_empty = OffsetBasedVersionRange::U16Vector(vec![]);
+        assert_eq!(u16_empty.max_offset(), 0);
+
+        // Test Bitmap with various bit configurations
+        let bitmap_full = create_bitmap_with_bits(&[BITMAP_MAX_INDEX]);
+        let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap_full);
+        assert_eq!(bitmap_range.max_offset(), BITMAP_MAX_INDEX + 1);
+
+        let bitmap_empty = OffsetBasedVersionRange::Bitmap([0; VERSION_RANGE_BYTES]);
+        assert_eq!(bitmap_empty.max_offset(), 0);
+
+        let bitmap_mid = create_bitmap_with_bits(&[50, 100]);
+        let bitmap_mid_range = OffsetBasedVersionRange::Bitmap(bitmap_mid);
+        assert_eq!(bitmap_mid_range.max_offset(), 101);
+    }
+
+    #[test]
+    fn test_last_le() {
+        let start = 1000;
+
+        // Test OnlyEnd cases
+        let only_end_offset_minus_1 = u32::MAX as u64 + 1;
+        let only_end = OffsetBasedVersionRange::OnlyEnd(only_end_offset_minus_1);
+        assert_eq!(
+            only_end.last_le(start, start + only_end_offset_minus_1 + 2),
+            Some(start + only_end_offset_minus_1 + 1)
+        );
+        assert_eq!(
+            only_end.last_le(start, start + only_end_offset_minus_1 + 1),
+            Some(start + only_end_offset_minus_1 + 1)
+        );
+        assert_eq!(only_end.last_le(start, start + 1), Some(start));
+        assert_eq!(only_end.last_le(start, start), Some(start));
+        assert_eq!(only_end.last_le(start, start - 1), None);
+
+        // Test U32Vector with empty case
+        let u32_empty = OffsetBasedVersionRange::U32Vector(vec![]);
+        assert_eq!(
+            u32_empty.last_le(start, start + u32::MAX as u64 + 2),
+            Some(start)
+        );
+        assert_eq!(u32_empty.last_le(start, start + 1), Some(start));
+        assert_eq!(u32_empty.last_le(start, start), Some(start));
+        assert_eq!(u32_empty.last_le(start, start - 1), None);
+
+        // Test U32Vector with non-empty case
+        let max_u32_entry = u32::MAX;
+        let max_u32_entry_as_u64 = max_u32_entry as u64;
+        let u32_vec = OffsetBasedVersionRange::U32Vector(vec![50, 100, max_u32_entry]);
+        assert_eq!(
+            u32_vec.last_le(start, start + max_u32_entry_as_u64 + 2),
+            Some(start + max_u32_entry_as_u64 + 1)
+        );
+        assert_eq!(
+            u32_vec.last_le(start, start + max_u32_entry_as_u64 + 1),
+            Some(start + max_u32_entry_as_u64 + 1)
+        );
+        assert_eq!(
+            u32_vec.last_le(start, start + max_u32_entry_as_u64),
+            Some(start + 100 + 1)
+        );
+        assert_eq!(u32_vec.last_le(start, start + 50 + 1), Some(start + 50 + 1));
+        assert_eq!(u32_vec.last_le(start, start + 50), Some(start));
+        assert_eq!(u32_vec.last_le(start, start + 1), Some(start));
+        assert_eq!(u32_vec.last_le(start, start), Some(start));
+        assert_eq!(u32_vec.last_le(start, start - 1), None);
+
+        // Test U16Vector with empty case
+        let u16_empty = OffsetBasedVersionRange::U16Vector(vec![]);
+        assert_eq!(
+            u16_empty.last_le(start, start + u16::MAX as u64 + 2),
+            Some(start)
+        );
+        assert_eq!(u16_empty.last_le(start, start + 1), Some(start));
+        assert_eq!(u16_empty.last_le(start, start), Some(start));
+        assert_eq!(u16_empty.last_le(start, start - 1), None);
+
+        // Test U16Vector with non-empty case
+        let max_u16_entry = u16::MAX;
+        let max_u16_entry_as_u64 = max_u16_entry as u64;
+        let u16_vec = OffsetBasedVersionRange::U16Vector(vec![50, 100, max_u16_entry]);
+        assert_eq!(
+            u16_vec.last_le(start, start + max_u16_entry_as_u64 + 2),
+            Some(start + max_u16_entry_as_u64 + 1)
+        );
+        assert_eq!(
+            u16_vec.last_le(start, start + max_u16_entry_as_u64 + 1),
+            Some(start + max_u16_entry_as_u64 + 1)
+        );
+        assert_eq!(
+            u16_vec.last_le(start, start + max_u16_entry_as_u64),
+            Some(start + 100 + 1)
+        );
+        assert_eq!(u16_vec.last_le(start, start + 50 + 1), Some(start + 50 + 1));
+        assert_eq!(u16_vec.last_le(start, start + 50), Some(start));
+        assert_eq!(u16_vec.last_le(start, start + 1), Some(start));
+        assert_eq!(u16_vec.last_le(start, start), Some(start));
+        assert_eq!(u16_vec.last_le(start, start - 1), None);
+
+        // Test Bitmap with various bit patterns
+        let bitmap = create_bitmap_with_bits(&[0, 7, 8, 15]);
+        let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap);
+        assert_eq!(
+            bitmap_range.last_le(start, start + 15 + 2),
+            Some(start + 15 + 1)
+        );
+        assert_eq!(
+            bitmap_range.last_le(start, start + 15 + 1),
+            Some(start + 15 + 1)
+        );
+        assert_eq!(bitmap_range.last_le(start, start + 15), Some(start + 8 + 1));
+        assert_eq!(
+            bitmap_range.last_le(start, start + 8 + 1),
+            Some(start + 8 + 1)
+        );
+        assert_eq!(
+            bitmap_range.last_le(start, start + 7 + 1),
+            Some(start + 7 + 1)
+        );
+        assert_eq!(bitmap_range.last_le(start, start + 7), Some(start + 1));
+        assert_eq!(bitmap_range.last_le(start, start + 1), Some(start + 1));
+        assert_eq!(bitmap_range.last_le(start, start), Some(start));
+        assert_eq!(bitmap_range.last_le(start, start - 1), None);
+
+        // Test Bitmap exceeding index bounds
+        let upper = start + BITMAP_MAX_INDEX + 2;
+        assert_eq!(bitmap_range.last_le(start, upper), Some(start + 15 + 1));
+
+        // Test bitmap at capacity edge
+        let max_bitmap = create_bitmap_with_bits(&[BITMAP_MAX_INDEX]);
+        let max_bitmap_range = OffsetBasedVersionRange::Bitmap(max_bitmap);
+        assert_eq!(
+            max_bitmap_range.last_le(start, start + BITMAP_MAX_INDEX + 2),
+            Some(start + BITMAP_MAX_INDEX + 1)
+        );
+        assert_eq!(
+            max_bitmap_range.last_le(start, start + BITMAP_MAX_INDEX + 1),
+            Some(start + BITMAP_MAX_INDEX + 1)
+        );
+        assert_eq!(
+            max_bitmap_range.last_le(start, start + BITMAP_MAX_INDEX),
+            Some(start)
+        );
+        assert_eq!(max_bitmap_range.last_le(start, start), Some(start));
+        assert_eq!(max_bitmap_range.last_le(start, start - 1), None);
+    }
+
+    #[test]
+    fn test_collect_versions_le() {
+        let start = 1000;
+
+        // Test OnlyEnd cases
+        let only_end_offset_minus_1 = u32::MAX as u64 + 1;
+        let only_end = OffsetBasedVersionRange::OnlyEnd(only_end_offset_minus_1);
+        assert_eq!(
+            only_end.collect_versions_le(start, start + only_end_offset_minus_1 + 2),
+            vec![start, start + only_end_offset_minus_1 + 1]
+        );
+        assert_eq!(
+            only_end.collect_versions_le(start, start + only_end_offset_minus_1 + 1),
+            vec![start, start + only_end_offset_minus_1 + 1]
+        );
+        assert_eq!(only_end.collect_versions_le(start, start + 1), vec![start]);
+        assert_eq!(only_end.collect_versions_le(start, start), vec![start]);
+        assert_eq!(only_end.collect_versions_le(start, start - 1), vec![]);
+
+        // Test U32Vector with empty case
+        let u32_empty = OffsetBasedVersionRange::U32Vector(vec![]);
+        assert_eq!(
+            u32_empty.collect_versions_le(start, start + u32::MAX as u64 + 2),
+            vec![start]
+        );
+        assert_eq!(u32_empty.collect_versions_le(start, start + 1), vec![start]);
+        assert_eq!(u32_empty.collect_versions_le(start, start), vec![start]);
+        assert_eq!(u32_empty.collect_versions_le(start, start - 1), vec![]);
+
+        // Test U32Vector with non-empty case
+        let max_u32_entry = u32::MAX;
+        let max_u32_entry_as_u64 = max_u32_entry as u64;
+        let u32_vec = OffsetBasedVersionRange::U32Vector(vec![50, 100, max_u32_entry]);
+        assert_eq!(
+            u32_vec.collect_versions_le(start, start + max_u32_entry_as_u64 + 2),
+            vec![
+                start,
+                start + 51,
+                start + 101,
+                start + max_u32_entry_as_u64 + 1
+            ]
+        );
+        assert_eq!(
+            u32_vec.collect_versions_le(start, start + max_u32_entry_as_u64 + 1),
+            vec![
+                start,
+                start + 51,
+                start + 101,
+                start + max_u32_entry_as_u64 + 1
+            ]
+        );
+        assert_eq!(
+            u32_vec.collect_versions_le(start, start + max_u32_entry_as_u64),
+            vec![start, start + 51, start + 101]
+        );
+        assert_eq!(
+            u32_vec.collect_versions_le(start, start + 50 + 1),
+            vec![start, start + 51]
+        );
+        assert_eq!(u32_vec.collect_versions_le(start, start + 50), vec![start]);
+        assert_eq!(u32_vec.collect_versions_le(start, start + 1), vec![start]);
+        assert_eq!(u32_vec.collect_versions_le(start, start), vec![start]);
+        assert_eq!(u32_vec.collect_versions_le(start, start - 1), vec![]);
+
+        // Test U16Vector with empty case
+        let u16_empty = OffsetBasedVersionRange::U16Vector(vec![]);
+        assert_eq!(
+            u16_empty.collect_versions_le(start, start + u16::MAX as u64 + 2),
+            vec![start]
+        );
+        assert_eq!(u16_empty.collect_versions_le(start, start + 1), vec![start]);
+        assert_eq!(u16_empty.collect_versions_le(start, start), vec![start]);
+        assert_eq!(u16_empty.collect_versions_le(start, start - 1), vec![]);
+
+        // Test U16Vector with non-empty case
+        let max_u16_entry = u16::MAX;
+        let max_u16_entry_as_u64 = max_u16_entry as u64;
+        let u16_vec = OffsetBasedVersionRange::U16Vector(vec![50, 100, max_u16_entry]);
+        assert_eq!(
+            u16_vec.collect_versions_le(start, start + max_u16_entry_as_u64 + 2),
+            vec![
+                start,
+                start + 51,
+                start + 101,
+                start + max_u16_entry_as_u64 + 1
+            ]
+        );
+        assert_eq!(
+            u16_vec.collect_versions_le(start, start + max_u16_entry_as_u64 + 1),
+            vec![
+                start,
+                start + 51,
+                start + 101,
+                start + max_u16_entry_as_u64 + 1
+            ]
+        );
+        assert_eq!(
+            u16_vec.collect_versions_le(start, start + max_u16_entry_as_u64),
+            vec![start, start + 51, start + 101]
+        );
+        assert_eq!(
+            u16_vec.collect_versions_le(start, start + 50 + 1),
+            vec![start, start + 51]
+        );
+        assert_eq!(u16_vec.collect_versions_le(start, start + 50), vec![start]);
+        assert_eq!(u16_vec.collect_versions_le(start, start + 1), vec![start]);
+        assert_eq!(u16_vec.collect_versions_le(start, start), vec![start]);
+        assert_eq!(u16_vec.collect_versions_le(start, start - 1), vec![]);
+
+        // Test Bitmap with various bit patterns
+        let bitmap = create_bitmap_with_bits(&[0, 7, 8, 15]);
+        let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap);
+        assert_eq!(
+            bitmap_range.collect_versions_le(start, start + 15 + 2),
+            vec![start, start + 1, start + 8, start + 9, start + 16]
+        );
+        assert_eq!(
+            bitmap_range.collect_versions_le(start, start + 15 + 1),
+            vec![start, start + 1, start + 8, start + 9, start + 16]
+        );
+        assert_eq!(
+            bitmap_range.collect_versions_le(start, start + 15),
+            vec![start, start + 1, start + 8, start + 9]
+        );
+        assert_eq!(
+            bitmap_range.collect_versions_le(start, start + 8 + 1),
+            vec![start, start + 1, start + 8, start + 9]
+        );
+        assert_eq!(
+            bitmap_range.collect_versions_le(start, start + 7 + 1),
+            vec![start, start + 1, start + 8]
+        );
+        assert_eq!(
+            bitmap_range.collect_versions_le(start, start + 1),
+            vec![start, start + 1]
+        );
+        assert_eq!(bitmap_range.collect_versions_le(start, start), vec![start]);
+        assert_eq!(bitmap_range.collect_versions_le(start, start - 1), vec![]);
+
+        // Test Bitmap exceeding index bounds
+        let upper = start + BITMAP_MAX_INDEX + 2;
+        assert_eq!(
+            bitmap_range.collect_versions_le(start, upper),
+            vec![start, start + 1, start + 8, start + 9, start + 16]
+        );
+
+        // Test bitmap at capacity edge
+        let max_bitmap = create_bitmap_with_bits(&[BITMAP_MAX_INDEX]);
+        let max_bitmap_range = OffsetBasedVersionRange::Bitmap(max_bitmap);
+        assert_eq!(
+            max_bitmap_range.collect_versions_le(start, start + BITMAP_MAX_INDEX + 2),
+            vec![start, start + BITMAP_MAX_INDEX + 1]
+        );
+        assert_eq!(
+            max_bitmap_range.collect_versions_le(start, start + BITMAP_MAX_INDEX + 1),
+            vec![start, start + BITMAP_MAX_INDEX + 1]
+        );
+        assert_eq!(
+            max_bitmap_range.collect_versions_le(start, start + BITMAP_MAX_INDEX),
+            vec![start]
+        );
+        assert_eq!(
+            max_bitmap_range.collect_versions_le(start, start),
+            vec![start]
+        );
+        assert_eq!(
+            max_bitmap_range.collect_versions_le(start, start - 1),
+            vec![]
+        );
     }
 }

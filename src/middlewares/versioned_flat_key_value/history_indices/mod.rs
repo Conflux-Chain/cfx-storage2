@@ -134,7 +134,7 @@ impl<V: Clone> HistoryIndices<V> {
         let (start_version_number, range_encoding) =
             self.compute_start_version(version_specifier)?;
 
-        range_encoding.collect_versions_le(start_version_number, version_number)
+        Ok(range_encoding.collect_versions_le(start_version_number, version_number))
     }
 
     fn compute_start_version(
