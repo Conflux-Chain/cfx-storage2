@@ -164,3 +164,205 @@ impl<V: Clone> HistoryIndices<V> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::middlewares::HistoryNumber;
+
+    fn create_latest(
+        start: HistoryNumber,
+        range: OffsetBasedVersionRange,
+        value: Option<Vec<u8>>,
+    ) -> HistoryIndices<Vec<u8>> {
+        HistoryIndices::Latest((start, range, value))
+    }
+
+    fn create_previous(range: OffsetBasedVersionRange) -> HistoryIndices<Vec<u8>> {
+        HistoryIndices::Previous(range)
+    }
+
+    // Test helper to create a Bitmap with specific bits set
+    pub fn create_bitmap_with_bits(bits: &[u64]) -> [u8; VERSION_RANGE_BYTES] {
+        let mut bitmap = [0u8; VERSION_RANGE_BYTES];
+        for &bit in bits {
+            let byte_idx = (bit / 8) as usize;
+            let bit_pos = bit % 8;
+            bitmap[byte_idx] |= 1 << bit_pos;
+        }
+        bitmap
+    }
+
+    #[test]
+    fn test_get_latest_value() {
+        let value = Some(vec![1, 2, 3]);
+        let start = 1000;
+        let offset_minus_1 = 500;
+
+        // Test Latest with empty version_range
+        let latest = create_latest(start, OffsetBasedVersionRange::new(), value.clone());
+        assert_eq!(latest.get_latest_value(start + 1).unwrap(), value);
+        assert_eq!(latest.get_latest_value(start).unwrap(), value);
+        assert!(latest.get_latest_value(start - 1).is_err());
+
+        // Test Latest with non-empty version_range
+        let latest_with_range = create_latest(
+            start,
+            OffsetBasedVersionRange::new_with_offset_minus_1(offset_minus_1),
+            value.clone(),
+        );
+        assert_eq!(
+            latest_with_range
+                .get_latest_value(start + offset_minus_1 + 2)
+                .unwrap(),
+            value
+        );
+        assert_eq!(
+            latest_with_range
+                .get_latest_value(start + offset_minus_1 + 1)
+                .unwrap(),
+            value
+        );
+        assert!(latest_with_range
+            .get_latest_value(start + offset_minus_1)
+            .is_err());
+
+        // Test Previous with non-empty version_range
+        let previous = create_previous(OffsetBasedVersionRange::new_with_offset_minus_1(500));
+        assert!(previous
+            .get_latest_value(start + offset_minus_1 + 1)
+            .is_err());
+    }
+
+    #[test]
+    fn test_last_le() {
+        let start = 1000;
+
+        // Test Latest
+        let only_end_offset_minus_1 = u32::MAX as u64 + 1;
+        let latest = create_latest(
+            start,
+            OffsetBasedVersionRange::OnlyEnd(only_end_offset_minus_1),
+            None,
+        );
+        assert_eq!(
+            latest
+                .last_le(start + only_end_offset_minus_1 + 2, LATEST)
+                .unwrap(),
+            Some(start + only_end_offset_minus_1 + 1)
+        );
+        assert_eq!(
+            latest
+                .last_le(start + only_end_offset_minus_1 + 1, LATEST)
+                .unwrap(),
+            Some(start + only_end_offset_minus_1 + 1)
+        );
+        assert_eq!(
+            latest
+                .last_le(start + only_end_offset_minus_1, LATEST)
+                .unwrap(),
+            Some(start)
+        );
+        assert_eq!(latest.last_le(start, LATEST).unwrap(), Some(start));
+        assert_eq!(latest.last_le(start - 1, LATEST).unwrap(), None);
+        assert!(latest.last_le(LATEST, LATEST - 1).is_err());
+        assert!(latest.last_le(start, LATEST - 1).is_err());
+
+        // Test Previous
+        let max_u32_entry = u32::MAX;
+        let max_u32_entry_as_u64 = max_u32_entry as u64;
+        let u32_vec = OffsetBasedVersionRange::U32Vector(vec![50, 100, max_u32_entry]);
+        let previous = create_previous(u32_vec);
+        let version_specifier = start + max_u32_entry_as_u64 + 1;
+        assert!(previous
+            .last_le(version_specifier + 1, version_specifier)
+            .is_err());
+        assert_eq!(
+            previous
+                .last_le(version_specifier, version_specifier)
+                .unwrap(),
+            Some(version_specifier)
+        );
+        assert_eq!(
+            previous
+                .last_le(version_specifier - 1, version_specifier)
+                .unwrap(),
+            Some(start + 100 + 1)
+        );
+        assert_eq!(
+            previous.last_le(start, version_specifier).unwrap(),
+            Some(start)
+        );
+        assert_eq!(
+            previous.last_le(start - 1, version_specifier).unwrap(),
+            None
+        );
+        assert!(previous.last_le(start + 1, max_u32_entry_as_u64).is_err());
+        assert!(previous.last_le(start, LATEST).is_err());
+    }
+
+    #[test]
+    fn test_collect_versions_le() {
+        let start = 1000;
+
+        // Test Latest
+        let bitmap = create_bitmap_with_bits(&[0, 7, 8, 15]);
+        let latest = create_latest(start, OffsetBasedVersionRange::Bitmap(bitmap), None);
+        assert_eq!(
+            latest.collect_versions_le(start + 17, LATEST).unwrap(),
+            vec![start, start + 1, start + 8, start + 9, start + 16]
+        );
+        assert_eq!(
+            latest.collect_versions_le(start + 16, LATEST).unwrap(),
+            vec![start, start + 1, start + 8, start + 9, start + 16]
+        );
+        assert_eq!(
+            latest.collect_versions_le(start, LATEST).unwrap(),
+            vec![start]
+        );
+        assert_eq!(
+            latest.collect_versions_le(start - 1, LATEST).unwrap(),
+            vec![]
+        );
+        assert!(latest.collect_versions_le(LATEST, LATEST - 1).is_err());
+        assert!(latest.collect_versions_le(start, LATEST - 1).is_err());
+
+        // Test Previous
+        let max_u16_entry = u16::MAX;
+        let max_u16_entry_as_u64 = max_u16_entry as u64;
+        let u16_vec = OffsetBasedVersionRange::U16Vector(vec![50, 100, max_u16_entry]);
+        let previous = create_previous(u16_vec);
+        let version_specifier = start + max_u16_entry_as_u64 + 1;
+        assert!(previous
+            .collect_versions_le(version_specifier + 1, version_specifier)
+            .is_err());
+        assert_eq!(
+            previous
+                .collect_versions_le(version_specifier, version_specifier)
+                .unwrap(),
+            vec![start, start + 50 + 1, start + 100 + 1, version_specifier]
+        );
+        assert_eq!(
+            previous
+                .collect_versions_le(version_specifier - 1, version_specifier)
+                .unwrap(),
+            vec![start, start + 50 + 1, start + 100 + 1]
+        );
+        assert_eq!(
+            previous
+                .collect_versions_le(start, version_specifier)
+                .unwrap(),
+            vec![start]
+        );
+        assert_eq!(
+            previous
+                .collect_versions_le(start - 1, version_specifier)
+                .unwrap(),
+            vec![]
+        );
+        assert!(previous
+            .collect_versions_le(start + 1, max_u16_entry_as_u64)
+            .is_err());
+        assert!(previous.collect_versions_le(start, LATEST).is_err());
+    }
+}

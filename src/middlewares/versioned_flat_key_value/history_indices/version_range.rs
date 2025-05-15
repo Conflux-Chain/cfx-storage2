@@ -43,7 +43,7 @@ pub const U32_VECTOR_CAPACITY: usize = VERSION_RANGE_BYTES / 4;
 /// Maximum allowed number of u16 entries in an `OffsetBasedVersionRange::U16Vector`
 pub const U16_VECTOR_CAPACITY: usize = VERSION_RANGE_BYTES / 2;
 
-/// Maximum offset_minus_1 value that can be represented in a OffsetBasedVersionRange::Bitmap variant
+/// Maximum offset_minus_1 value that can be represented in an `OffsetBasedVersionRange::Bitmap`
 pub const BITMAP_MAX_INDEX: u64 = VERSION_RANGE_BYTES as u64 * 8 - 1;
 
 impl OffsetBasedVersionRange {
@@ -276,6 +276,8 @@ fn handle_vec_for_collect_le<T: Into<u64> + Copy>(
 
 #[cfg(test)]
 mod tests {
+    use crate::middlewares::versioned_flat_key_value::history_indices::tests::create_bitmap_with_bits;
+
     use super::*;
 
     #[test]
@@ -302,17 +304,6 @@ mod tests {
         );
     }
 
-    // Test helper to create a Bitmap with specific bits set
-    fn create_bitmap_with_bits(bits: &[u64]) -> [u8; VERSION_RANGE_BYTES] {
-        let mut bitmap = [0u8; VERSION_RANGE_BYTES];
-        for &bit in bits {
-            let byte_idx = (bit / 8) as usize;
-            let bit_pos = bit % 8;
-            bitmap[byte_idx] |= 1 << bit_pos;
-        }
-        bitmap
-    }
-
     #[test]
     fn test_max_offset() {
         // Test OnlyEnd
@@ -332,9 +323,16 @@ mod tests {
         assert_eq!(u16_empty.max_offset(), 0);
 
         // Test Bitmap with various bit configurations
-        let bitmap_full = create_bitmap_with_bits(&[BITMAP_MAX_INDEX]);
-        let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap_full);
-        assert_eq!(bitmap_range.max_offset(), BITMAP_MAX_INDEX + 1);
+        for bit_index in 0..=BITMAP_MAX_INDEX {
+            let bitmap = create_bitmap_with_bits(&[bit_index]);
+            let range = OffsetBasedVersionRange::Bitmap(bitmap);
+            assert_eq!(
+                range.max_offset(),
+                bit_index + 1,
+                "Failed for bit index {}",
+                bit_index
+            );
+        }
 
         let bitmap_empty = OffsetBasedVersionRange::Bitmap([0; VERSION_RANGE_BYTES]);
         assert_eq!(bitmap_empty.max_offset(), 0);
@@ -456,23 +454,22 @@ mod tests {
         let upper = start + BITMAP_MAX_INDEX + 2;
         assert_eq!(bitmap_range.last_le(start, upper), Some(start + 15 + 1));
 
-        // Test bitmap at capacity edge
-        let max_bitmap = create_bitmap_with_bits(&[BITMAP_MAX_INDEX]);
-        let max_bitmap_range = OffsetBasedVersionRange::Bitmap(max_bitmap);
-        assert_eq!(
-            max_bitmap_range.last_le(start, start + BITMAP_MAX_INDEX + 2),
-            Some(start + BITMAP_MAX_INDEX + 1)
-        );
-        assert_eq!(
-            max_bitmap_range.last_le(start, start + BITMAP_MAX_INDEX + 1),
-            Some(start + BITMAP_MAX_INDEX + 1)
-        );
-        assert_eq!(
-            max_bitmap_range.last_le(start, start + BITMAP_MAX_INDEX),
-            Some(start)
-        );
-        assert_eq!(max_bitmap_range.last_le(start, start), Some(start));
-        assert_eq!(max_bitmap_range.last_le(start, start - 1), None);
+        // Test bitmap with different largest bit_index
+        for bit_index in 0..=BITMAP_MAX_INDEX {
+            let bitmap = create_bitmap_with_bits(&[bit_index]);
+            let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap);
+            assert_eq!(
+                bitmap_range.last_le(start, start + bit_index + 2),
+                Some(start + bit_index + 1)
+            );
+            assert_eq!(
+                bitmap_range.last_le(start, start + bit_index + 1),
+                Some(start + bit_index + 1)
+            );
+            assert_eq!(bitmap_range.last_le(start, start + bit_index), Some(start));
+            assert_eq!(bitmap_range.last_le(start, start), Some(start));
+            assert_eq!(bitmap_range.last_le(start, start - 1), None);
+        }
     }
 
     #[test]
@@ -621,28 +618,24 @@ mod tests {
             vec![start, start + 1, start + 8, start + 9, start + 16]
         );
 
-        // Test bitmap at capacity edge
-        let max_bitmap = create_bitmap_with_bits(&[BITMAP_MAX_INDEX]);
-        let max_bitmap_range = OffsetBasedVersionRange::Bitmap(max_bitmap);
-        assert_eq!(
-            max_bitmap_range.collect_versions_le(start, start + BITMAP_MAX_INDEX + 2),
-            vec![start, start + BITMAP_MAX_INDEX + 1]
-        );
-        assert_eq!(
-            max_bitmap_range.collect_versions_le(start, start + BITMAP_MAX_INDEX + 1),
-            vec![start, start + BITMAP_MAX_INDEX + 1]
-        );
-        assert_eq!(
-            max_bitmap_range.collect_versions_le(start, start + BITMAP_MAX_INDEX),
-            vec![start]
-        );
-        assert_eq!(
-            max_bitmap_range.collect_versions_le(start, start),
-            vec![start]
-        );
-        assert_eq!(
-            max_bitmap_range.collect_versions_le(start, start - 1),
-            vec![]
-        );
+        // Test bitmap with different largest bit_index
+        for bit_index in 0..=BITMAP_MAX_INDEX {
+            let bitmap = create_bitmap_with_bits(&[bit_index]);
+            let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap);
+            assert_eq!(
+                bitmap_range.collect_versions_le(start, start + bit_index + 2),
+                vec![start, start + bit_index + 1]
+            );
+            assert_eq!(
+                bitmap_range.collect_versions_le(start, start + bit_index + 1),
+                vec![start, start + bit_index + 1]
+            );
+            assert_eq!(
+                bitmap_range.collect_versions_le(start, start + bit_index),
+                vec![start]
+            );
+            assert_eq!(bitmap_range.collect_versions_le(start, start), vec![start]);
+            assert_eq!(bitmap_range.collect_versions_le(start, start - 1), vec![]);
+        }
     }
 }
