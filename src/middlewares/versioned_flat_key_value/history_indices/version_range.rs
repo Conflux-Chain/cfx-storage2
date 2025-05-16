@@ -281,6 +281,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_u16_saturation() {
+        assert_eq!(u16::saturating_from(0), 0);
+        assert_eq!(u16::saturating_from(1), 1);
+        assert_eq!(u16::saturating_from(65534), 65534);
+        assert_eq!(u16::saturating_from(65535), 65535);
+        assert_eq!(u16::saturating_from(65536), 65535);
+        assert_eq!(u16::saturating_from(100000), 65535);
+    }
+
+    #[test]
+    fn test_u32_saturation() {
+        assert_eq!(u32::saturating_from(0), 0);
+        assert_eq!(u32::saturating_from(1), 1);
+        assert_eq!(u32::saturating_from(4294967294), 4294967294);
+        assert_eq!(u32::saturating_from(4294967295), 4294967295);
+        assert_eq!(u32::saturating_from(4294967296), 4294967295);
+        assert_eq!(u32::saturating_from(5000000000), 4294967295);
+    }
+
+    #[test]
     fn test_new() {
         let range = OffsetBasedVersionRange::new();
         assert!(matches!(range, OffsetBasedVersionRange::U16Vector(v) if v.is_empty()));
