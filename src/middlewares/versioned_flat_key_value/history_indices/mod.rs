@@ -197,7 +197,7 @@ mod tests {
     fn test_get_latest_value() {
         let value = Some(vec![1, 2, 3]);
         let start = 1000;
-        let offset_minus_1 = 500;
+        let offset = 500;
 
         // Test Latest with empty version_range
         let latest = create_latest(start, OffsetBasedVersionRange::new(), value.clone());
@@ -208,30 +208,26 @@ mod tests {
         // Test Latest with non-empty version_range
         let latest_with_range = create_latest(
             start,
-            OffsetBasedVersionRange::new_with_offset_minus_1(offset_minus_1),
+            OffsetBasedVersionRange::new_with_offset(offset),
             value.clone(),
         );
         assert_eq!(
             latest_with_range
-                .get_latest_value(start + offset_minus_1 + 2)
+                .get_latest_value(start + offset + 1)
                 .unwrap(),
             value
         );
         assert_eq!(
-            latest_with_range
-                .get_latest_value(start + offset_minus_1 + 1)
-                .unwrap(),
+            latest_with_range.get_latest_value(start + offset).unwrap(),
             value
         );
         assert!(latest_with_range
-            .get_latest_value(start + offset_minus_1)
+            .get_latest_value(start + offset - 1)
             .is_err());
 
         // Test Previous with non-empty version_range
-        let previous = create_previous(OffsetBasedVersionRange::new_with_offset_minus_1(500));
-        assert!(previous
-            .get_latest_value(start + offset_minus_1 + 1)
-            .is_err());
+        let previous = create_previous(OffsetBasedVersionRange::new_with_offset(500));
+        assert!(previous.get_latest_value(start + offset).is_err());
     }
 
     #[test]
@@ -239,28 +235,22 @@ mod tests {
         let start = 1000;
 
         // Test Latest
-        let only_end_offset_minus_1 = u32::MAX as u64 + 1;
+        let only_end_offset = u32::MAX as u64 + 1;
         let latest = create_latest(
             start,
-            OffsetBasedVersionRange::OnlyEnd(only_end_offset_minus_1),
+            OffsetBasedVersionRange::OnlyEnd(only_end_offset),
             None,
         );
         assert_eq!(
-            latest
-                .last_le(start + only_end_offset_minus_1 + 2, LATEST)
-                .unwrap(),
-            Some(start + only_end_offset_minus_1 + 1)
+            latest.last_le(start + only_end_offset + 1, LATEST).unwrap(),
+            Some(start + only_end_offset)
         );
         assert_eq!(
-            latest
-                .last_le(start + only_end_offset_minus_1 + 1, LATEST)
-                .unwrap(),
-            Some(start + only_end_offset_minus_1 + 1)
+            latest.last_le(start + only_end_offset, LATEST).unwrap(),
+            Some(start + only_end_offset)
         );
         assert_eq!(
-            latest
-                .last_le(start + only_end_offset_minus_1, LATEST)
-                .unwrap(),
+            latest.last_le(start + only_end_offset - 1, LATEST).unwrap(),
             Some(start)
         );
         assert_eq!(latest.last_le(start, LATEST).unwrap(), Some(start));
@@ -273,7 +263,7 @@ mod tests {
         let max_u32_entry_as_u64 = max_u32_entry as u64;
         let u32_vec = OffsetBasedVersionRange::U32Vector(vec![50, 100, max_u32_entry]);
         let previous = create_previous(u32_vec);
-        let version_specifier = start + max_u32_entry_as_u64 + 1;
+        let version_specifier = start + max_u32_entry_as_u64;
         assert!(previous
             .last_le(version_specifier + 1, version_specifier)
             .is_err());
@@ -287,7 +277,7 @@ mod tests {
             previous
                 .last_le(version_specifier - 1, version_specifier)
                 .unwrap(),
-            Some(start + 100 + 1)
+            Some(start + 100)
         );
         assert_eq!(
             previous.last_le(start, version_specifier).unwrap(),
@@ -297,7 +287,9 @@ mod tests {
             previous.last_le(start - 1, version_specifier).unwrap(),
             None
         );
-        assert!(previous.last_le(start + 1, max_u32_entry_as_u64).is_err());
+        assert!(previous
+            .last_le(start + 1, max_u32_entry_as_u64 - 1)
+            .is_err());
         assert!(previous.last_le(start, LATEST).is_err());
     }
 
@@ -309,12 +301,12 @@ mod tests {
         let bitmap = create_bitmap_with_bits(&[0, 7, 8, 15]);
         let latest = create_latest(start, OffsetBasedVersionRange::Bitmap(bitmap), None);
         assert_eq!(
-            latest.collect_versions_le(start + 17, LATEST).unwrap(),
-            vec![start, start + 1, start + 8, start + 9, start + 16]
+            latest.collect_versions_le(start + 16, LATEST).unwrap(),
+            vec![start, start + 7, start + 8, start + 15]
         );
         assert_eq!(
-            latest.collect_versions_le(start + 16, LATEST).unwrap(),
-            vec![start, start + 1, start + 8, start + 9, start + 16]
+            latest.collect_versions_le(start + 15, LATEST).unwrap(),
+            vec![start, start + 7, start + 8, start + 15]
         );
         assert_eq!(
             latest.collect_versions_le(start, LATEST).unwrap(),
@@ -332,7 +324,7 @@ mod tests {
         let max_u16_entry_as_u64 = max_u16_entry as u64;
         let u16_vec = OffsetBasedVersionRange::U16Vector(vec![50, 100, max_u16_entry]);
         let previous = create_previous(u16_vec);
-        let version_specifier = start + max_u16_entry_as_u64 + 1;
+        let version_specifier = start + max_u16_entry_as_u64;
         assert!(previous
             .collect_versions_le(version_specifier + 1, version_specifier)
             .is_err());
@@ -340,13 +332,13 @@ mod tests {
             previous
                 .collect_versions_le(version_specifier, version_specifier)
                 .unwrap(),
-            vec![start, start + 50 + 1, start + 100 + 1, version_specifier]
+            vec![start, start + 50, start + 100, version_specifier]
         );
         assert_eq!(
             previous
                 .collect_versions_le(version_specifier - 1, version_specifier)
                 .unwrap(),
-            vec![start, start + 50 + 1, start + 100 + 1]
+            vec![start, start + 50, start + 100]
         );
         assert_eq!(
             previous
@@ -361,7 +353,7 @@ mod tests {
             vec![]
         );
         assert!(previous
-            .collect_versions_le(start + 1, max_u16_entry_as_u64)
+            .collect_versions_le(start + 1, max_u16_entry_as_u64 - 1)
             .is_err());
         assert!(previous.collect_versions_le(start, LATEST).is_err());
     }
