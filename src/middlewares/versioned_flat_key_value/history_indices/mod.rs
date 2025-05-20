@@ -38,11 +38,15 @@ const_assert!(VERSION_RANGE_BYTES == 64 || VERSION_RANGE_BYTES == 128);
 ///        Guaranteed non-empty to ensure valid version ranges (end > start).
 #[derive(Clone, Debug)]
 pub enum HistoryIndices<V: Clone> {
-    /// Active record tracking ongoing modifications. Contains:
-    /// - Starting version number for this record
-    /// - Range encoding structure (may be empty)
-    /// - Current value (None indicates deletion)
-    Latest((HistoryNumber, OffsetBasedVersionRange, Option<V>)),
+    /// Active record tracking ongoing modifications.
+    Latest {
+        /// Starting version number for this record
+        start_version_number: HistoryNumber,
+        /// Range encoding structure (may be empty)
+        range_encoding: OffsetBasedVersionRange,
+        /// Current value (None indicates deletion)
+        latest_value: Option<V>,
+    },
 
     /// Immutable historical record. Contains:
     /// - Non-empty range encoding ensuring valid version ranges
@@ -53,9 +57,18 @@ pub enum HistoryIndices<V: Clone> {
 impl PartialEq for HistoryIndices<Box<[u8]>> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Latest((sn1, or1, v1)), Self::Latest((sn2, or2, v2))) => {
-                sn1 == sn2 && or1 == or2 && v1 == v2
-            }
+            (
+                Self::Latest {
+                    start_version_number: sn1,
+                    range_encoding: or1,
+                    latest_value: v1,
+                },
+                Self::Latest {
+                    start_version_number: sn2,
+                    range_encoding: or2,
+                    latest_value: v2,
+                },
+            ) => sn1 == sn2 && or1 == or2 && v1 == v2,
             (Self::Previous(or1), Self::Previous(or2)) => or1 == or2,
             _ => false,
         }
@@ -67,7 +80,11 @@ impl<V: Clone> HistoryIndices<V> {
     /// Returns the latest_value corresponding to the latest version, otherwise returns Error.
     pub fn get_latest_value(&self, version_number: HistoryNumber) -> Result<Option<V>> {
         match self {
-            HistoryIndices::Latest((start_version_number, range_encoding, latest_value)) => {
+            HistoryIndices::Latest {
+                start_version_number,
+                range_encoding,
+                latest_value,
+            } => {
                 let latest_version_number = start_version_number + range_encoding.max_offset();
                 if latest_version_number > version_number {
                     Err(StorageError::CorruptedHistoryIndices)
@@ -142,24 +159,28 @@ impl<V: Clone> HistoryIndices<V> {
         version_specifier: HistoryNumber,
     ) -> Result<(HistoryNumber, &OffsetBasedVersionRange)> {
         match self {
-            HistoryIndices::Latest((start, range, _)) => {
+            HistoryIndices::Latest {
+                start_version_number,
+                range_encoding,
+                ..
+            } => {
                 if version_specifier != LATEST {
                     return Err(StorageError::CorruptedHistoryIndices);
                 }
-                Ok((*start, range))
+                Ok((*start_version_number, range_encoding))
             }
-            HistoryIndices::Previous(range) => {
+            HistoryIndices::Previous(range_encoding) => {
                 if version_specifier == LATEST {
                     return Err(StorageError::CorruptedHistoryIndices);
                 }
 
-                let max_offset = range.max_offset();
+                let max_offset = range_encoding.max_offset();
                 if version_specifier < max_offset {
                     return Err(StorageError::CorruptedHistoryIndices);
                 }
-                let start = version_specifier - max_offset;
+                let start_version_number = version_specifier - max_offset;
 
-                Ok((start, range))
+                Ok((start_version_number, range_encoding))
             }
         }
     }
@@ -171,15 +192,19 @@ mod tests {
     use crate::middlewares::HistoryNumber;
 
     fn create_latest(
-        start: HistoryNumber,
-        range: OffsetBasedVersionRange,
-        value: Option<Vec<u8>>,
+        start_version_number: HistoryNumber,
+        range_encoding: OffsetBasedVersionRange,
+        latest_value: Option<Vec<u8>>,
     ) -> HistoryIndices<Vec<u8>> {
-        HistoryIndices::Latest((start, range, value))
+        HistoryIndices::Latest {
+            start_version_number,
+            range_encoding,
+            latest_value,
+        }
     }
 
-    fn create_previous(range: OffsetBasedVersionRange) -> HistoryIndices<Vec<u8>> {
-        HistoryIndices::Previous(range)
+    fn create_previous(range_encoding: OffsetBasedVersionRange) -> HistoryIndices<Vec<u8>> {
+        HistoryIndices::Previous(range_encoding)
     }
 
     // Test helper to create a Bitmap with specific bits set
