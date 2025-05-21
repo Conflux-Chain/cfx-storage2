@@ -1,3 +1,6 @@
+mod bitmap;
+pub use bitmap::Bitmap;
+
 use super::VERSION_RANGE_BYTES;
 use crate::middlewares::HistoryNumber;
 
@@ -33,7 +36,7 @@ pub enum OffsetBasedVersionRange {
     OnlyEnd(u64),
     U32Vector(Vec<u32>),
     U16Vector(Vec<u16>),
-    Bitmap([u8; VERSION_RANGE_BYTES]),
+    Bitmap(Bitmap),
 }
 
 /// Maximum allowed number of u32 entries in an `OffsetBasedVersionRange::U32Vector`
@@ -43,7 +46,8 @@ pub const U32_VECTOR_CAPACITY: usize = VERSION_RANGE_BYTES / 4;
 pub const U16_VECTOR_CAPACITY: usize = VERSION_RANGE_BYTES / 2;
 
 /// Maximum offset value that can be represented in an `OffsetBasedVersionRange::Bitmap`
-pub const BITMAP_MAX_INDEX: u64 = VERSION_RANGE_BYTES as u64 * 8 - 1;
+#[cfg(test)]
+pub use bitmap::BITMAP_MAX_INDEX;
 
 impl OffsetBasedVersionRange {
     /// Creates an empty `OffsetBasedVersionRange` containing only the implicit `start_version_number`.
@@ -77,16 +81,7 @@ impl OffsetBasedVersionRange {
             OffsetBasedVersionRange::OnlyEnd(offset) => *offset,
             OffsetBasedVersionRange::U32Vector(vec) => vec.last().copied().unwrap_or(0) as u64,
             OffsetBasedVersionRange::U16Vector(vec) => vec.last().copied().unwrap_or(0) as u64,
-            OffsetBasedVersionRange::Bitmap(bitmap) => {
-                for (byte_idx, &byte) in bitmap.iter().enumerate().rev() {
-                    if byte != 0 {
-                        // then byte.leading_zeros() <= 7
-                        let bit_pos = 7 - byte.leading_zeros() as u64;
-                        return byte_idx as u64 * 8 + bit_pos;
-                    }
-                }
-                unreachable!("Bitmap invariants violated: no bits set (bit 0 must be 1)");
-            }
+            OffsetBasedVersionRange::Bitmap(bitmap) => bitmap.max_bit(),
         }
     }
 
@@ -126,31 +121,7 @@ impl OffsetBasedVersionRange {
             }
 
             OffsetBasedVersionRange::Bitmap(bitmap) => {
-                let max_bit = offset.min(BITMAP_MAX_INDEX);
-                let max_byte = (max_bit / 8) as usize;
-                let max_bit_in_byte = (max_bit % 8) as u8;
-
-                for byte_idx in (0..=max_byte).rev() {
-                    let byte = bitmap[byte_idx];
-
-                    // Generate a mask to handle truncation of the last byte
-                    let mask = if byte_idx == max_byte {
-                        0xFFu8 >> (8 - (max_bit_in_byte + 1))
-                    } else {
-                        0xFF
-                    };
-
-                    let masked_byte = byte & mask;
-
-                    if masked_byte != 0 {
-                        // then masked_byte.leading_zeros() <= 7
-                        let bit_pos = 7 - masked_byte.leading_zeros() as u64;
-                        let i = byte_idx as u64 * 8 + bit_pos;
-                        return Some(start_version_number + i);
-                    }
-                }
-
-                unreachable!("Bitmap invariants violated: no bits set (bit 0 must be 1)");
+                Some(start_version_number + bitmap.last_le(offset))
             }
         }
     }
@@ -178,49 +149,28 @@ impl OffsetBasedVersionRange {
                 OffsetBasedVersionRange::U32Vector(vec) => {
                     versions.push(start_version_number);
 
-                    handle_vec_for_collect_le(vec, start_version_number, upper_bound, &mut versions)
+                    handle_vec_for_collect_le(
+                        vec,
+                        start_version_number,
+                        upper_bound,
+                        &mut versions,
+                    );
                 }
 
                 OffsetBasedVersionRange::U16Vector(vec) => {
                     versions.push(start_version_number);
 
-                    handle_vec_for_collect_le(vec, start_version_number, upper_bound, &mut versions)
+                    handle_vec_for_collect_le(
+                        vec,
+                        start_version_number,
+                        upper_bound,
+                        &mut versions,
+                    );
                 }
 
                 OffsetBasedVersionRange::Bitmap(bitmap) => {
-                    for (byte_idx, &byte) in bitmap.iter().enumerate() {
-                        let start_byte_version = start_version_number + byte_idx as u64 * 8;
-                        let end_byte_version = start_byte_version + 7;
-
-                        // Pre-filter: Skip bytes that are entirely above the upper bound
-                        if start_byte_version > upper_bound {
-                            break;
-                        }
-
-                        // Completely within range: Add all set bits directly
-                        if end_byte_version <= upper_bound {
-                            let mut mut_byte = byte;
-                            while mut_byte != 0 {
-                                let index = mut_byte.trailing_zeros();
-                                versions.push(start_byte_version + index as u64);
-                                mut_byte &= mut_byte - 1;
-                            }
-                            continue;
-                        }
-
-                        // Partially within range: Check each bit individually
-                        let mut mut_byte = byte;
-                        while mut_byte != 0 {
-                            let index = mut_byte.trailing_zeros();
-                            let v = start_byte_version + index as u64;
-                            if v <= upper_bound {
-                                versions.push(v);
-                            } else {
-                                break;
-                            }
-                            mut_byte &= mut_byte - 1;
-                        }
-                    }
+                    let offsets = bitmap.collect_le(upper_bound - start_version_number);
+                    versions.extend(offsets.into_iter().map(|x| start_version_number + x));
                 }
             }
         }
@@ -286,8 +236,6 @@ mod tests {
     use itertools::Itertools;
     use rand_distr::num_traits::Bounded;
 
-    use crate::middlewares::versioned_flat_key_value::history_indices::tests::create_bitmap_with_bits;
-
     use super::*;
 
     #[test]
@@ -335,20 +283,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Bitmap invariants violated: no bits set (bit 0 must be 1)")]
-    fn test_max_offset_panic() {
-        let invalid_bitmap = OffsetBasedVersionRange::Bitmap(create_bitmap_with_bits(&[]));
-        let max_offset = invalid_bitmap.max_offset();
-    }
-
-    #[test]
-    #[should_panic(expected = "Bitmap invariants violated: no bits set (bit 0 must be 1)")]
-    fn test_last_le_panic() {
-        let invalid_bitmap = OffsetBasedVersionRange::Bitmap(create_bitmap_with_bits(&[50, 100]));
-        let last = invalid_bitmap.last_le(1000, 1049);
-    }
-
-    #[test]
     fn test_max_offset() {
         // Test OnlyEnd
         let only_end = OffsetBasedVersionRange::OnlyEnd(100);
@@ -368,24 +302,27 @@ mod tests {
 
         // Test Bitmap with various bit configurations
         for bit_index in 0..=BITMAP_MAX_INDEX {
-            let bitmap = create_bitmap_with_bits(&[0, bit_index]);
+            let bitmap = Bitmap::new_from_vec(&[0, bit_index]);
             let range = OffsetBasedVersionRange::Bitmap(bitmap);
             assert_eq!(
                 range.max_offset(),
-                bit_index,
+                bit_index as u64,
                 "Failed for bit index {}",
                 bit_index
             );
         }
 
-        let bitmap_mid = create_bitmap_with_bits(&[0, 50, 100]);
-        let bitmap_mid_range = OffsetBasedVersionRange::Bitmap(bitmap_mid);
-        assert_eq!(bitmap_mid_range.max_offset(), 100);
+        let bitmap = Bitmap::new_from_vec(&[0, 50, 100]);
+        let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap);
+        assert_eq!(bitmap_range.max_offset(), 100);
 
-        // test invalid case
-        let bitmap_mid = create_bitmap_with_bits(&[50, 100]);
-        let bitmap_mid_range = OffsetBasedVersionRange::Bitmap(bitmap_mid);
-        assert_eq!(bitmap_mid_range.max_offset(), 100);
+        let bitmap = Bitmap::new_from_vec(&[50, 100]);
+        let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap);
+        assert_eq!(bitmap_range.max_offset(), 100);
+
+        let bitmap = Bitmap::new_from_vec(&[]);
+        let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap);
+        assert_eq!(bitmap_range.max_offset(), 0);
     }
 
     #[derive(Debug, Clone)]
@@ -556,14 +493,9 @@ mod tests {
         }
     }
 
-    fn bitmap_cases(vec: Vec<u64>, start: u64) -> VersionRangeTestCase {
-        assert!(!vec.is_empty());
-        assert_eq!(vec[0], 0);
-        assert!(vec[1..].iter().all(|element| *element > 0));
-        assert!(vec.windows(2).all(|window| window[0] < window[1]));
-        assert!(vec.iter().all(|element| *element <= BITMAP_MAX_INDEX));
-
-        let bitmap = create_bitmap_with_bits(&vec);
+    fn bitmap_cases(input_vec: Vec<u16>, start: u64) -> VersionRangeTestCase {
+        let bitmap = Bitmap::new_from_vec(&input_vec);
+        let vec = bitmap.to_vec();
 
         let mut targets = vec![start - 1];
 
@@ -578,9 +510,9 @@ mod tests {
             };
             let versions: Vec<_> = vec[..end_idx_excluded]
                 .iter()
-                .map(|offset| start + offset)
+                .map(|offset| start + *offset as u64)
                 .collect();
-            targets.push(start + target_offset);
+            targets.push(start + target_offset as u64);
             last_le.push(versions.last().cloned());
             collect_le.push(versions);
         }
@@ -617,7 +549,7 @@ mod tests {
         test_common(vec_cases(vec, start));
     }
 
-    fn test_bitmap(vec: Vec<u64>, start: u64) {
+    fn test_bitmap(vec: Vec<u16>, start: u64) {
         test_common(bitmap_cases(vec, start));
     }
 
@@ -679,32 +611,32 @@ mod tests {
             start,
         );
         test_vec(vec![1u16, 100, 10000], start);
-        test_vec(vec![2, BITMAP_MAX_INDEX as u16 + 1], start);
+        test_vec(vec![2, BITMAP_MAX_INDEX + 1], start);
         test_vec(
-            ((BITMAP_MAX_INDEX - U16_VECTOR_CAPACITY as u64 + 1) as u16..=BITMAP_MAX_INDEX as u16)
-                .collect_vec(),
+            ((BITMAP_MAX_INDEX - U16_VECTOR_CAPACITY as u16 + 1)..=BITMAP_MAX_INDEX).collect_vec(),
             start,
         );
         //   cases to check robustness
         test_vec(
-            ((BITMAP_MAX_INDEX - U16_VECTOR_CAPACITY as u64) as u16..=BITMAP_MAX_INDEX as u16)
-                .collect_vec(),
+            ((BITMAP_MAX_INDEX - U16_VECTOR_CAPACITY as u16)..=BITMAP_MAX_INDEX).collect_vec(),
             start,
         );
 
-        // Test
+        // Test Bitmap
         //   valid cases
-        let mut bitmap_vec = vec![0];
-        bitmap_vec.extend((BITMAP_MAX_INDEX - U16_VECTOR_CAPACITY as u64)..=BITMAP_MAX_INDEX);
-        test_bitmap(bitmap_vec, start);
-        test_bitmap((0..=U16_VECTOR_CAPACITY as u64 + 1).collect_vec(), start);
+        test_bitmap(
+            ((BITMAP_MAX_INDEX - U16_VECTOR_CAPACITY as u16)..=BITMAP_MAX_INDEX).collect_vec(),
+            start,
+        );
+        test_bitmap((0..=U16_VECTOR_CAPACITY as u16 + 1).collect_vec(), start);
         test_bitmap((0..=BITMAP_MAX_INDEX).collect(), start);
         test_bitmap((0..=BITMAP_MAX_INDEX / 2).map(|x| x * 2).collect(), start);
         test_bitmap((0..=BITMAP_MAX_INDEX / 3).map(|x| x * 3).collect(), start);
         //   cases to check robustness
-        let mut bitmap_vec = vec![0];
-        bitmap_vec.extend((BITMAP_MAX_INDEX - U16_VECTOR_CAPACITY as u64 + 1)..=BITMAP_MAX_INDEX);
-        test_bitmap(bitmap_vec, start);
+        test_bitmap(
+            ((BITMAP_MAX_INDEX - U16_VECTOR_CAPACITY as u16 + 1)..=BITMAP_MAX_INDEX).collect_vec(),
+            start,
+        );
         test_bitmap(vec![0, 7, 8, 15], start);
     }
 }

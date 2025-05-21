@@ -188,6 +188,8 @@ impl<V: Clone> HistoryIndices<V> {
 
 #[cfg(test)]
 mod tests {
+    use tests::version_range::Bitmap;
+
     use super::*;
     use crate::middlewares::HistoryNumber;
 
@@ -205,17 +207,6 @@ mod tests {
 
     fn create_previous(range_encoding: OffsetBasedVersionRange) -> HistoryIndices<Vec<u8>> {
         HistoryIndices::Previous(range_encoding)
-    }
-
-    // Test helper to create a Bitmap with specific bits set
-    pub fn create_bitmap_with_bits(bits: &[u64]) -> [u8; VERSION_RANGE_BYTES] {
-        let mut bitmap = [0u8; VERSION_RANGE_BYTES];
-        for &bit in bits {
-            let byte_idx = (bit / 8) as usize;
-            let bit_pos = bit % 8;
-            bitmap[byte_idx] |= 1 << bit_pos;
-        }
-        bitmap
     }
 
     #[test]
@@ -323,7 +314,7 @@ mod tests {
         let start = 1000;
 
         // Test Latest
-        let bitmap = create_bitmap_with_bits(&[0, 7, 8, 15]);
+        let bitmap = Bitmap::new_from_vec(&[0, 7, 8, 15]);
         let latest = create_latest(start, OffsetBasedVersionRange::Bitmap(bitmap), None);
         assert_eq!(
             latest.collect_versions_le(start + 16, LATEST).unwrap(),
