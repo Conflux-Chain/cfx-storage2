@@ -1,5 +1,7 @@
 mod bitmap;
 pub use bitmap::Bitmap;
+mod error;
+pub use error::PushError;
 
 use super::VERSION_RANGE_BYTES;
 use crate::middlewares::HistoryNumber;
@@ -179,11 +181,64 @@ impl OffsetBasedVersionRange {
 }
 
 impl OffsetBasedVersionRange {
+    /// This function will return an error if `self` does not satisfy the constraints of [`OffsetBasedVersionRange`].
+    fn validate(&self) -> Result<(), PushError> {
+        match self {
+            OffsetBasedVersionRange::OnlyEnd(existing_offset) => {
+                if *existing_offset <= u32::MAX as u64 {
+                    return Err(PushError::InvalidState);
+                }
+            }
+            OffsetBasedVersionRange::U32Vector(vec) => {
+                if vec.is_empty() {
+                    return Err(PushError::InvalidState);
+                }
+                if *vec.first().unwrap() == 0 {
+                    return Err(PushError::InvalidState);
+                }
+                if vec.windows(2).any(|window| window[0] >= window[1]) {
+                    return Err(PushError::InvalidState);
+                }
+                if vec.len() > U32_VECTOR_CAPACITY {
+                    return Err(PushError::InvalidState);
+                }
+
+                let last_offset = *vec.last().unwrap();
+                if last_offset <= u16::MAX as u32 {
+                    return Err(PushError::InvalidState);
+                }
+            }
+            OffsetBasedVersionRange::U16Vector(vec) => {
+                if let Some(first_offset) = vec.first() {
+                    if *first_offset == 0 {
+                        return Err(PushError::InvalidState);
+                    }
+                }
+
+                if vec.windows(2).any(|window| window[0] >= window[1]) {
+                    return Err(PushError::InvalidState);
+                }
+                if vec.len() > U16_VECTOR_CAPACITY {
+                    return Err(PushError::InvalidState);
+                }
+            }
+            OffsetBasedVersionRange::Bitmap(bits) => {
+                if bits.count_ones() <= U16_VECTOR_CAPACITY {
+                    return Err(PushError::InvalidState);
+                }
+
+                return bits.validate();
+            }
+        }
+
+        Ok(())
+    }
+
     /// Attempts to push a new offset into the range.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// This function will panic if either:
+    /// This function will return an error if either:
     /// - `self` does not initially satisfy the constraints of [`OffsetBasedVersionRange`], or
     /// - `offset` is not larger than all existing offsets in the range.
     ///
@@ -195,40 +250,32 @@ impl OffsetBasedVersionRange {
     /// - If appending `offset` would violate the constraints:
     ///   - Leaves `self` unchanged.
     ///   - Returns `false`.
-    pub fn try_push(&mut self, offset: HistoryNumber) -> bool {
+    pub fn try_push(&mut self, offset: HistoryNumber) -> Result<bool, PushError> {
+        // check whether `self` initially satisfies the constraints of [`OffsetBasedVersionRange`]
+        self.validate()?;
+
+        // check whether `offset` is larger than all existing offsets in the range
+        if offset <= self.max_offset() {
+            return Err(PushError::OffsetNotLarger);
+        }
+
         match self {
             OffsetBasedVersionRange::OnlyEnd(existing_offset) => {
                 // Can't push to OnlyEnd; must split
-                false
+                Ok(false)
             }
             OffsetBasedVersionRange::U32Vector(vec) => {
-                assert!(*vec.first().unwrap() > 0);
-                let last_offset = *vec.last().unwrap();
-                assert!((last_offset as u64) < offset);
-                assert!(last_offset > (u16::MAX as u32));
-                assert!(vec.len() <= U32_VECTOR_CAPACITY);
-                assert!(vec.windows(2).all(|window| window[0] < window[1]));
-
-                if (offset > u32::MAX as u64) || (vec.len() + 1 > U32_VECTOR_CAPACITY) {
-                    false
-                } else {
+                if (offset <= u32::MAX as u64) && (vec.len() < U32_VECTOR_CAPACITY) {
                     vec.push(offset as u32);
-                    true
+                    Ok(true)
+                } else {
+                    Ok(false)
                 }
             }
             OffsetBasedVersionRange::U16Vector(vec) => {
-                if let Some(first_offset) = vec.first() {
-                    assert!(*first_offset > 0);
-                }
-                if let Some(last_offset) = vec.last() {
-                    assert!((*last_offset as u64) < offset);
-                }
-                assert!(vec.len() <= U16_VECTOR_CAPACITY);
-                assert!(vec.windows(2).all(|window| window[0] < window[1]));
-
                 if offset > u16::MAX as u64 {
                     if (offset > u32::MAX as u64) || (vec.len() + 1 > U32_VECTOR_CAPACITY) {
-                        return false;
+                        return Ok(false);
                     } else {
                         let old_vec = std::mem::take(vec);
                         let new_vec: Vec<u32> = old_vec
@@ -237,30 +284,27 @@ impl OffsetBasedVersionRange {
                             .chain(std::iter::once(offset as u32))
                             .collect();
                         *self = OffsetBasedVersionRange::U32Vector(new_vec);
-                        return true;
+                        return Ok(true);
                     }
                 }
 
                 if vec.len() + 1 > U16_VECTOR_CAPACITY {
                     if offset > BITMAP_MAX_INDEX as u64 {
-                        false
+                        Ok(false)
                     } else {
                         let mut old_vec = std::mem::take(vec);
                         old_vec.push(offset as u16);
                         let bitmap = Bitmap::new_from_vec(&old_vec);
                         *self = OffsetBasedVersionRange::Bitmap(bitmap);
-                        true
+                        Ok(true)
                     }
                 } else {
                     assert!(offset <= u16::MAX as u64);
                     vec.push(offset as u16);
-                    true
+                    Ok(true)
                 }
             }
-            OffsetBasedVersionRange::Bitmap(bits) => {
-                assert!(bits.count_ones() > U16_VECTOR_CAPACITY);
-                bits.try_push(offset)
-            }
+            OffsetBasedVersionRange::Bitmap(bits) => Ok(bits.set_unchecked(offset)),
         }
     }
 }
