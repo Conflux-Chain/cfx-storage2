@@ -220,6 +220,19 @@ mod tests {
         );
     }
 
+    fn test_count_ones_method(input: &[u16]) {
+        let bitmap = Bitmap::new_from_vec(input);
+        let vec_from_bitmap = bitmap.to_vec();
+        let num_bits = bitmap.count_ones();
+        let vec_len = vec_from_bitmap.len();
+
+        assert_eq!(
+            num_bits, vec_len,
+            "num_bits ({}) != vec_len ({}) for input {:?}",
+            num_bits, vec_len, input
+        );
+    }
+
     #[derive(Debug, Clone)]
     struct BitmapTestCase {
         bitmap: Bitmap,
@@ -279,6 +292,8 @@ mod tests {
 
     fn test_bitmap_method(vec: Vec<u16>) {
         test_max_bit_method(&vec);
+
+        test_count_ones_method(&vec);
 
         let BitmapTestCase {
             bitmap,
