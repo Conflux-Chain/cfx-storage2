@@ -130,6 +130,41 @@ impl Bitmap {
 
         indices
     }
+
+    pub fn count_ones(&self) -> usize {
+        self.data
+            .iter()
+            .map(|&byte| byte.count_ones() as usize)
+            .sum()
+    }
+
+    /// Attempts to push a new index that is larger than all existing indices into the bitmap.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if `offset` is not larger than all existing offsets in the range.
+    ///
+    /// # Behavior
+    ///
+    /// - If the new index does not exceed the maximum allowed index ([`BITMAP_MAX_INDEX`]):
+    ///   - Modifies `self` to include the new index.
+    ///   - Returns `true`.
+    /// - If the new index exceeds the maximum allowed index:
+    ///   - Leaves `self` unchanged.
+    ///   - Returns `false`.
+    pub fn try_push(&mut self, index: u64) -> bool {
+        assert!(index > self.max_bit());
+
+        if index > (BITMAP_MAX_INDEX as u64) {
+            return false;
+        }
+
+        let idx = index as usize;
+        let byte = idx / 8;
+        let bit = idx % 8;
+        self.data[byte] |= 1 << bit;
+        true
+    }
 }
 
 #[cfg(test)]
