@@ -769,4 +769,129 @@ mod tests {
         );
         test_bitmap(vec![0, 7, 8, 15], start);
     }
+
+    mod validate_tests {
+        use super::*;
+
+        #[test]
+        fn test_only_end_valid() {
+            let valid_offset = u32::MAX as u64 + 1;
+            let range = OffsetBasedVersionRange::OnlyEnd(valid_offset);
+            assert!(range.validate().is_ok());
+        }
+
+        #[test]
+        fn test_only_end_invalid() {
+            let invalid_offset = u32::MAX as u64;
+            let range = OffsetBasedVersionRange::OnlyEnd(invalid_offset);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_u32_vector_empty() {
+            let range = OffsetBasedVersionRange::U32Vector(vec![]);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_u32_vector_first_zero() {
+            let range = OffsetBasedVersionRange::U32Vector(vec![0, 1, u32::MAX]);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_u32_vector_non_increasing() {
+            let range = OffsetBasedVersionRange::U32Vector(vec![1, 1, 2, u32::MAX]);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_u32_vector_exceeds_capacity() {
+            let mut vec = (1..=(U32_VECTOR_CAPACITY as u32 + 1)).collect::<Vec<_>>();
+            vec[U32_VECTOR_CAPACITY] = u32::MAX;
+            let range = OffsetBasedVersionRange::U32Vector(vec);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_u32_vector_last_too_small() {
+            let mut vec = (1..=U32_VECTOR_CAPACITY as u32).collect::<Vec<_>>();
+            vec[U32_VECTOR_CAPACITY - 1] = u16::MAX as u32;
+            let range = OffsetBasedVersionRange::U32Vector(vec);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_u32_vector_valid() {
+            let mut vec = (1..=U32_VECTOR_CAPACITY as u32).collect::<Vec<_>>();
+            vec[U32_VECTOR_CAPACITY - 1] = u16::MAX as u32 + 1;
+            let range = OffsetBasedVersionRange::U32Vector(vec);
+            assert!(range.validate().is_ok());
+        }
+
+        #[test]
+        fn test_u32_vector_valid_max() {
+            let mut vec = (1..=U32_VECTOR_CAPACITY as u32).collect::<Vec<_>>();
+            vec[U32_VECTOR_CAPACITY - 1] = u32::MAX;
+            let range = OffsetBasedVersionRange::U32Vector(vec);
+            assert!(range.validate().is_ok());
+        }
+
+        #[test]
+        fn test_u16_vector_empty() {
+            let range = OffsetBasedVersionRange::U16Vector(vec![]);
+            assert!(range.validate().is_ok());
+        }
+
+        #[test]
+        fn test_u16_vector_first_zero() {
+            let range = OffsetBasedVersionRange::U16Vector(vec![0, 1, 2]);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_u16_vector_non_increasing() {
+            let range = OffsetBasedVersionRange::U16Vector(vec![1, 2, 2]);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_u16_vector_exceeds_capacity() {
+            let vec = (1..=U16_VECTOR_CAPACITY as u16 + 1).collect::<Vec<_>>();
+            let range = OffsetBasedVersionRange::U16Vector(vec);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_u16_vector_valid() {
+            let mut vec = (1..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            vec[U16_VECTOR_CAPACITY - 1] = u16::MAX;
+            let range = OffsetBasedVersionRange::U16Vector(vec);
+            assert!(range.validate().is_ok());
+        }
+
+        #[test]
+        fn test_bitmap_insufficient_bits() {
+            let vec = (0..U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let bitmap = Bitmap::new_from_vec(&vec);
+            let range = OffsetBasedVersionRange::Bitmap(bitmap);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_bitmap_valid_bits_invalid_validate() {
+            let vec = (0..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let bitmap = Bitmap::new_invalid_from_vec(&vec);
+            let range = OffsetBasedVersionRange::Bitmap(bitmap);
+            assert_eq!(range.validate(), Err(PushError::InvalidState));
+        }
+
+        #[test]
+        fn test_bitmap_valid() {
+            let vec = (0..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let bitmap = Bitmap::new_from_vec(&vec);
+            let range = OffsetBasedVersionRange::Bitmap(bitmap);
+            assert!(range.validate().is_ok());
+        }
+    }
 }

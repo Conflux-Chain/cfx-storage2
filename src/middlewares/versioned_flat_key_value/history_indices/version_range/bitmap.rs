@@ -27,6 +27,23 @@ impl Bitmap {
         Bitmap { data: bitmap }
     }
 
+    #[cfg(test)]
+    /// - Will panic if element in vec > BITMAP_MAX_INDEX.
+    /// - Invalid: the bit at index 0 will not be set regardless of whether there is 0 in vec or not.
+    pub fn new_invalid_from_vec(vec: &[u16]) -> Self {
+        let mut bitmap = [0u8; VERSION_RANGE_BYTES];
+
+        for &bit in vec {
+            if bit > 0 {
+                let byte_idx = (bit / 8) as usize;
+                let bit_pos = bit % 8;
+                bitmap[byte_idx] |= 1 << bit_pos;
+            }
+        }
+
+        Bitmap { data: bitmap }
+    }
+
     /// Collects the indices of all set bits in increasing order.
     #[cfg(test)]
     pub fn to_vec(&self) -> Vec<u16> {
@@ -243,20 +260,7 @@ mod tests {
         bitmap.validate().unwrap();
 
         // invalid case
-        let vec = bitmap.to_vec();
-        let mut data_without_0 = [0u8; VERSION_RANGE_BYTES];
-
-        for bit in vec {
-            if bit != 0 {
-                let byte_idx = (bit / 8) as usize;
-                let bit_pos = bit % 8;
-                data_without_0[byte_idx] |= 1 << bit_pos;
-            }
-        }
-
-        let bitmap_without_0 = Bitmap {
-            data: data_without_0,
-        };
+        let bitmap_without_0 = Bitmap::new_invalid_from_vec(input);
         bitmap_without_0.validate().unwrap_err();
     }
 
@@ -271,7 +275,7 @@ mod tests {
             let should_success = offset <= BITMAP_MAX_INDEX as u64;
             assert_eq!(
                 success, should_success,
-                "try_push() failed: success ({}) != should_success ({}) for input {:?}",
+                "set_unchecked() failed: success ({}) != should_success ({}) for input {:?}",
                 success, should_success, input
             );
 
@@ -285,7 +289,7 @@ mod tests {
 
                 assert_eq!(
                     vec_after_push, expected_vec_after_push,
-                    "try_push() failed: vec_after_push ({:?}) != expected_vec_after_push ({:?}) for input {:?}",
+                    "set_unchecked() failed: vec_after_push ({:?}) != expected_vec_after_push ({:?}) for input {:?}",
                     vec_after_push, expected_vec_after_push, input
                 );
             }
