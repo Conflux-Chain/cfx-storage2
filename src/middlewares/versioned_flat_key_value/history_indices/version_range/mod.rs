@@ -246,36 +246,46 @@ impl OffsetBasedVersionRange {
     ///
     /// - If appending `offset` maintains the constraints of [`OffsetBasedVersionRange`]:
     ///   - Modifies `self` to include the new offset.
-    ///   - Returns `true`.
+    ///   - Returns `Ok(None)`.
     /// - If appending `offset` would violate the constraints:
     ///   - Leaves `self` unchanged.
-    ///   - Returns `false`.
-    pub fn try_push(&mut self, offset: HistoryNumber) -> Result<bool, PushError> {
+    ///   - Returns `Ok(Some(new_range))` containing a single-offset range of `offset`.
+    pub fn try_push_or_new(
+        &mut self,
+        offset: HistoryNumber,
+    ) -> Result<Option<OffsetBasedVersionRange>, PushError> {
         // check whether `self` initially satisfies the constraints of [`OffsetBasedVersionRange`]
         self.validate()?;
 
         // check whether `offset` is larger than all existing offsets in the range
-        if offset <= self.max_offset() {
+        let max_offset = self.max_offset();
+        if offset <= max_offset {
             return Err(PushError::OffsetNotLarger);
         }
+
+        // delayed calculation of the new_range, which will be used when appending `offset` would violate the constraints
+        let new_range = || {
+            let new_offset = offset - max_offset;
+            OffsetBasedVersionRange::new_with_offset(new_offset)
+        };
 
         match self {
             OffsetBasedVersionRange::OnlyEnd(existing_offset) => {
                 // Can't push to OnlyEnd; must split
-                Ok(false)
+                Ok(Some(new_range()))
             }
             OffsetBasedVersionRange::U32Vector(vec) => {
                 if (offset <= u32::MAX as u64) && (vec.len() < U32_VECTOR_CAPACITY) {
                     vec.push(offset as u32);
-                    Ok(true)
+                    Ok(None)
                 } else {
-                    Ok(false)
+                    Ok(Some(new_range()))
                 }
             }
             OffsetBasedVersionRange::U16Vector(vec) => {
                 if offset > u16::MAX as u64 {
                     if (offset > u32::MAX as u64) || (vec.len() + 1 > U32_VECTOR_CAPACITY) {
-                        return Ok(false);
+                        return Ok(Some(new_range()));
                     } else {
                         let old_vec = std::mem::take(vec);
                         let new_vec: Vec<u32> = old_vec
@@ -284,27 +294,33 @@ impl OffsetBasedVersionRange {
                             .chain(std::iter::once(offset as u32))
                             .collect();
                         *self = OffsetBasedVersionRange::U32Vector(new_vec);
-                        return Ok(true);
+                        return Ok(None);
                     }
                 }
 
                 if vec.len() + 1 > U16_VECTOR_CAPACITY {
                     if offset > BITMAP_MAX_INDEX as u64 {
-                        Ok(false)
+                        Ok(Some(new_range()))
                     } else {
                         let mut old_vec = std::mem::take(vec);
                         old_vec.push(offset as u16);
                         let bitmap = Bitmap::new_from_vec(&old_vec);
                         *self = OffsetBasedVersionRange::Bitmap(bitmap);
-                        Ok(true)
+                        Ok(None)
                     }
                 } else {
                     assert!(offset <= u16::MAX as u64);
                     vec.push(offset as u16);
-                    Ok(true)
+                    Ok(None)
                 }
             }
-            OffsetBasedVersionRange::Bitmap(bits) => Ok(bits.set_unchecked(offset)),
+            OffsetBasedVersionRange::Bitmap(bits) => {
+                if bits.set_unchecked(offset) {
+                    Ok(None)
+                } else {
+                    Ok(Some(new_range()))
+                }
+            }
         }
     }
 }
