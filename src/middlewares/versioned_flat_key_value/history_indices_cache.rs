@@ -134,11 +134,36 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
             OneRange::Two(vec) => {
                 let max_offset = 1 << 16;
                 if offset_minus_1 >= max_offset {
-                    return false;
+                    if (offset_minus_1 >= (1 << 32)) || (vec.len() >= ONE_RANGE_BYTES / 4) {
+                        return false;
+                    } else {
+                        let old_vec = std::mem::take(vec);
+                        let new_vec: Vec<u32> = old_vec
+                            .into_iter()
+                            .map(|x| x as u32)
+                            .chain(std::iter::once(offset_minus_1 as u32))
+                            .collect();
+                        *range = OneRange::Four(new_vec);
+                        return true;
+                    }
                 }
                 let new_count = vec.len() + 1;
                 if new_count > ONE_RANGE_BYTES / 2 {
-                    false
+                    if offset_minus_1 >= ONE_RANGE_BYTES as u64 * 8 {
+                        false
+                    } else {
+                        let mut old_vec = std::mem::take(vec);
+                        old_vec.push(offset_minus_1 as u16);
+
+                        let mut bitmap = [0u8; ONE_RANGE_BYTES];
+                        for bit in old_vec {
+                            let byte_idx = (bit / 8) as usize;
+                            let bit_pos = bit % 8;
+                            bitmap[byte_idx] |= 1 << bit_pos;
+                        }
+                        *range = OneRange::Bitmap(bitmap);
+                        true
+                    }
                 } else {
                     vec.push(offset_minus_1 as u16);
                     true
