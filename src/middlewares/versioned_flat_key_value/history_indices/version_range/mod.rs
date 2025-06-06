@@ -910,4 +910,221 @@ mod tests {
             assert!(range.validate().is_ok());
         }
     }
+
+    mod push_tests {
+        use std::cmp::max;
+
+        use super::*;
+
+        fn push_large_offset(range: &mut OffsetBasedVersionRange) {
+            let max_offset = range.max_offset();
+            let new_offset = max(max_offset + 1, u32::MAX as u64 + 1);
+
+            let backup_range = range.clone();
+            let new_range = range.try_push_or_new(new_offset).unwrap().unwrap();
+
+            assert_eq!(*range, backup_range);
+            assert_eq!(
+                new_range,
+                OffsetBasedVersionRange::new_with_offset(new_offset - max_offset)
+            );
+            new_range.validate().unwrap();
+        }
+
+        fn push_equal_offset(range: &mut OffsetBasedVersionRange) {
+            let max_offset = range.max_offset();
+            let backup_range = range.clone();
+            range.try_push_or_new(max_offset).unwrap_err();
+            assert_eq!(*range, backup_range);
+        }
+
+        #[test]
+        fn test_push_large_offset_or_equal_offset() {
+            // OnlyEnd
+            let max_offset = u32::MAX as u64 + 1;
+            let mut range = OffsetBasedVersionRange::OnlyEnd(max_offset);
+            push_equal_offset(&mut range);
+            push_large_offset(&mut range);
+
+            // U32Vector
+            let mut vec = (1..U32_VECTOR_CAPACITY as u32).collect::<Vec<_>>();
+            let max_offset = u16::MAX as u32 + 1;
+            if let Some(last) = vec.last_mut() {
+                *last = max_offset;
+            }
+            let mut range = OffsetBasedVersionRange::U32Vector(vec);
+            push_equal_offset(&mut range);
+            push_large_offset(&mut range);
+
+            // U16Vector
+            let vec = (1..U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let mut range = OffsetBasedVersionRange::U16Vector(vec);
+            push_equal_offset(&mut range);
+            push_large_offset(&mut range);
+
+            // Bitmap
+            let vec = (0..BITMAP_MAX_INDEX).collect::<Vec<_>>();
+            let bitmap = Bitmap::new_from_vec(&vec);
+            let mut range = OffsetBasedVersionRange::Bitmap(bitmap);
+            push_equal_offset(&mut range);
+            push_large_offset(&mut range);
+        }
+
+        #[test]
+        fn test_u32_vector_push() {
+            let mut vec = (1..U32_VECTOR_CAPACITY as u32).collect::<Vec<_>>();
+            let max_offset = u16::MAX as u32 + 1;
+            if let Some(last) = vec.last_mut() {
+                *last = max_offset;
+            }
+            let mut range = OffsetBasedVersionRange::U32Vector(vec.clone());
+            let new_offset = u32::MAX;
+            let new_range = range.try_push_or_new(new_offset as u64).unwrap();
+
+            vec.push(new_offset);
+            assert_eq!(range, OffsetBasedVersionRange::U32Vector(vec));
+            assert!(new_range.is_none());
+            range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_u32_vector_full() {
+            let mut vec = (1..=U32_VECTOR_CAPACITY as u32).collect::<Vec<_>>();
+            let max_offset = u16::MAX as u32 + 1;
+            if let Some(last) = vec.last_mut() {
+                *last = max_offset;
+            }
+            let mut range = OffsetBasedVersionRange::U32Vector(vec.clone());
+            let new_offset = u32::MAX;
+            let new_range = range.try_push_or_new(new_offset as u64).unwrap().unwrap();
+
+            assert_eq!(range, OffsetBasedVersionRange::U32Vector(vec));
+            assert_eq!(
+                new_range,
+                OffsetBasedVersionRange::new_with_offset(new_offset as u64 - max_offset as u64)
+            );
+            new_range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_u16_vector_push() {
+            let mut vec = (1..U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let mut range = OffsetBasedVersionRange::U16Vector(vec.clone());
+            let new_offset = u16::MAX;
+            let new_range = range.try_push_or_new(new_offset as u64).unwrap();
+
+            vec.push(new_offset);
+            assert_eq!(range, OffsetBasedVersionRange::U16Vector(vec));
+            assert!(new_range.is_none());
+            range.validate().unwrap();
+        }
+
+        fn u16_vector_cannot_upgrade_to_u32(min_not_max: bool) {
+            let vec = (1..=U32_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let mut range = OffsetBasedVersionRange::U16Vector(vec.clone());
+            let new_offset = if min_not_max {
+                u16::MAX as u64 + 1
+            } else {
+                u32::MAX as u64
+            };
+            let new_range = range.try_push_or_new(new_offset).unwrap().unwrap();
+
+            assert_eq!(range, OffsetBasedVersionRange::U16Vector(vec.clone()));
+            assert_eq!(
+                new_range,
+                OffsetBasedVersionRange::new_with_offset(new_offset - *vec.last().unwrap() as u64)
+            );
+            new_range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_u16_vector_cannot_upgrade_to_u32() {
+            u16_vector_cannot_upgrade_to_u32(true);
+            u16_vector_cannot_upgrade_to_u32(false);
+        }
+
+        fn u16_vector_upgrade_to_u32(min_not_max: bool) {
+            let vec = (1..U32_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let mut range = OffsetBasedVersionRange::U16Vector(vec.clone());
+            let new_offset = if min_not_max {
+                u16::MAX as u64 + 1
+            } else {
+                u32::MAX as u64
+            };
+            let new_range = range.try_push_or_new(new_offset).unwrap();
+
+            let mut vec_u32: Vec<_> = vec.into_iter().map(|x| x as u32).collect();
+            vec_u32.push(new_offset as u32);
+            assert_eq!(range, OffsetBasedVersionRange::U32Vector(vec_u32));
+            assert!(new_range.is_none());
+            range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_u16_vector_upgrade_to_u32() {
+            u16_vector_upgrade_to_u32(true);
+            u16_vector_upgrade_to_u32(false);
+        }
+
+        #[test]
+        fn test_u16_vector_cannot_upgrade_to_bitmap() {
+            let vec = (1..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let mut range = OffsetBasedVersionRange::U16Vector(vec.clone());
+            let new_offset = BITMAP_MAX_INDEX + 1;
+            let new_range = range.try_push_or_new(new_offset as u64).unwrap().unwrap();
+
+            assert_eq!(range, OffsetBasedVersionRange::U16Vector(vec.clone()));
+            assert_eq!(
+                new_range,
+                OffsetBasedVersionRange::U16Vector(vec![new_offset - vec.last().unwrap()])
+            );
+            new_range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_u16_vector_upgrade_to_bitmap() {
+            let mut vec = (1..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let mut range = OffsetBasedVersionRange::U16Vector(vec.clone());
+            let new_offset = BITMAP_MAX_INDEX;
+            let new_range = range.try_push_or_new(new_offset as u64).unwrap();
+
+            vec.push(new_offset);
+            let bitmap = Bitmap::new_from_vec(&vec);
+            assert_eq!(range, OffsetBasedVersionRange::Bitmap(bitmap));
+            assert!(new_range.is_none());
+            range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_bitmap_push() {
+            let mut vec = (0..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let bitmap = Bitmap::new_from_vec(&vec);
+            let mut range = OffsetBasedVersionRange::Bitmap(bitmap);
+            let new_range = range.try_push_or_new(BITMAP_MAX_INDEX as u64).unwrap();
+
+            vec.push(BITMAP_MAX_INDEX);
+            assert_eq!(
+                range,
+                OffsetBasedVersionRange::Bitmap(Bitmap::new_from_vec(&vec))
+            );
+            assert!(new_range.is_none());
+            range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_bitmap_cannot_push() {
+            let vec = (0..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
+            let bitmap = Bitmap::new_from_vec(&vec);
+            let mut range = OffsetBasedVersionRange::Bitmap(bitmap.clone());
+            let new_offset = BITMAP_MAX_INDEX as u64 + 1;
+            let new_range = range.try_push_or_new(new_offset).unwrap().unwrap();
+
+            assert_eq!(range, OffsetBasedVersionRange::Bitmap(bitmap));
+            assert_eq!(
+                new_range,
+                OffsetBasedVersionRange::new_with_offset(new_offset - *vec.last().unwrap() as u64)
+            );
+            new_range.validate().unwrap();
+        }
+    }
 }
