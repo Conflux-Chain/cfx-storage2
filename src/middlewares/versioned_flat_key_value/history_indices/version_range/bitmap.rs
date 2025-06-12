@@ -203,6 +203,9 @@ mod tests {
     use super::super::{BITMAP_MAX_INDEX, U16_VECTOR_CAPACITY, VERSION_RANGE_BYTES};
     use super::*;
 
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+
     #[test]
     fn test_new_from_vec_empty() {
         let bitmap = Bitmap::new_from_vec(&[]);
@@ -399,5 +402,30 @@ mod tests {
         test_bitmap_method(
             ((BITMAP_MAX_INDEX - U16_VECTOR_CAPACITY as u16 + 1)..=BITMAP_MAX_INDEX).collect(),
         );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+        #[test]
+        fn test_bitmap_robust(data in vec(0u16..=BITMAP_MAX_INDEX, 0..BITMAP_MAX_INDEX as usize * 2)) {
+            test_bitmap_method(data);
+        }
+
+        #[test]
+        fn test_bitmap_valid(existing in vec(0u8..=1, BITMAP_MAX_INDEX as usize)) {
+            let mut data = vec![0u16];
+            for (i, i_existing) in existing.iter().enumerate() {
+                if *i_existing == 1 {
+                    data.push(i as u16 + 1);
+                }
+            }
+
+            test_bitmap_method(data.clone());
+
+            let bitmap = Bitmap::new_from_vec(&data);
+            let vec_from_bitmap = bitmap.to_vec();
+            prop_assert_eq!(data, vec_from_bitmap);
+        }
     }
 }
