@@ -446,3 +446,150 @@ mod tests {
         assert!(previous.collect_versions_le(start, LATEST).is_err());
     }
 }
+
+#[cfg(test)]
+pub mod test_utils {
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+
+    use crate::middlewares::{
+        versioned_flat_key_value::history_indices::U32_VECTOR_CAPACITY, HistoryNumber,
+    };
+
+    use super::{
+        version_range::{Bitmap, BITMAP_MAX_INDEX},
+        HistoryIndices, OffsetBasedVersionRange, U16_VECTOR_CAPACITY,
+    };
+
+    pub fn only_end_strategy() -> impl Strategy<Value = u64> {
+        (u32::MAX as u64 + 1)..u64::MAX
+    }
+
+    fn remove_elements<T: Clone>(elems: &mut Vec<T>, num_elems_to_remove: usize) {
+        let skip_interval = elems.len() / num_elems_to_remove;
+        let mut indices_to_keep = Vec::new();
+
+        for i in 0..elems.len() {
+            if i % (skip_interval + 1) != 0
+                || indices_to_keep.len() >= elems.len() - num_elems_to_remove
+            {
+                indices_to_keep.push(i);
+            }
+        }
+
+        let new_elems: Vec<_> = indices_to_keep.iter().map(|&i| elems[i].clone()).collect();
+        *elems = new_elems;
+    }
+
+    pub fn u32_vec_strategy() -> impl Strategy<Value = Vec<u32>> {
+        let max_offset_lower_exclude = u16::MAX as u32;
+        let max_offset_upper = u32::MAX;
+
+        let prefer_large = any::<bool>();
+
+        let small_elements = vec(1..=max_offset_lower_exclude, 0..U32_VECTOR_CAPACITY);
+
+        let larget_elements = vec(
+            max_offset_lower_exclude..max_offset_upper,
+            1..=U32_VECTOR_CAPACITY,
+        );
+
+        (prefer_large, small_elements, larget_elements).prop_map(
+            |(prefer_large_elem, mut small_elems, mut large_elems)| {
+                small_elems.sort_unstable();
+                small_elems.dedup();
+
+                large_elems.sort_unstable();
+                large_elems.dedup();
+
+                assert!(small_elems.len() < U32_VECTOR_CAPACITY);
+                assert!(large_elems.len() <= U32_VECTOR_CAPACITY);
+
+                let total_len = small_elems.len() + large_elems.len();
+                if total_len > U32_VECTOR_CAPACITY {
+                    let num_elems_to_remove = total_len - U32_VECTOR_CAPACITY;
+                    assert!(num_elems_to_remove <= small_elems.len());
+                    assert!(num_elems_to_remove < large_elems.len());
+                    if prefer_large_elem {
+                        remove_elements(&mut small_elems, num_elems_to_remove);
+                    } else {
+                        remove_elements(&mut large_elems, num_elems_to_remove);
+                    }
+                }
+
+                let mut result = small_elems;
+                result.extend(large_elems);
+
+                assert!(result.len() <= U32_VECTOR_CAPACITY);
+
+                result
+            },
+        )
+    }
+
+    pub fn u16_vec_strategy() -> impl Strategy<Value = Vec<u16>> {
+        vec(1..=u16::MAX, 0..=U16_VECTOR_CAPACITY)
+    }
+
+    pub fn u16_vec_non_empty_strategy() -> impl Strategy<Value = Vec<u16>> {
+        vec(1..=u16::MAX, 1..=U16_VECTOR_CAPACITY)
+    }
+
+    pub fn get_bitmap_from_binary(existing: &[u8]) -> Bitmap {
+        let mut data = vec![0u16];
+        for (i, i_existing) in existing.iter().enumerate() {
+            if *i_existing == 1 {
+                data.push(i as u16 + 1);
+            }
+        }
+
+        Bitmap::new_from_vec(&data)
+    }
+
+    pub fn bitmap_strategy() -> impl Strategy<Value = Bitmap> {
+        let binary = vec(0u8..=1, BITMAP_MAX_INDEX as usize);
+        binary.prop_filter("the number of non-zero offsets in OffsetBasedVersionRange::Bitmap should be larger than U16_VECTOR_CAPACITY", |existing| {existing.iter().map(|&x| x as u16).sum::<u16>() as usize > U16_VECTOR_CAPACITY}).prop_map(|existing| get_bitmap_from_binary(&existing))
+    }
+
+    pub fn range_strategy() -> impl Strategy<Value = OffsetBasedVersionRange> {
+        prop_oneof![
+            only_end_strategy().prop_map(OffsetBasedVersionRange::OnlyEnd),
+            u32_vec_strategy().prop_map(OffsetBasedVersionRange::U32Vector),
+            u16_vec_strategy().prop_map(OffsetBasedVersionRange::U16Vector),
+            bitmap_strategy().prop_map(OffsetBasedVersionRange::Bitmap),
+        ]
+    }
+
+    pub fn range_non_empty_strategy() -> impl Strategy<Value = OffsetBasedVersionRange> {
+        prop_oneof![
+            only_end_strategy().prop_map(OffsetBasedVersionRange::OnlyEnd),
+            u32_vec_strategy().prop_map(OffsetBasedVersionRange::U32Vector),
+            u16_vec_non_empty_strategy().prop_map(OffsetBasedVersionRange::U16Vector),
+            bitmap_strategy().prop_map(OffsetBasedVersionRange::Bitmap),
+        ]
+    }
+
+    pub fn start_number_strategy() -> impl Strategy<Value = HistoryNumber> {
+        0u64..(u64::MAX - 1)
+    }
+
+    pub fn value_strategy() -> impl Strategy<Value = Option<Box<[u8]>>> {
+        prop_oneof![
+            vec(0u8..=255, 0..128).prop_map(|x| Some(x.into_boxed_slice())),
+            Just(None),
+        ]
+    }
+
+    pub fn history_indices_strategy() -> impl Strategy<Value = HistoryIndices<Box<[u8]>>> {
+        prop_oneof![
+            (start_number_strategy(), range_strategy(), value_strategy()).prop_map(
+                |(start_version_number, range_encoding, latest_value)| HistoryIndices::Latest {
+                    start_version_number,
+                    range_encoding,
+                    latest_value
+                }
+            ),
+            range_non_empty_strategy().prop_map(HistoryIndices::Previous)
+        ]
+    }
+}
