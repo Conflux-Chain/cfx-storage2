@@ -466,18 +466,43 @@ pub mod test_utils {
     }
 
     fn remove_elements<T: Clone>(elems: &mut Vec<T>, num_elems_to_remove: usize) {
-        let skip_interval = elems.len() / num_elems_to_remove;
-        let mut indices_to_keep = Vec::new();
+        assert!(elems.len() >= num_elems_to_remove);
 
-        for i in 0..elems.len() {
-            if i % (skip_interval + 1) != 0
-                || indices_to_keep.len() >= elems.len() - num_elems_to_remove
-            {
-                indices_to_keep.push(i);
+        let num_before_remove = elems.len();
+        let num_after_remove = num_before_remove - num_elems_to_remove;
+
+        if num_after_remove == 0 {
+            elems.clear();
+            return;
+        }
+
+        // Safety for `num_before_remove - 1`:
+        //     Since assert!(elems.len() >= num_elems_to_remove);
+        //     and num_after_remove > 0 from here
+        //     elems.len() > 0; i.e., num_before_remove > 0
+
+        let mut retain_indices = Vec::with_capacity(num_after_remove);
+
+        if num_after_remove == 1 {
+            retain_indices.push((num_before_remove - 1) / 2);
+        } else {
+            for i in 0..num_after_remove {
+                let pos =
+                    (i as f64) * ((num_before_remove - 1) as f64) / ((num_after_remove - 1) as f64);
+                retain_indices.push(pos.round() as usize);
             }
         }
 
-        let new_elems: Vec<_> = indices_to_keep.iter().map(|&i| elems[i].clone()).collect();
+        assert!(retain_indices
+            .iter()
+            .all(|element| *element < num_before_remove));
+        assert!(retain_indices
+            .windows(2)
+            .all(|window| window[0] < window[1]));
+        assert_eq!(retain_indices.len(), num_after_remove);
+
+        let new_elems: Vec<_> = retain_indices.iter().map(|&i| elems[i].clone()).collect();
+
         *elems = new_elems;
     }
 
@@ -515,6 +540,7 @@ pub mod test_utils {
                     } else {
                         remove_elements(&mut large_elems, num_elems_to_remove);
                     }
+                    assert_eq!(small_elems.len() + large_elems.len(), U32_VECTOR_CAPACITY);
                 }
 
                 let mut result = small_elems;
@@ -535,20 +561,41 @@ pub mod test_utils {
         vec(1..=u16::MAX, 1..=U16_VECTOR_CAPACITY)
     }
 
-    pub fn get_bitmap_from_binary(existing: &[u8]) -> Bitmap {
+    pub fn get_bitmap_vec_from_binary(existing: &[u8]) -> Vec<u16> {
         let mut data = vec![0u16];
         for (i, i_existing) in existing.iter().enumerate() {
             if *i_existing == 1 {
                 data.push(i as u16 + 1);
             }
         }
+        data
+    }
 
+    pub fn get_bitmap_from_binary(existing: &[u8]) -> Bitmap {
+        let data = get_bitmap_vec_from_binary(existing);
         Bitmap::new_from_vec(&data)
+    }
+
+    pub fn bitmap_vec_strategy() -> impl Strategy<Value = Vec<u16>> {
+        let binary = vec(0u8..=1, BITMAP_MAX_INDEX as usize);
+        binary
+            .prop_filter(
+                "the number of non-zero offsets in OffsetBasedVersionRange::Bitmap should be larger than U16_VECTOR_CAPACITY", 
+                |existing| {
+                        existing.iter().map(|&x| x as u16).sum::<u16>() as usize > U16_VECTOR_CAPACITY
+                    })
+            .prop_map(|existing| get_bitmap_vec_from_binary(&existing))
     }
 
     pub fn bitmap_strategy() -> impl Strategy<Value = Bitmap> {
         let binary = vec(0u8..=1, BITMAP_MAX_INDEX as usize);
-        binary.prop_filter("the number of non-zero offsets in OffsetBasedVersionRange::Bitmap should be larger than U16_VECTOR_CAPACITY", |existing| {existing.iter().map(|&x| x as u16).sum::<u16>() as usize > U16_VECTOR_CAPACITY}).prop_map(|existing| get_bitmap_from_binary(&existing))
+        binary
+            .prop_filter(
+                "the number of non-zero offsets in OffsetBasedVersionRange::Bitmap should be larger than U16_VECTOR_CAPACITY", 
+                |existing| {
+                        existing.iter().map(|&x| x as u16).sum::<u16>() as usize > U16_VECTOR_CAPACITY
+                    })
+            .prop_map(|existing| get_bitmap_from_binary(&existing))
     }
 
     pub fn range_strategy() -> impl Strategy<Value = OffsetBasedVersionRange> {
@@ -571,6 +618,10 @@ pub mod test_utils {
 
     pub fn start_number_strategy() -> impl Strategy<Value = HistoryNumber> {
         0u64..(u64::MAX - 1)
+    }
+
+    pub fn only_end_and_start_strategy() -> impl Strategy<Value = (u64, HistoryNumber)> {
+        (only_end_strategy(), start_number_strategy()).prop_filter("version number should not exceed u64", |offset, start| {offset + start <= u64::MAX})
     }
 
     pub fn value_strategy() -> impl Strategy<Value = Option<Box<[u8]>>> {

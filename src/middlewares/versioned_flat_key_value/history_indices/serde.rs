@@ -335,7 +335,11 @@ fn decode_vector(
 mod tests {
     use std::fmt::Debug;
 
+    use crate::middlewares::versioned_flat_key_value::history_indices::test_utils::history_indices_strategy;
+
     use super::*;
+
+    use proptest::prelude::*;
 
     fn generate_version_ranges() -> Vec<OffsetBasedVersionRange> {
         let mut ranges = Vec::new();
@@ -380,32 +384,13 @@ mod tests {
         ]
     }
 
-    fn previous_roundtrip_method<
+    fn test_roundtrip_method<
         V: Clone + Encode + Decode + ToOwned<Owned = V> + PartialEq + Debug,
     >(
-        range: OffsetBasedVersionRange,
+        original: HistoryIndices<V>,
     ) {
-        let original = HistoryIndices::<V>::Previous(range);
         let encoded = original.encode();
         let decoded = HistoryIndices::decode(&encoded).unwrap();
-
-        assert_eq!(decoded.into_owned(), original);
-    }
-
-    fn latest_roundtrip_method<
-        V: Clone + Encode + Decode + ToOwned<Owned = V> + PartialEq + Debug,
-    >(
-        range: OffsetBasedVersionRange,
-        start_version_number: u64,
-        latest_value: Option<V>,
-    ) {
-        let original = HistoryIndices::<V>::Latest {
-            start_version_number,
-            range_encoding: range,
-            latest_value,
-        };
-        let encoded = original.encode();
-        let decoded = HistoryIndices::<V>::decode(&encoded).unwrap();
 
         assert_eq!(decoded.into_owned(), original);
     }
@@ -416,7 +401,8 @@ mod tests {
             OffsetBasedVersionRange::U16Vector(vec) => !vec.is_empty(),
             _ => true,
         }) {
-            previous_roundtrip_method::<Box<[u8]>>(range);
+            let original = HistoryIndices::<Box<[u8]>>::Previous(range);
+            test_roundtrip_method::<Box<[u8]>>(original);
         }
     }
 
@@ -424,8 +410,25 @@ mod tests {
     fn test_latest_roundtrip() {
         for range in generate_version_ranges() {
             for v in generate_test_values() {
-                latest_roundtrip_method::<Box<[u8]>>(range.clone(), u64::MAX, v);
+                let original = HistoryIndices::<Box<[u8]>>::Latest {
+                    start_version_number: u64::MAX,
+                    range_encoding: range.clone(),
+                    latest_value: v,
+                };
+                test_roundtrip_method::<Box<[u8]>>(original);
             }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+        #[test]
+        fn test_serde(original in history_indices_strategy()) {
+            let encoded = original.encode();
+            let decoded = HistoryIndices::<Box<[u8]>>::decode(&encoded).unwrap();
+
+            assert_eq!(decoded.into_owned(), original);
         }
     }
 
