@@ -383,8 +383,8 @@ mod tests {
     use rand_distr::num_traits::Bounded;
 
     use crate::middlewares::versioned_flat_key_value::history_indices::test_utils::{
-        bitmap_vec_strategy, only_end_strategy, start_number_strategy, u16_vec_strategy,
-        u32_vec_strategy,
+        bitmap_vec_and_start_strategy, only_end_and_start_strategy, u16_vec_and_start_strategy,
+        u32_vec_and_start_strategy,
     };
 
     use super::*;
@@ -797,22 +797,22 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(10_000))]
 
         #[test]
-        fn proptest_only_end(offset in only_end_strategy(), start in start_number_strategy()) {
+        fn proptest_only_end((offset, start) in only_end_and_start_strategy()) {
             test_only_end(offset, start);
         }
 
         #[test]
-        fn proptest_u32_vector(vec in u32_vec_strategy(), start in start_number_strategy()) {
+        fn proptest_u32_vector((vec, start) in u32_vec_and_start_strategy()) {
             test_vec::<u32>(vec, start);
         }
 
         #[test]
-        fn proptest_u16_vector(vec in u16_vec_strategy(), start in start_number_strategy()) {
+        fn proptest_u16_vector((vec, start) in u16_vec_and_start_strategy()) {
             test_vec::<u16>(vec, start);
         }
 
         #[test]
-        fn proptest_bitmap(vec in bitmap_vec_strategy(), start in start_number_strategy()) {
+        fn proptest_bitmap((vec, start) in bitmap_vec_and_start_strategy()) {
             test_bitmap(vec, start);
         }
     }

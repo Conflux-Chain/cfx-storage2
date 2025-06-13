@@ -515,7 +515,7 @@ pub mod test_utils {
         let small_elements = vec(1..=max_offset_lower_exclude, 0..U32_VECTOR_CAPACITY);
 
         let larget_elements = vec(
-            max_offset_lower_exclude..max_offset_upper,
+            max_offset_lower_exclude..=max_offset_upper,
             1..=U32_VECTOR_CAPACITY,
         );
 
@@ -554,7 +554,11 @@ pub mod test_utils {
     }
 
     pub fn u16_vec_strategy() -> impl Strategy<Value = Vec<u16>> {
-        vec(1..=u16::MAX, 0..=U16_VECTOR_CAPACITY)
+        vec(1..=u16::MAX, 0..=U16_VECTOR_CAPACITY).prop_map(|mut vec| {
+            vec.sort_unstable();
+            vec.dedup();
+            vec
+        })
     }
 
     pub fn u16_vec_non_empty_strategy() -> impl Strategy<Value = Vec<u16>> {
@@ -616,12 +620,9 @@ pub mod test_utils {
         ]
     }
 
-    pub fn start_number_strategy() -> impl Strategy<Value = HistoryNumber> {
-        0u64..(u64::MAX - 1)
-    }
-
-    pub fn only_end_and_start_strategy() -> impl Strategy<Value = (u64, HistoryNumber)> {
-        (only_end_strategy(), start_number_strategy()).prop_filter("version number should not exceed u64", |offset, start| {offset + start <= u64::MAX})
+    pub fn start_number_strategy(upper: Option<u64>) -> impl Strategy<Value = HistoryNumber> {
+        let max_start = upper.unwrap_or(u64::MAX - 1);
+        0u64..=max_start
     }
 
     pub fn value_strategy() -> impl Strategy<Value = Option<Box<[u8]>>> {
@@ -631,15 +632,59 @@ pub mod test_utils {
         ]
     }
 
+    pub fn only_end_and_start_strategy() -> impl Strategy<Value = (u64, HistoryNumber)> {
+        only_end_strategy().prop_flat_map(|offset| {
+            assert!(offset < u64::MAX);
+            let upper = u64::MAX - 1 - offset;
+            let start_strategy = start_number_strategy(Some(upper));
+            (Just(offset), start_strategy)
+        })
+    }
+
+    pub fn u32_vec_and_start_strategy() -> impl Strategy<Value = (Vec<u32>, HistoryNumber)> {
+        u32_vec_strategy().prop_flat_map(|u32_vec| {
+            let max_offset = u32_vec.last().unwrap_or(&0);
+            let upper = u64::MAX - 1 - *max_offset as u64;
+            let start_strategy = start_number_strategy(Some(upper));
+            (Just(u32_vec), start_strategy)
+        })
+    }
+
+    pub fn u16_vec_and_start_strategy() -> impl Strategy<Value = (Vec<u16>, HistoryNumber)> {
+        u16_vec_strategy().prop_flat_map(|u16_vec| {
+            let max_offset = u16_vec.last().unwrap_or(&0);
+            let upper = u64::MAX - 1 - *max_offset as u64;
+            let start_strategy = start_number_strategy(Some(upper));
+            (Just(u16_vec), start_strategy)
+        })
+    }
+
+    pub fn bitmap_vec_and_start_strategy() -> impl Strategy<Value = (Vec<u16>, HistoryNumber)> {
+        bitmap_vec_strategy().prop_flat_map(|bitmap_vec| {
+            let max_offset = bitmap_vec.last().unwrap_or(&0);
+            let upper = u64::MAX - 1 - *max_offset as u64;
+            let start_strategy = start_number_strategy(Some(upper));
+            (Just(bitmap_vec), start_strategy)
+        })
+    }
+
     pub fn history_indices_strategy() -> impl Strategy<Value = HistoryIndices<Box<[u8]>>> {
         prop_oneof![
-            (start_number_strategy(), range_strategy(), value_strategy()).prop_map(
-                |(start_version_number, range_encoding, latest_value)| HistoryIndices::Latest {
-                    start_version_number,
-                    range_encoding,
-                    latest_value
-                }
-            ),
+            range_strategy()
+                .prop_flat_map(|range_encoding| {
+                    let max_offset = range_encoding.max_offset();
+                    assert!(max_offset < u64::MAX);
+                    let upper = u64::MAX - 1 - max_offset;
+                    let start_strategy = start_number_strategy(Some(upper));
+                    (start_strategy, Just(range_encoding), value_strategy())
+                })
+                .prop_map(|(start_version_number, range_encoding, latest_value)| {
+                    HistoryIndices::Latest {
+                        start_version_number,
+                        range_encoding,
+                        latest_value,
+                    }
+                }),
             range_non_empty_strategy().prop_map(HistoryIndices::Previous)
         ]
     }
