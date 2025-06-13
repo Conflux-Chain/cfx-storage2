@@ -562,7 +562,11 @@ pub mod test_utils {
     }
 
     pub fn u16_vec_non_empty_strategy() -> impl Strategy<Value = Vec<u16>> {
-        vec(1..=u16::MAX, 1..=U16_VECTOR_CAPACITY)
+        vec(1..=u16::MAX, 1..=U16_VECTOR_CAPACITY).prop_map(|mut vec| {
+            vec.sort_unstable();
+            vec.dedup();
+            vec
+        })
     }
 
     pub fn get_bitmap_vec_from_binary(existing: &[u8]) -> Vec<u16> {
@@ -600,6 +604,45 @@ pub mod test_utils {
                         existing.iter().map(|&x| x as u16).sum::<u16>() as usize > U16_VECTOR_CAPACITY
                     })
             .prop_map(|existing| get_bitmap_from_binary(&existing))
+    }
+
+    pub fn version_number_sequences_strategy() -> impl Strategy<Value = Vec<u64>> {
+        let start = prop_oneof![
+            start_number_strategy(None),
+            start_number_strategy(Some(0)),
+            start_number_strategy(Some(100)),
+            start_number_strategy(Some(10000)),
+        ];
+
+        start.prop_flat_map(|initial_current| {
+            vec(0u8..4, 1..=100)
+                .prop_flat_map(|control_seq| {
+                    control_seq
+                        .into_iter()
+                        .map(|seg_type| match seg_type {
+                            0 => vec(1u64..5, 0..100).boxed(),
+                            1 => vec(1u64..100, 0..100).boxed(),
+                            2 => vec(1u64..10000, 0..100).boxed(),
+                            3 => vec(Just(1u64), 0..100).boxed(),
+                            _ => unreachable!(),
+                        })
+                        .collect::<Vec<_>>()
+                        .prop_map(|segments| segments.into_iter().flatten().collect::<Vec<u64>>())
+                })
+                .prop_map(move |deltas| {
+                    let mut current = initial_current;
+                    let mut result = vec![current];
+                    for delta in deltas {
+                        if let Some(next) = current.checked_add(delta) {
+                            current = next;
+                            result.push(current);
+                        } else {
+                            break;
+                        }
+                    }
+                    result
+                })
+        })
     }
 
     pub fn range_strategy() -> impl Strategy<Value = OffsetBasedVersionRange> {

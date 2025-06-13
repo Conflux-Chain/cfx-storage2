@@ -945,7 +945,32 @@ mod tests {
     mod push_tests {
         use std::cmp::max;
 
+        use crate::middlewares::versioned_flat_key_value::history_indices::test_utils::version_number_sequences_strategy;
+
         use super::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(1_000))]
+            
+            #[test]
+            fn proptest_push(version_seqs in version_number_sequences_strategy()) {
+                let mut range = OffsetBasedVersionRange::new();
+                if version_seqs.len() > 1 {
+                    let mut start = version_seqs[0];
+                    for version in version_seqs[1..].into_iter() {
+                        let range_backup = range.clone();
+                        let maybe_new_range = range.try_push_or_new(version - start).unwrap();
+                        if let Some(new_range) = maybe_new_range {
+                            assert_eq!(range, range_backup);
+                            start += range.max_offset();
+                            range = new_range;
+                        }
+                        
+                        range.validate().unwrap();
+                    }
+                }
+            }
+        }
 
         fn push_large_offset(range: &mut OffsetBasedVersionRange) {
             let max_offset = range.max_offset();
