@@ -161,9 +161,9 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             types::SLOT_SIZE,
         };
 
-        let amt_node_view = self.get_amt_node_store().get_versioned_store(&commit)?;
-        let slot_alloc_view = self.get_slot_alloc_store().get_versioned_store(&commit)?;
-        let key_value_view = self.get_key_value_store().get_versioned_store(&commit)?;
+        let amt_node_view = self.get_amt_node_store().get_versioned_store(&commit, true)?;
+        let slot_alloc_view = self.get_slot_alloc_store().get_versioned_store(&commit, true)?;
+        let key_value_view = self.get_key_value_store().get_versioned_store(&commit, true)?;
 
         // For each Amt tree (except the children of the root Amt),
         // the leaf node with the same AmtId in its parent Amt tree must be fully allocated.

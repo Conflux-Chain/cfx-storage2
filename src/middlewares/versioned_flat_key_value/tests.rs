@@ -50,9 +50,8 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
                     return Err(StorageError::ConsistencyCheckFailure);
                 };
 
-            let mut history_number = parent_history_number;
             let min_history_number = height_to_history_number(0);
-            while history_number >= min_history_number {
+            for history_number in min_history_number..=parent_history_number {
                 let commit_id =
                     if let Some(commit_id) = self.history_number_table.get(&history_number)? {
                         commit_id.into_owned()
@@ -68,7 +67,6 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
                 if history_number != check_history_number {
                     return Err(StorageError::ConsistencyCheckFailure);
                 };
-                history_number -= 1;
             }
 
             let parent_history_number_plus_one = parent_history_number + 1;
@@ -169,7 +167,7 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
 {
     type Store<'a> = MockOneStore<T::Key, T::Value> where Self: 'a;
 
-    fn get_versioned_store<'a>(&'a self, commit: &CommitID) -> Result<Self::Store<'a>> {
+    fn get_versioned_store<'a>(&'a self, commit: &CommitID, _checkout_current: bool) -> Result<Self::Store<'a>> {
         if let Some(pending_res) = self.pending.tree.get(commit) {
             Ok(MockOneStore::from_mock_map(&pending_res.store))
         } else if let Some((_, history_res)) = self.history.get(commit) {
@@ -266,7 +264,7 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
     }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        self.get_versioned_store(commit)?.get(key)
+        self.get_versioned_store(commit, false)?.get(key)
     }
 }
 
@@ -938,8 +936,8 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
         commit_id_type: CommitIDType,
         commit: &CommitID,
     ) -> bool {
-        let mock_res = self.mock_store.get_versioned_store(commit);
-        let real_res = self.real_store.get_versioned_store(commit);
+        let mock_res = self.mock_store.get_versioned_store(commit, true);
+        let real_res = self.real_store.get_versioned_store(commit, true);
 
         match commit_id_type {
             CommitIDType::Novel => {
@@ -1021,7 +1019,7 @@ impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>
         commit_id_type: CommitIDType,
         commit: &CommitID,
     ) -> bool {
-        let mock_one_store = self.mock_store.get_versioned_store(commit);
+        let mock_one_store = self.mock_store.get_versioned_store(commit, false);
         let mock_keys = if let Ok(ref mock_store) = mock_one_store {
             mock_store.get_keys()
         } else {

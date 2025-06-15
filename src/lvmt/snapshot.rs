@@ -14,8 +14,8 @@ pub struct LvmtSnapshot<'db> {
 }
 
 impl<'cache, 'db> LvmtStore<'cache, 'db> {
-    pub fn get_state(&self, commit: CommitID) -> Result<LvmtSnapshot> {
-        let key_value_view = self.get_key_value_store().get_versioned_store(&commit)?;
+    pub fn get_state(&self, commit: CommitID, checkout_current: bool) -> Result<LvmtSnapshot> {
+        let key_value_view = self.get_key_value_store().get_versioned_store(&commit, checkout_current)?;
 
         Ok(LvmtSnapshot {
             key_value_view: Box::new(key_value_view),

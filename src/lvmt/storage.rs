@@ -58,9 +58,9 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         let (amt_node_view, slot_alloc_view, key_value_view) = if let Some(old_commit) = old_commit
         {
             (
-                Some(self.amt_node_store.get_versioned_store(&old_commit)?),
-                Some(self.slot_alloc_store.get_versioned_store(&old_commit)?),
-                Some(self.key_value_store.get_versioned_store(&old_commit)?),
+                Some(self.amt_node_store.get_versioned_store(&old_commit, true)?),
+                Some(self.slot_alloc_store.get_versioned_store(&old_commit, true)?),
+                Some(self.key_value_store.get_versioned_store(&old_commit, true)?),
             )
         } else {
             (None, None, None)
