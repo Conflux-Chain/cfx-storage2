@@ -57,8 +57,8 @@ pub enum HistoryIndices<V: Clone> {
 
 /// Represents a complete previous record.
 pub struct PreviousRecord {
-    end_version_number: HistoryNumber,
-    range_encoding: OffsetBasedVersionRange,
+    pub end_version_number: HistoryNumber,
+    pub range_encoding: OffsetBasedVersionRange,
 }
 
 #[cfg(test)]
