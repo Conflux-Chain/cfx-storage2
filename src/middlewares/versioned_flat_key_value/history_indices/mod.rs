@@ -260,10 +260,50 @@ impl<V: Clone> HistoryIndices<V> {
 
 #[cfg(test)]
 mod tests {
-    use tests::version_range::Bitmap;
+    use tests::{test_utils::version_number_sequences_strategy, version_range::Bitmap};
 
     use super::*;
     use crate::middlewares::HistoryNumber;
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1_000))]
+
+        #[test]
+        fn proptest_push(version_seqs in version_number_sequences_strategy()) {
+            if version_seqs.len() > 1 {
+                let mut latest = HistoryIndices::new(version_seqs[0], Some(0));
+                for (i, version) in version_seqs[1..].iter().enumerate() {
+                    let latest_backup = latest.clone();
+                    let maybe_previous = latest.push(*version, Some(i + 1)).unwrap();
+
+                    let latest_version_number = match latest_backup {
+                        HistoryIndices::Latest { start_version_number, ref range_encoding, latest_value } => {
+                            assert_eq!(latest_value, Some(i));
+                            start_version_number + range_encoding.max_offset()
+                        },
+                        HistoryIndices::Previous(_) => unreachable!(),
+                    };
+
+                    match latest {
+                        HistoryIndices::Latest { start_version_number, ref range_encoding, latest_value } => {
+                            assert_eq!(latest_value, Some(i + 1))
+                        },
+                        HistoryIndices::Previous(_) => unreachable!(),
+                    }
+
+                    if let Some(previous) = maybe_previous {
+                        assert_eq!(previous.end_version_number, latest.compute_start_version(LATEST).unwrap().0);
+                        assert_eq!(previous.end_version_number, latest_version_number);
+                        assert_eq!(previous.range_encoding, latest_backup.compute_start_version(LATEST).unwrap().1.clone());
+                    } else {
+                        assert_eq!(latest.compute_start_version(LATEST).unwrap().0, latest_backup.compute_start_version(LATEST).unwrap().0);
+                    }
+                }
+            }
+        }
+    }
 
     fn create_latest(
         start_version_number: HistoryNumber,

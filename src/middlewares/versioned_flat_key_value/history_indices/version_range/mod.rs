@@ -951,13 +951,13 @@ mod tests {
 
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(1_000))]
-            
+
             #[test]
             fn proptest_push(version_seqs in version_number_sequences_strategy()) {
                 let mut range = OffsetBasedVersionRange::new();
                 if version_seqs.len() > 1 {
                     let mut start = version_seqs[0];
-                    for version in version_seqs[1..].into_iter() {
+                    for version in version_seqs[1..].iter() {
                         let range_backup = range.clone();
                         let maybe_new_range = range.try_push_or_new(version - start).unwrap();
                         if let Some(new_range) = maybe_new_range {
@@ -965,7 +965,7 @@ mod tests {
                             start += range.max_offset();
                             range = new_range;
                         }
-                        
+
                         range.validate().unwrap();
                     }
                 }
