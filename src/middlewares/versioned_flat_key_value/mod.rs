@@ -10,6 +10,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub use history_indices::PushError;
 pub use pending_part::PendingError;
 
 #[cfg(test)]
