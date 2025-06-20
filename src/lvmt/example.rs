@@ -16,14 +16,14 @@ use super::{
 };
 
 pub struct LvmtStorage<D: DatabaseTrait> {
-    backend: D,
+    backend: Arc<D>,
     key_value_cache: VersionedStoreCache<FlatKeyValue>,
     amt_node_cache: VersionedStoreCache<AmtNodes>,
     slot_alloc_cache: VersionedStoreCache<SlotAllocations>,
 }
 
 impl<D: DatabaseTrait> LvmtStorage<D> {
-    pub fn new(backend: D) -> Result<Self> {
+    pub fn new(backend: Arc<D>) -> Result<Self> {
         Ok(Self {
             backend,
             key_value_cache: VersionedStoreCache::new_empty(),
@@ -33,9 +33,10 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
     }
 
     pub fn as_manager(&mut self) -> Result<LvmtStore<'_, '_>> {
-        let key_value_store = VersionedStore::new(&self.backend, &mut self.key_value_cache)?;
-        let amt_node_store = VersionedStore::new(&self.backend, &mut self.amt_node_cache)?;
-        let slot_alloc_store = VersionedStore::new(&self.backend, &mut self.slot_alloc_cache)?;
+        let key_value_store = VersionedStore::new(self.backend.clone(), &mut self.key_value_cache)?;
+        let amt_node_store = VersionedStore::new(self.backend.clone(), &mut self.amt_node_cache)?;
+        let slot_alloc_store =
+            VersionedStore::new(self.backend.clone(), &mut self.slot_alloc_cache)?;
         let auth_changes =
             KeyValueStoreBulks::new(Arc::new(self.backend.view::<AuthChangeTable>()?));
 
@@ -48,7 +49,9 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
     }
 
     pub fn commit(&mut self, write_schema: <D as DatabaseTrait>::WriteSchema) -> Result<()> {
-        self.backend.commit(write_schema)
+        let backend =
+            Arc::get_mut(&mut self.backend).expect("Exclusive access to backend required");
+        backend.commit(write_schema)
     }
 
     pub fn confirmed_pending_to_history(
@@ -66,22 +69,22 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         let start_height = key_value_confirmed_path.start_height;
         let commit_ids = &key_value_confirmed_path.commit_ids;
 
-        confirm_ids_to_history::<D>(&self.backend, start_height, commit_ids, write_schema)?;
+        confirm_ids_to_history::<D>(self.backend.clone(), start_height, commit_ids, write_schema)?;
 
         confirm_maps_to_history::<D, FlatKeyValue>(
-            &self.backend,
+            self.backend.clone(),
             start_height,
             key_value_confirmed_path.key_value_maps,
             write_schema,
         )?;
         confirm_maps_to_history::<D, AmtNodes>(
-            &self.backend,
+            self.backend.clone(),
             start_height,
             amt_node_confirmed_path.key_value_maps,
             write_schema,
         )?;
         confirm_maps_to_history::<D, SlotAllocations>(
-            &self.backend,
+            self.backend.clone(),
             start_height,
             slot_alloc_confirmed_path.key_value_maps,
             write_schema,

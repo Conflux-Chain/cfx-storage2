@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    sync::Arc,
+};
 
 use once_cell::sync::Lazy;
 use rand_chacha::ChaChaRng;
@@ -87,7 +90,7 @@ fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
     let changes_3 = get_changes_from_updates(updates_3);
 
     // Initialize db
-    let mut db = LvmtStorage::<D>::new(backend).unwrap();
+    let mut db = LvmtStorage::<D>::new(Arc::new(backend).clone()).unwrap();
 
     // Get a manager for db
     let mut lvmt = db.as_manager().unwrap();
@@ -115,6 +118,7 @@ fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
     drop(lvmt);
     db.confirmed_pending_to_history(commit_2, &write_schema)
         .unwrap();
+
     db.commit(write_schema).unwrap();
 
     // Reinitialize the manager

@@ -4,6 +4,8 @@ mod table;
 mod table_name;
 mod write_schema;
 
+use std::sync::Arc;
+
 pub use impls::in_memory_db::InMemoryDatabase;
 pub use table::{TableIter, TableKey, TableRead, TableReader, TableSchema, TableValue};
 pub use table_name::{TableName, VersionedKVName};
@@ -31,7 +33,7 @@ pub trait DatabaseTrait: Sized + Send + Sync {
     /// # Returns
     ///
     /// A `Result` containing an implementation of `TableReader` for the specified schema.
-    fn view<T: TableSchema>(&self) -> Result<impl '_ + TableRead<T>>;
+    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T>>;
 
     /// Creates a new WriteSchema instance.
     ///

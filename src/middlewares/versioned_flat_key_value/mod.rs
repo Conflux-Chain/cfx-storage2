@@ -64,7 +64,7 @@ pub struct VersionedStore<'cache, 'db, T: VersionedKeyValueSchema> {
 
 impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
     pub fn new<D: DatabaseTrait>(
-        db: &'db D,
+        db: Arc<D>,
         pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
     ) -> Result<Self> {
         let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
@@ -214,7 +214,7 @@ fn iter_history<'db, T: VersionedKeyValueSchema>(
 }
 
 pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
-    db: &D,
+    db: Arc<D>,
     pending_part: &mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
     new_root_commit_id: CommitID,
     write_schema: &D::WriteSchema,
@@ -222,14 +222,14 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
     let confirmed_path = pending_part.change_root(new_root_commit_id)?;
 
     confirm_ids_to_history::<D>(
-        db,
+        db.clone(),
         confirmed_path.start_height,
         &confirmed_path.commit_ids,
         write_schema,
     )?;
 
     confirm_maps_to_history::<D, T>(
-        db,
+        db.clone(),
         confirmed_path.start_height,
         confirmed_path.key_value_maps,
         write_schema,
@@ -239,7 +239,7 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
 }
 
 pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
-    db: &D,
+    db: Arc<D>,
     to_confirm_start_height: usize,
     to_confirm_maps: Vec<HashMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
@@ -277,7 +277,7 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
 }
 
 pub fn confirm_ids_to_history<D: DatabaseTrait>(
-    db: &D,
+    db: Arc<D>,
     to_confirm_start_height: usize,
     to_confirm_ids: &[CommitID],
     write_schema: &D::WriteSchema,
