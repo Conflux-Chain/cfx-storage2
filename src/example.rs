@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     backends::{InMemoryDatabase, VersionedKVName},
     errors::Result,
@@ -8,20 +10,20 @@ use ethereum_types::H256;
 use static_assertions::assert_impl_all;
 
 pub struct Storage {
-    backend: InMemoryDatabase,
+    backend: Arc<InMemoryDatabase>,
     cache: VersionedStoreCache<FlatKeyValue>,
 }
 
 impl Storage {
     pub fn new() -> Self {
         Self {
-            backend: InMemoryDatabase::empty(),
+            backend: InMemoryDatabase::empty().into(),
             cache: VersionedStoreCache::new_empty(),
         }
     }
 
     pub fn as_manager(&mut self) -> Result<VersionedStore<'_, '_, FlatKeyValue>> {
-        VersionedStore::new(&self.backend, &mut self.cache)
+        VersionedStore::new(self.backend.clone(), &mut self.cache)
     }
 }
 

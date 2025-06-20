@@ -5,12 +5,12 @@ use super::super::{
     DatabaseTrait, TableIter, TableRead,
 };
 use crate::errors::Result;
-use std::{borrow::Cow, collections::BTreeMap};
+use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 
 pub struct InMemoryDatabase(BTreeMap<(u32, Vec<u8>), Vec<u8>>);
 
-pub struct InMemoryTable<'a> {
-    inner: &'a InMemoryDatabase,
+pub struct InMemoryTable {
+    inner: Arc<InMemoryDatabase>,
     col: u32,
 }
 
@@ -20,7 +20,7 @@ impl InMemoryDatabase {
     }
 }
 
-impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
+impl<T: TableSchema> TableRead<T> for InMemoryTable {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
         let key = (self.col, key.encode().into_owned());
         if let Some(v) = self.inner.0.get(&key) {
@@ -53,9 +53,9 @@ impl DatabaseTrait for InMemoryDatabase {
     type TableID = u32;
     type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
 
-    fn view<T: TableSchema>(&self) -> Result<impl '_ + TableRead<T>> {
+    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T>> {
         Ok(InMemoryTable {
-            inner: self,
+            inner: self.clone(),
             col: T::NAME.into(),
         })
     }
