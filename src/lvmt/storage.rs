@@ -23,20 +23,20 @@ use crate::{
     utils::hash::blake2s,
 };
 
-pub struct LvmtStore<'cache, 'db> {
-    key_value_store: VersionedStore<'cache, 'db, FlatKeyValue>,
-    amt_node_store: VersionedStore<'cache, 'db, AmtNodes>,
-    slot_alloc_store: VersionedStore<'cache, 'db, SlotAllocations>,
+pub struct LvmtStore<'db> {
+    key_value_store: VersionedStore<'db, FlatKeyValue>,
+    amt_node_store: VersionedStore<'db, AmtNodes>,
+    slot_alloc_store: VersionedStore<'db, SlotAllocations>,
     auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
 }
 
 const ALLOC_START_VERSION: u64 = 1;
 
-impl<'cache, 'db> LvmtStore<'cache, 'db> {
+impl<'db> LvmtStore<'db> {
     pub fn new(
-        key_value_store: VersionedStore<'cache, 'db, FlatKeyValue>,
-        amt_node_store: VersionedStore<'cache, 'db, AmtNodes>,
-        slot_alloc_store: VersionedStore<'cache, 'db, SlotAllocations>,
+        key_value_store: VersionedStore<'db, FlatKeyValue>,
+        amt_node_store: VersionedStore<'db, AmtNodes>,
+        slot_alloc_store: VersionedStore<'db, SlotAllocations>,
         auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
     ) -> Self {
         Self {
@@ -203,18 +203,18 @@ fn allocate_version_slot(
     }
 }
 
-impl<'cache, 'db> LvmtStore<'cache, 'db> {
-    pub fn get_key_value_store(&self) -> &VersionedStore<'cache, 'db, FlatKeyValue> {
+impl<'db> LvmtStore<'db> {
+    pub fn get_key_value_store(&self) -> &VersionedStore<'db, FlatKeyValue> {
         &self.key_value_store
     }
 
     #[cfg(test)]
-    pub fn get_amt_node_store(&self) -> &VersionedStore<'cache, 'db, AmtNodes> {
+    pub fn get_amt_node_store(&self) -> &VersionedStore<'db, AmtNodes> {
         &self.amt_node_store
     }
 
     #[cfg(test)]
-    pub fn get_slot_alloc_store(&self) -> &VersionedStore<'cache, 'db, SlotAllocations> {
+    pub fn get_slot_alloc_store(&self) -> &VersionedStore<'db, SlotAllocations> {
         &self.slot_alloc_store
     }
 }

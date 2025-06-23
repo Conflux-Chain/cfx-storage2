@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use history_indices::PushError;
+use parking_lot::Mutex;
 pub use pending_part::PendingError;
 
 #[cfg(test)]
@@ -54,18 +55,22 @@ pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 
 pub type HistoryChangeKey<K> = ChangeKey<HistoryNumber, K>;
 
-pub struct VersionedStore<'cache, 'db, T: VersionedKeyValueSchema> {
-    pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
+    pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     history_number_table: TableReader<'db, HistoryNumberSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
+impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+    pub fn into_pending_part(self) -> Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>> {
+        self.pending_part
+    }
+
     pub fn new<D: DatabaseTrait>(
         db: Arc<D>,
-        pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+        pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
     ) -> Result<Self> {
         let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
         let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
@@ -94,7 +99,8 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
             return Err(StorageError::CommitIdAlreadyExistsInHistory);
         }
 
-        Ok(self.pending_part.add_node(updates, commit, parent_commit)?)
+        let mut pending_part = self.pending_part.lock();
+        Ok(pending_part.add_node(updates, commit, parent_commit)?)
     }
 
     fn get_history_number_by_commit_id(&self, commit: CommitID) -> Result<HistoryNumber> {
@@ -215,11 +221,12 @@ fn iter_history<'db, T: VersionedKeyValueSchema>(
 
 pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     db: Arc<D>,
-    pending_part: &mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+    pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
     new_root_commit_id: CommitID,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    let confirmed_path = pending_part.change_root(new_root_commit_id)?;
+    let mut pending_part_guard = pending_part.lock();
+    let confirmed_path = pending_part_guard.change_root(new_root_commit_id)?;
 
     confirm_ids_to_history::<D>(
         db.clone(),

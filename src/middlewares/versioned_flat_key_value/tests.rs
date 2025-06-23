@@ -1,4 +1,5 @@
 use ethereum_types::H256;
+use parking_lot::Mutex;
 
 use super::{
     pending_part::pending_schema::PendingKeyValueConfig, table_schema::VersionedKeyValueSchema,
@@ -29,7 +30,7 @@ use rand_chacha::{
     ChaChaRng,
 };
 
-impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
+impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     #[cfg(test)]
     pub fn check_consistency(&self) -> Result<()> {
         if self.check_consistency_inner().is_err() {
@@ -45,7 +46,8 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
             height_to_history_number, history_number_to_height,
         };
 
-        if let Some(parent) = self.pending_part.get_parent_of_root() {
+        let maybe_parent = self.pending_part.lock().get_parent_of_root();
+        if let Some(parent) = maybe_parent {
             let parent_history_number =
                 if let Some(parent_history_number) = self.commit_id_table.get(&parent)? {
                     parent_history_number.into_owned()
@@ -90,6 +92,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
 
             if !self
                 .pending_part
+                .lock()
                 .check_consistency(history_number_to_height(parent_history_number + 1))
             {
                 return Err(StorageError::ConsistencyCheckFailure);
@@ -168,9 +171,9 @@ struct MockNode<T: VersionedKeyValueSchema> {
 impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
     for MockVersionedStore<T>
 {
-    type Store<'a> = MockOneStore<T::Key, T::Value> where Self: 'a;
+    type Store = MockOneStore<T::Key, T::Value>;
 
-    fn get_versioned_store<'a>(&'a self, commit: &CommitID) -> Result<Self::Store<'a>> {
+    fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
         if let Some(pending_res) = self.pending.tree.get(commit) {
             Ok(MockOneStore::from_mock_map(&pending_res.store))
         } else if let Some((_, history_res)) = self.history.get(commit) {
@@ -773,20 +776,20 @@ fn gen_key(rng: &mut ChaChaRng, existing_keys: Vec<u64>) -> (KeyType, u64) {
     }
 }
 
-struct VersionedStoreProxy<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema> {
+struct VersionedStoreProxy<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema> {
     mock_store: &'a mut MockVersionedStore<T>,
-    real_store: &'b mut VersionedStore<'cache, 'db, T>,
+    real_store: &'b mut VersionedStore<'db, T>,
     all_keys: &'c mut BTreeSet<T::Key>,
 }
 
-impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
-    VersionedStoreProxy<'a, 'b, 'c, 'cache, 'db, T>
+impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
+    VersionedStoreProxy<'a, 'b, 'c, 'db, T>
 where
     T::Value: PartialEq,
 {
     fn new(
         mock_store: &'a mut MockVersionedStore<T>,
-        real_store: &'b mut VersionedStore<'cache, 'db, T>,
+        real_store: &'b mut VersionedStore<'db, T>,
         all_keys: &'c mut BTreeSet<T::Key>,
     ) -> Self {
         Self {
@@ -937,8 +940,8 @@ where
     }
 }
 
-impl<'a, 'b, 'c, 'cache, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
-    VersionedStoreProxy<'a, 'b, 'c, 'cache, 'db, T>
+impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
+    VersionedStoreProxy<'a, 'b, 'c, 'db, T>
 {
     fn get_versioned_store(
         &self,
@@ -1164,7 +1167,7 @@ fn test_versioned_store<D: DatabaseTrait>(
     // init history part
     let write_schema = D::write_schema();
     let mut db_arc = Arc::new(db);
-    let (history_cids, history_updates, mut pending_part) = gen_init(
+    let (history_cids, history_updates, pending_part) = gen_init(
         db_arc.clone(),
         num_history,
         &mut rng,
@@ -1183,7 +1186,8 @@ fn test_versioned_store<D: DatabaseTrait>(
     let mut mock_versioned_store =
         MockVersionedStore::build(history_cids.clone(), history_updates.clone());
 
-    let mut real_versioned_store = VersionedStore::new(db_arc.clone(), &mut pending_part).unwrap();
+    let mut real_versioned_store =
+        VersionedStore::new(db_arc.clone(), Arc::new(Mutex::new(pending_part))).unwrap();
     real_versioned_store.check_consistency().unwrap();
 
     let mut versioned_store_proxy = VersionedStoreProxy::new(
@@ -1240,12 +1244,12 @@ fn test_versioned_store<D: DatabaseTrait>(
             Operation::ConfirmedPendingToHistory => {
                 let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
 
-                drop(real_versioned_store);
+                let pending_part_mut = real_versioned_store.into_pending_part();
 
                 let write_schema = D::write_schema();
                 let real_res = confirmed_pending_to_history(
                     db_arc.clone(),
-                    &mut pending_part,
+                    pending_part_mut.clone(),
                     commit_id,
                     &write_schema,
                 );
@@ -1256,7 +1260,7 @@ fn test_versioned_store<D: DatabaseTrait>(
                     .unwrap();
 
                 real_versioned_store =
-                    VersionedStore::new(db_arc.clone(), &mut pending_part).unwrap();
+                    VersionedStore::new(db_arc.clone(), pending_part_mut).unwrap();
                 real_versioned_store.check_consistency().unwrap();
 
                 versioned_store_proxy = VersionedStoreProxy::new(

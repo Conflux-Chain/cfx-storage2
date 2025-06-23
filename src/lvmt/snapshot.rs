@@ -13,7 +13,7 @@ pub struct LvmtSnapshot<'db> {
     key_value_view: Box<KeyValueSnapshotRead<'db, FlatKeyValue>>,
 }
 
-impl<'cache, 'db> LvmtStore<'cache, 'db> {
+impl<'db> LvmtStore<'db> {
     pub fn get_state(&self, commit: CommitID) -> Result<LvmtSnapshot> {
         let key_value_view = self.get_key_value_store().get_versioned_store(&commit)?;
 

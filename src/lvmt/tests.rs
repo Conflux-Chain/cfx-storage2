@@ -154,7 +154,7 @@ fn test_lvmt_store_inmemory() {
     test_lvmt_store::<InMemoryDatabase>(backend, 100000);
 }
 
-impl<'cache, 'db> LvmtStore<'cache, 'db> {
+impl<'db> LvmtStore<'db> {
     pub fn check_consistency(&mut self, commit: CommitID, pp: &AmtParams<PE>) -> Result<()> {
         use std::collections::BTreeSet;
 

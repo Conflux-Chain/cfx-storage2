@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use parking_lot::Mutex;
+
 use crate::{
     backends::DatabaseTrait,
     errors::Result,
@@ -17,26 +19,28 @@ use super::{
 
 pub struct LvmtStorage<D: DatabaseTrait> {
     backend: Arc<D>,
-    key_value_cache: VersionedStoreCache<FlatKeyValue>,
-    amt_node_cache: VersionedStoreCache<AmtNodes>,
-    slot_alloc_cache: VersionedStoreCache<SlotAllocations>,
+    key_value_cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue>>>,
+    amt_node_cache: Arc<Mutex<VersionedStoreCache<AmtNodes>>>,
+    slot_alloc_cache: Arc<Mutex<VersionedStoreCache<SlotAllocations>>>,
 }
 
 impl<D: DatabaseTrait> LvmtStorage<D> {
     pub fn new(backend: Arc<D>) -> Result<Self> {
         Ok(Self {
             backend,
-            key_value_cache: VersionedStoreCache::new_empty(),
-            amt_node_cache: VersionedStoreCache::new_empty(),
-            slot_alloc_cache: VersionedStoreCache::new_empty(),
+            key_value_cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
+            amt_node_cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
+            slot_alloc_cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
         })
     }
 
-    pub fn as_manager(&mut self) -> Result<LvmtStore<'_, '_>> {
-        let key_value_store = VersionedStore::new(self.backend.clone(), &mut self.key_value_cache)?;
-        let amt_node_store = VersionedStore::new(self.backend.clone(), &mut self.amt_node_cache)?;
+    pub fn as_manager(&mut self) -> Result<LvmtStore<'_>> {
+        let key_value_store =
+            VersionedStore::new(self.backend.clone(), self.key_value_cache.clone())?;
+        let amt_node_store =
+            VersionedStore::new(self.backend.clone(), self.amt_node_cache.clone())?;
         let slot_alloc_store =
-            VersionedStore::new(self.backend.clone(), &mut self.slot_alloc_cache)?;
+            VersionedStore::new(self.backend.clone(), self.slot_alloc_cache.clone())?;
         let auth_changes =
             KeyValueStoreBulks::new(Arc::new(self.backend.view::<AuthChangeTable>()?));
 
@@ -59,9 +63,13 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         new_root_commit_id: CommitID,
         write_schema: &D::WriteSchema,
     ) -> Result<()> {
-        let key_value_confirmed_path = self.key_value_cache.change_root(new_root_commit_id)?;
-        let amt_node_confirmed_path = self.amt_node_cache.change_root(new_root_commit_id)?;
-        let slot_alloc_confirmed_path = self.slot_alloc_cache.change_root(new_root_commit_id)?;
+        let mut key_value_cache = self.key_value_cache.lock();
+        let mut amt_node_cache = self.amt_node_cache.lock();
+        let mut slot_alloc_cache = self.slot_alloc_cache.lock();
+
+        let key_value_confirmed_path = key_value_cache.change_root(new_root_commit_id)?;
+        let amt_node_confirmed_path = amt_node_cache.change_root(new_root_commit_id)?;
+        let slot_alloc_confirmed_path = slot_alloc_cache.change_root(new_root_commit_id)?;
 
         assert!(key_value_confirmed_path.is_same_path(&amt_node_confirmed_path));
         assert!(key_value_confirmed_path.is_same_path(&slot_alloc_confirmed_path));

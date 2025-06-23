@@ -7,27 +7,28 @@ use crate::{
     traits::KeyValueStoreManager,
 };
 use ethereum_types::H256;
+use parking_lot::Mutex;
 use static_assertions::assert_impl_all;
 
 pub struct Storage {
     backend: Arc<InMemoryDatabase>,
-    cache: VersionedStoreCache<FlatKeyValue>,
+    cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue>>>,
 }
 
 impl Storage {
     pub fn new() -> Self {
         Self {
             backend: InMemoryDatabase::empty().into(),
-            cache: VersionedStoreCache::new_empty(),
+            cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
         }
     }
 
-    pub fn as_manager(&mut self) -> Result<VersionedStore<'_, '_, FlatKeyValue>> {
-        VersionedStore::new(self.backend.clone(), &mut self.cache)
+    pub fn as_manager(&mut self) -> Result<VersionedStore<'_, FlatKeyValue>> {
+        VersionedStore::new(self.backend.clone(), self.cache.clone())
     }
 }
 
-assert_impl_all!(VersionedStore<'_, '_, FlatKeyValue>: KeyValueStoreManager<Box<[u8]>, Box<[u8]>, H256>);
+assert_impl_all!(VersionedStore<'_, FlatKeyValue>: KeyValueStoreManager<Box<[u8]>, Box<[u8]>, H256>);
 
 #[derive(Clone, Copy, Debug)]
 pub struct FlatKeyValue;
