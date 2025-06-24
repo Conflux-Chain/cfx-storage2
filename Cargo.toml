@@ -28,7 +28,7 @@ ethereum-types = "0.12"
 
 blake2 = "0.10"
 
-slab = "0.4.9"
+slab = "0.4"
 
 static_assertions = "1.1.0"
 
@@ -36,7 +36,7 @@ itertools = "0.13"
 
 proptest = "1.5"
 
-amt = { git = "https://github.com/Conflux-Chain/amt", rev = "828c4c6", features = ["bls12-381"] }
+amt = { git = "https://github.com/Conflux-Chain/amt", rev = "387995a", features = ["bls12-381"] }
 
 [dev-dependencies]
 rand = "0.8.0"
