@@ -24,7 +24,7 @@ ark-serialize = "0.5"
 ark-bls12-381 = "0.5"
 ark-std = "0.5"
 
-ethereum-types = "0.12"
+ethereum-types = "0.9"
 
 blake2 = "0.10"
 
