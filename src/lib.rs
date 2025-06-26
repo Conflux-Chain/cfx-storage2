@@ -11,3 +11,4 @@ pub mod types;
 mod utils;
 
 pub use errors::{Result, StorageError};
+pub use lvmt::LvmtStore;
