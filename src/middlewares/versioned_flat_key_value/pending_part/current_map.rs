@@ -1,4 +1,7 @@
-use std::{collections::HashMap, ops::Deref};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Deref,
+};
 
 use super::{
     pending_schema::{ApplyMap, ApplyRecord, PendingKeyValueSchema},
@@ -6,12 +9,12 @@ use super::{
 };
 
 pub(super) struct CurrentMap<S: PendingKeyValueSchema> {
-    map: HashMap<S::Key, ApplyRecord<S>>,
+    map: BTreeMap<S::Key, ApplyRecord<S>>,
     commit_id: S::CommitId,
 }
 
 impl<S: PendingKeyValueSchema> Deref for CurrentMap<S> {
-    type Target = HashMap<S::Key, ApplyRecord<S>>;
+    type Target = BTreeMap<S::Key, ApplyRecord<S>>;
 
     fn deref(&self) -> &Self::Target {
         &self.map
@@ -21,7 +24,7 @@ impl<S: PendingKeyValueSchema> Deref for CurrentMap<S> {
 impl<S: PendingKeyValueSchema> CurrentMap<S> {
     pub fn new(commit_id: S::CommitId) -> Self {
         Self {
-            map: HashMap::new(),
+            map: BTreeMap::new(),
             commit_id,
         }
     }

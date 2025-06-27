@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use crate::traits::{IsCompleted, NeedNext};
 use crate::types::ValueEntry;
 
-use super::pending_schema::ConfirmedPathInfo;
+use super::pending_schema::{ConfirmedPathInfo, KeyValueMap};
 use super::{
     current_map::CurrentMap,
-    pending_schema::{KeyValueMap, PendingKeyValueSchema, RecoverRecord, Result as PendResult},
+    pending_schema::{PendingKeyValueSchema, RecoverRecord, Result as PendResult},
     tree::Tree,
     PendingError,
 };
@@ -226,6 +226,32 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             .iter()
             .map(|(k, apply_record)| (k.clone(), apply_record.value.clone()))
             .collect())
+    }
+}
+
+impl<S> VersionedMap<S>
+where
+    S: PendingKeyValueSchema,
+    S::Key: AsRef<[u8]>,
+{
+    pub fn get_versioned_store_prefix(
+        &self,
+        commit_id: S::CommitId,
+        key_prefix: &S::Key,
+    ) -> PendResult<KeyValueMap<S>, S> {
+        // let query node to be self.current
+        let mut guard = self.current.write();
+        self.tree.checkout_current(commit_id, &mut guard)?;
+
+        let current = guard.as_ref().unwrap();
+        let mut result = HashMap::new();
+        for (key, apply_record) in current.range(key_prefix..) {
+            if !key.as_ref().starts_with(key_prefix.as_ref()) {
+                break;
+            }
+            result.insert(key.clone(), apply_record.value.clone());
+        }
+        Ok(result)
     }
 }
 

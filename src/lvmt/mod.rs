@@ -9,4 +9,6 @@ pub mod table_schema;
 mod tests;
 pub mod types;
 
+pub use snapshot::LvmtSnapshot;
 pub use storage::LvmtStore;
+pub use types::LvmtValue;

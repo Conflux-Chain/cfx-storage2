@@ -13,7 +13,7 @@ use crate::{
     errors::Result,
     lvmt::types::{LvmtValue, KEY_SLOT_SIZE},
     middlewares::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test, CommitID},
-    traits::{KeyValueStoreManager, KeyValueStoreRead},
+    traits::{KeyValueStoreIterable, KeyValueStoreManager, KeyValueStoreRead},
 };
 
 use super::{crypto::PE, example::LvmtStorage, storage::LvmtStore};
@@ -202,7 +202,7 @@ impl<'db> LvmtStore<'db> {
 
         // Gather the versions of allocated slots for keys
         let mut slot_versions = BTreeMap::new();
-        for (key, lvmt_value) in key_value_view.iter()? {
+        for (key, lvmt_value) in key_value_view.iter_prefix(Box::from([]))? {
             match lvmt_value {
                 crate::types::ValueEntry::Value(lvmt_value) => {
                     let LvmtValue {

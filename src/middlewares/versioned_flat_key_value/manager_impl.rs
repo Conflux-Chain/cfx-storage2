@@ -7,7 +7,8 @@ use crate::{
     errors::Result,
     middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks},
     traits::{
-        IsCompleted, KeyValueStoreBulksTrait, KeyValueStoreManager, KeyValueStoreRead, NeedNext,
+        IsCompleted, KeyValueStoreBulksTrait, KeyValueStoreIterable, KeyValueStoreManager,
+        KeyValueStoreRead, NeedNext,
     },
     StorageError,
 };
@@ -15,14 +16,13 @@ use crate::{
 use super::{
     get_versioned_key_latest, get_versioned_key_previous,
     history_indices::HistoryIndices,
+    iter_history, iter_history_prefix,
     pending_part::{pending_schema::PendingKeyValueConfig, VersionedMap},
     table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema},
     HistoryIndexKey, PendingError, VersionedStore,
 };
 
-#[cfg(test)]
 use crate::types::ValueEntry;
-#[cfg(test)]
 use std::collections::BTreeMap;
 
 /// Enum explicitly distinguishing between view types
@@ -63,11 +63,10 @@ pub struct PreviousHistoricalSnapshot<'db, T: VersionedKeyValueSchema> {
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
-    #[cfg(test)]
-    pub fn iter(&self) -> Result<impl Iterator<Item = (T::Key, ValueEntry<T::Value>)>> {
-        use super::iter_history;
-
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreIterable<T::Key, T::Value>
+    for SnapshotView<'db, T>
+{
+    fn iter(&self) -> Result<impl Iterator<Item = (T::Key, ValueEntry<T::Value>)>> {
         let map = match self {
             SnapshotView::Pending(pending_snapshot) => {
                 let mut map = if let Some(latest_history_snapshot) = &pending_snapshot.latest {
@@ -81,10 +80,8 @@ impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
                 };
 
                 let pending_updates = &pending_snapshot.pending;
-                let pending_map = pending_updates
-                    .inner
-                    .lock()
-                    .get_versioned_store(pending_updates.commit_id)?;
+                let pending_guard = pending_updates.inner.lock();
+                let pending_map = pending_guard.get_versioned_store(pending_updates.commit_id)?;
                 for (k, v) in pending_map {
                     map.insert(k.clone(), v.clone());
                 }
@@ -101,6 +98,58 @@ impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
                     previous_history_snapshot.history_number,
                     &previous_history_snapshot.history_index_table,
                     Some(&previous_history_snapshot.change_history_table),
+                )?,
+            },
+        };
+
+        Ok(map.into_iter())
+    }
+}
+
+impl<'db, T> SnapshotView<'db, T>
+where
+    T: VersionedKeyValueSchema,
+    T::Key: AsRef<[u8]>,
+{
+    pub fn iter_prefix(
+        &self,
+        key_prefix: T::Key,
+    ) -> Result<impl Iterator<Item = (T::Key, ValueEntry<T::Value>)>> {
+        let map = match self {
+            SnapshotView::Pending(pending_snapshot) => {
+                let mut map = if let Some(latest_history_snapshot) = &pending_snapshot.latest {
+                    iter_history_prefix(
+                        latest_history_snapshot.history_number,
+                        &latest_history_snapshot.history_index_table,
+                        None,
+                        key_prefix.clone(),
+                    )?
+                } else {
+                    BTreeMap::new()
+                };
+
+                let pending_updates = &pending_snapshot.pending;
+                let pending_guard = pending_updates.inner.lock();
+                let pending_map = pending_guard
+                    .get_versioned_store_prefix(pending_updates.commit_id, &key_prefix)?;
+                for (k, v) in pending_map {
+                    map.insert(k.clone(), v.clone());
+                }
+
+                map
+            }
+            SnapshotView::Historical(historical_snapshot) => match historical_snapshot {
+                HistoricalSnapshot::Latest(latest_history_snapshot) => iter_history_prefix(
+                    latest_history_snapshot.history_number,
+                    &latest_history_snapshot.history_index_table,
+                    None,
+                    key_prefix,
+                )?,
+                HistoricalSnapshot::Previous(previous_history_snapshot) => iter_history_prefix(
+                    previous_history_snapshot.history_number,
+                    &previous_history_snapshot.history_index_table,
+                    Some(&previous_history_snapshot.change_history_table),
+                    key_prefix,
                 )?,
             },
         };

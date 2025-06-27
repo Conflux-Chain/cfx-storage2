@@ -8,10 +8,11 @@ pub mod table_schema;
 mod tests;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 pub use history_indices::PushError;
+pub use manager_impl::SnapshotView;
 use parking_lot::Mutex;
 pub use pending_part::PendingError;
 
@@ -36,10 +37,7 @@ use crate::StorageError;
 
 pub type VersionedStoreCache<Schema> = VersionedMap<PendingKeyValueConfig<Schema, CommitID>>;
 
-#[cfg(test)]
 use crate::types::ValueEntry;
-#[cfg(test)]
-use std::collections::BTreeMap;
 
 /// Key for accessing version history records in storage.
 ///
@@ -174,7 +172,65 @@ fn get_versioned_key_previous<'db, T: VersionedKeyValueSchema>(
     }
 }
 
-#[cfg(test)]
+fn iter_history_prefix<'db, T>(
+    query_version_number: HistoryNumber,
+    history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
+    maybe_change_history_table: Option<&KeyValueStoreBulks<'db, HistoryChangeTable<T>>>,
+    key_prefix: T::Key,
+) -> Result<BTreeMap<T::Key, ValueEntry<T::Value>>>
+where
+    T: VersionedKeyValueSchema,
+    T::Key: AsRef<[u8]>,
+{
+    let range_query_key = HistoryIndexKey(key_prefix.clone(), 0);
+    let (history_index_key, _) = match history_index_table.iter(&range_query_key)?.next() {
+        Some(item) => item.unwrap(),
+        None => return Ok(BTreeMap::new()),
+    };
+    let HistoryIndexKey(mut key, _) = history_index_key.as_ref().clone();
+
+    let mut history_map = BTreeMap::new();
+
+    loop {
+        // check key's prefix
+        if !key.as_ref().starts_with(key_prefix.as_ref()) {
+            break;
+        }
+
+        let value = if let Some(change_history_table) = maybe_change_history_table {
+            get_versioned_key_previous(
+                query_version_number,
+                &key,
+                history_index_table,
+                change_history_table,
+            )?
+        } else {
+            get_versioned_key_latest(query_version_number, &key, history_index_table)?
+        };
+
+        history_map.insert(key.clone(), ValueEntry::from_option(value));
+
+        let range_query_key = HistoryIndexKey(key.clone(), LATEST);
+        let mut find_next_key_iter = history_index_table.iter(&range_query_key)?;
+
+        let this_key = match find_next_key_iter.next().transpose()? {
+            Some((this_historical_index_key, _)) => this_historical_index_key.as_ref().0.clone(),
+            None => break,
+        };
+        assert_eq!(this_key, key, "The latest record of a key should exist when there is at least one record of that key.");
+
+        let next_key = match find_next_key_iter.next().transpose()? {
+            Some((next_historical_index_key, _)) => next_historical_index_key.0.clone(),
+            None => break,
+        };
+        assert_ne!(next_key, key, "Iterator should have moved to a different key after processing the lastest record for the current key.");
+
+        key = next_key;
+    }
+
+    Ok(history_map)
+}
+
 fn iter_history<'db, T: VersionedKeyValueSchema>(
     query_version_number: HistoryNumber,
     history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,

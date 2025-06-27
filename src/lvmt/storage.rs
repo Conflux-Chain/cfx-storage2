@@ -31,8 +31,21 @@ pub struct LvmtStore<'db> {
 }
 
 const ALLOC_START_VERSION: u64 = 1;
+type KeyValueVec = Vec<(Box<[u8]>, Option<LvmtValue>)>;
 
 impl<'db> LvmtStore<'db> {
+    pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
+        self.get_state(commit)?.get(&key)
+    }
+
+    pub fn iter_prefix(&self, commit: CommitID, key_prefix: Box<[u8]>) -> Result<KeyValueVec> {
+        Ok(self
+            .get_state(commit)?
+            .iter_prefix(key_prefix)?
+            .map(|(k, v)| (k, v.into_option()))
+            .collect::<Vec<_>>())
+    }
+
     pub fn new(
         key_value_store: VersionedStore<'db, FlatKeyValue>,
         amt_node_store: VersionedStore<'db, AmtNodes>,
