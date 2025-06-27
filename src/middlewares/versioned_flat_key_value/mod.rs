@@ -64,6 +64,11 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
 }
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+    pub fn checkout_current(&mut self, commit: CommitID) -> Result<()> {
+        let pending_guard = self.pending_part.lock();
+        Ok(pending_guard.checkout_current(commit)?)
+    }
+
     pub fn into_pending_part(self) -> Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>> {
         self.pending_part
     }

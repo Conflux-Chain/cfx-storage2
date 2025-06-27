@@ -47,6 +47,10 @@ impl<'db> LvmtStore<'db> {
         }
     }
 
+    pub fn checkout_current(&mut self, commit: CommitID) -> Result<()> {
+        self.key_value_store.checkout_current(commit)
+    }
+
     pub fn commit(
         &mut self,
         old_commit: Option<CommitID>,
