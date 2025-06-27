@@ -5,6 +5,7 @@ pub enum TableName {
     HistoryChange(VersionedKVName),
     HistoryIndex(VersionedKVName),
     AuthNodeChange,
+    StateRoot,
     #[cfg(test)]
     MockTable,
 }
@@ -29,7 +30,7 @@ use VersionedKVName::*;
 
 impl TableName {
     pub const fn max_index() -> u32 {
-        9
+        10
     }
 }
 
@@ -45,6 +46,7 @@ impl From<TableName> for u32 {
             HistoryChange(SlotAllocation) => 7,
             HistoryIndex(SlotAllocation) => 8,
             AuthNodeChange => 9,
+            StateRoot => 10,
             #[cfg(test)]
             MockTable => u32::MAX,
         }
@@ -63,6 +65,7 @@ impl From<TableName> for &'static str {
             HistoryChange(SlotAllocation) => "slot_alloc_change_history",
             HistoryIndex(SlotAllocation) => "slot_alloc_history_index",
             AuthNodeChange => "auth_node_change",
+            StateRoot => "state_root",
             #[cfg(test)]
             MockTable => "mock_table",
         }
