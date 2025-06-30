@@ -1,7 +1,7 @@
 use crate::{
     errors::Result,
     middlewares::{table_schema::VersionedKeyValueSchema, CommitID, SnapshotView},
-    traits::{KeyValueStoreIterable, KeyValueStoreManager, KeyValueStoreRead},
+    traits::{KeyValueStoreManager, KeyValueStoreRead},
     types::ValueEntry,
 };
 

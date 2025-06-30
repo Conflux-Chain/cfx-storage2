@@ -133,8 +133,17 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     }
 }
 
+/// Returns the value for the key at the maximum version_number such that
+/// version_number <= the latest_version_number in the historical part.
+/// If there is no such version_number, returns `None`.
+// # Algorithm Explanation
+// - If the lastest record exists, since the latest record has at least one
+//   version_number, and all recorded version_numbers are <= latest_version_number,
+//   we can always obtain the value from the lastest record.
+// - If the latest record does not exists, then there is no record for this key.
+// Therefore, there is no need to view previous records.
 fn get_versioned_key_latest<T: VersionedKeyValueSchema>(
-    query_version_number: HistoryNumber,
+    latest_version_number: HistoryNumber,
     key: &T::Key,
     history_index_table: &TableReader<'_, HistoryIndicesTable<T>>,
 ) -> Result<Option<T::Value>> {
@@ -142,11 +151,24 @@ fn get_versioned_key_latest<T: VersionedKeyValueSchema>(
     match history_index_table.get(&range_query_key)? {
         Some(history_indices) => history_indices
             .into_owned()
-            .get_latest_value(query_version_number),
+            .get_latest_value(latest_version_number),
         None => Ok(None),
     }
 }
 
+/// Returns the value for the key at the maximum version_number such that
+/// version_number <= the query_version_number in the historical part.
+/// If there is no such version_number, returns `None`.
+// # Algorithm Explanation
+// Find the record with the minimum version specifier such that the version specifier >= query_version_number.
+// Since LATEST >= query_version_number, if no such record, there is no record for this key.
+// If there is such record,
+// - If there is a previous_record before this record, then the previous_version_specifier < query_version_number,
+//   and previous_version_specifier is the start_version_number of this record.
+//   I.e., the start_version_number of this record < query_version_number <= the version specifier of this record.
+//   Thus, we can always obtain the value from this record.
+// - If there is no previous_record before this record, version_number can only be within this record or non-existing.
+// Therefore, there is no need to view previous records before this record.
 fn get_versioned_key_previous<'db, T: VersionedKeyValueSchema>(
     query_version_number: HistoryNumber,
     key: &T::Key,
@@ -154,6 +176,7 @@ fn get_versioned_key_previous<'db, T: VersionedKeyValueSchema>(
     change_history_table: &KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 ) -> Result<Option<T::Value>> {
     let range_query_key = HistoryIndexKey(key.clone(), query_version_number);
+
     match history_index_table.iter(&range_query_key)?.next() {
         None => Ok(None),
         Some(Err(e)) => Err(e.into()),
