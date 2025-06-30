@@ -1,4 +1,4 @@
-use crate::{backends::WriteSchemaTrait, errors::Result, types::ValueEntry};
+use crate::{backends::WriteSchemaTrait, errors::Result};
 
 pub trait KeyValueStoreRead<K, V>
 where
@@ -13,7 +13,7 @@ where
     K: 'static,
     V: 'static,
 {
-    fn iter(&self) -> Result<impl Iterator<Item = (K, ValueEntry<V>)>>;
+    fn iter(&self) -> Result<impl Iterator<Item = (K, V)>>;
 }
 
 pub type NeedNext = bool;

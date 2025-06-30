@@ -37,8 +37,6 @@ use crate::StorageError;
 
 pub type VersionedStoreCache<Schema> = VersionedMap<PendingKeyValueConfig<Schema, CommitID>>;
 
-use crate::types::ValueEntry;
-
 /// Key for accessing version history records in storage.
 ///
 /// Consists of two components:
@@ -261,7 +259,7 @@ fn iter_history<'db, T: VersionedKeyValueSchema>(
     query_version_number: HistoryNumber,
     history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
     maybe_change_history_table: Option<&KeyValueStoreBulks<'db, HistoryChangeTable<T>>>,
-) -> Result<BTreeMap<T::Key, ValueEntry<T::Value>>> {
+) -> Result<BTreeMap<T::Key, T::Value>> {
     let (history_index_key, _) = match history_index_table.iter_from_start()?.next() {
         Some(item) => item.unwrap(),
         None => return Ok(BTreeMap::new()),
@@ -283,7 +281,9 @@ fn iter_history<'db, T: VersionedKeyValueSchema>(
             get_versioned_key_latest(query_version_number, &key, history_index_table)?
         };
 
-        history_map.insert(key.clone(), ValueEntry::from_option(value));
+        if let Some(existing_value) = value {
+            history_map.insert(key.clone(), existing_value);
+        }
 
         let range_query_key = HistoryIndexKey(key.clone(), LATEST);
         let mut find_next_key_iter = history_index_table.iter(&range_query_key)?;

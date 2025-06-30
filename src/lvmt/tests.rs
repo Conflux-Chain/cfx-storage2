@@ -178,12 +178,6 @@ impl<'db> LvmtStore<'db> {
                 let alloc_key_info = slot_alloc_view.get(&amt_node_id)?.unwrap();
                 assert_eq!(alloc_key_info.index as usize, KEY_SLOT_SIZE - 1);
             }
-
-            assert_ne!(
-                curve_point_with_version,
-                crate::types::ValueEntry::Deleted,
-                "Amt node view should not contain deletion"
-            );
         }
 
         // Each Amt node with allocated slots should be in an Amt tree
@@ -192,33 +186,20 @@ impl<'db> LvmtStore<'db> {
             parent_amt_id.pop().unwrap();
 
             amt_node_view.get(&parent_amt_id)?.unwrap();
-
-            assert_ne!(
-                alloc_key_info,
-                crate::types::ValueEntry::Deleted,
-                "Slot alloc view should not contain deletion"
-            );
         }
 
         // Gather the versions of allocated slots for keys
         let mut slot_versions = BTreeMap::new();
         for (key, lvmt_value) in key_value_view.iter()? {
-            match lvmt_value {
-                crate::types::ValueEntry::Value(lvmt_value) => {
-                    let LvmtValue {
-                        allocation,
-                        version,
-                        ..
-                    } = lvmt_value;
-                    let (amt_id, node_index, slot_index) = allocation.amt_info(&key);
-                    let node_map = slot_versions.entry(amt_id).or_insert_with(BTreeMap::new);
-                    let slot_map = node_map.entry(node_index).or_insert_with(BTreeMap::new);
-                    slot_map.insert(slot_index, version);
-                }
-                crate::types::ValueEntry::Deleted => {
-                    panic!("Key value view should not contain deletion beyond LvmtValue")
-                }
-            }
+            let LvmtValue {
+                allocation,
+                version,
+                ..
+            } = lvmt_value;
+            let (amt_id, node_index, slot_index) = allocation.amt_info(&key);
+            let node_map = slot_versions.entry(amt_id).or_insert_with(BTreeMap::new);
+            let slot_map = node_map.entry(node_index).or_insert_with(BTreeMap::new);
+            slot_map.insert(slot_index, version);
         }
 
         // Gather allocated slots for keys, in another way
@@ -227,19 +208,12 @@ impl<'db> LvmtStore<'db> {
             let mut parent_amt_id = amt_node_id;
             let node_index = parent_amt_id.pop().unwrap();
 
-            match alloc_key_info {
-                crate::types::ValueEntry::Value(alloc_key_info) => {
-                    for slot_index in 0..=alloc_key_info.index {
-                        let node_map = slot_allocs
-                            .entry(parent_amt_id)
-                            .or_insert_with(BTreeMap::new);
-                        let slot_map = node_map.entry(node_index).or_insert_with(BTreeSet::new);
-                        slot_map.insert(slot_index);
-                    }
-                }
-                crate::types::ValueEntry::Deleted => {
-                    panic!("Slot alloc view should not contain deletion")
-                }
+            for slot_index in 0..=alloc_key_info.index {
+                let node_map = slot_allocs
+                    .entry(parent_amt_id)
+                    .or_insert_with(BTreeMap::new);
+                let slot_map = node_map.entry(node_index).or_insert_with(BTreeSet::new);
+                slot_map.insert(slot_index);
             }
         }
 
@@ -269,16 +243,7 @@ impl<'db> LvmtStore<'db> {
                 let mut parent_amt_id = amt_id;
                 let node_index = parent_amt_id.pop().unwrap();
                 let slot_index = SLOT_SIZE - 1;
-                let version = {
-                    match curve_point_with_version {
-                        crate::types::ValueEntry::Value(curve_point_with_version) => {
-                            curve_point_with_version.version
-                        }
-                        crate::types::ValueEntry::Deleted => {
-                            panic!("Amt node view should not contain deletion")
-                        }
-                    }
-                };
+                let version = curve_point_with_version.version;
 
                 let node_map = slot_versions
                     .entry(parent_amt_id)

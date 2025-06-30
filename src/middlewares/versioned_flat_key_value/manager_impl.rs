@@ -66,7 +66,7 @@ pub struct PreviousHistoricalSnapshot<'db, T: VersionedKeyValueSchema> {
 impl<'db, T: VersionedKeyValueSchema> KeyValueStoreIterable<T::Key, T::Value>
     for SnapshotView<'db, T>
 {
-    fn iter(&self) -> Result<impl Iterator<Item = (T::Key, ValueEntry<T::Value>)>> {
+    fn iter(&self) -> Result<impl Iterator<Item = (T::Key, T::Value)>> {
         let map = match self {
             SnapshotView::Pending(pending_snapshot) => {
                 let mut map = if let Some(latest_history_snapshot) = &pending_snapshot.latest {
@@ -83,7 +83,12 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreIterable<T::Key, T::Value>
                 let pending_guard = pending_updates.inner.lock();
                 let pending_map = pending_guard.get_versioned_store(pending_updates.commit_id)?;
                 for (k, v) in pending_map {
-                    map.insert(k.clone(), v.clone());
+                    match v {
+                        ValueEntry::Value(value_not_deleted) => {
+                            map.insert(k.clone(), value_not_deleted.clone())
+                        }
+                        ValueEntry::Deleted => map.remove(&k),
+                    };
                 }
 
                 map
