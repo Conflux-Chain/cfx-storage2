@@ -31,7 +31,7 @@ pub struct LvmtStore<'db> {
 }
 
 const ALLOC_START_VERSION: u64 = 1;
-type KeyValueVec = Vec<(Box<[u8]>, Option<LvmtValue>)>;
+type KeyValueVec = Vec<(Box<[u8]>, LvmtValue)>;
 
 impl<'db> LvmtStore<'db> {
     pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
@@ -42,7 +42,6 @@ impl<'db> LvmtStore<'db> {
         Ok(self
             .get_state(commit)?
             .iter_prefix(key_prefix)?
-            .map(|(k, v)| (k, v.into_option()))
             .collect::<Vec<_>>())
     }
 

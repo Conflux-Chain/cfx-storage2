@@ -195,12 +195,13 @@ fn get_versioned_key_previous<'db, T: VersionedKeyValueSchema>(
     }
 }
 
+/// Collects all exsiting keys starting with `key_prefix` and their values at the view of `query_version_number`.
 fn iter_history_prefix<'db, T>(
     query_version_number: HistoryNumber,
     history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
     maybe_change_history_table: Option<&KeyValueStoreBulks<'db, HistoryChangeTable<T>>>,
     key_prefix: T::Key,
-) -> Result<BTreeMap<T::Key, ValueEntry<T::Value>>>
+) -> Result<BTreeMap<T::Key, T::Value>>
 where
     T: VersionedKeyValueSchema,
     T::Key: AsRef<[u8]>,
@@ -231,7 +232,9 @@ where
             get_versioned_key_latest(query_version_number, &key, history_index_table)?
         };
 
-        history_map.insert(key.clone(), ValueEntry::from_option(value));
+        if let Some(existing_value) = value {
+            history_map.insert(key.clone(), existing_value);
+        }
 
         let range_query_key = HistoryIndexKey(key.clone(), LATEST);
         let mut find_next_key_iter = history_index_table.iter(&range_query_key)?;

@@ -202,7 +202,7 @@ impl<'db> LvmtStore<'db> {
 
         // Gather the versions of allocated slots for keys
         let mut slot_versions = BTreeMap::new();
-        for (key, lvmt_value) in key_value_view.iter_prefix(Box::from([]))? {
+        for (key, lvmt_value) in key_value_view.iter()? {
             match lvmt_value {
                 crate::types::ValueEntry::Value(lvmt_value) => {
                     let LvmtValue {

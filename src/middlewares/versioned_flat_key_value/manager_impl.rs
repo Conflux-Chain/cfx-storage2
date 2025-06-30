@@ -114,8 +114,8 @@ where
     pub fn iter_prefix(
         &self,
         key_prefix: T::Key,
-    ) -> Result<impl Iterator<Item = (T::Key, ValueEntry<T::Value>)>> {
-        let map = match self {
+    ) -> Result<impl Iterator<Item = (T::Key, T::Value)>> {
+        let res_map = match self {
             SnapshotView::Pending(pending_snapshot) => {
                 let mut map = if let Some(latest_history_snapshot) = &pending_snapshot.latest {
                     iter_history_prefix(
@@ -133,7 +133,12 @@ where
                 let pending_map = pending_guard
                     .get_versioned_store_prefix(pending_updates.commit_id, &key_prefix)?;
                 for (k, v) in pending_map {
-                    map.insert(k.clone(), v.clone());
+                    match v {
+                        ValueEntry::Value(value_not_deleted) => {
+                            map.insert(k.clone(), value_not_deleted.clone())
+                        }
+                        ValueEntry::Deleted => map.remove(&k),
+                    };
                 }
 
                 map
@@ -154,7 +159,7 @@ where
             },
         };
 
-        Ok(map.into_iter())
+        Ok(res_map.into_iter())
     }
 }
 

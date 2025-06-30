@@ -2,7 +2,6 @@ use crate::{
     errors::Result,
     middlewares::{table_schema::VersionedKeyValueSchema, CommitID, SnapshotView},
     traits::{KeyValueStoreManager, KeyValueStoreRead},
-    types::ValueEntry,
 };
 
 use super::{storage::LvmtStore, table_schema::FlatKeyValue};
@@ -35,7 +34,7 @@ impl<'db> LvmtSnapshot<'db> {
             + Iterator<
                 Item = (
                     <FlatKeyValue as VersionedKeyValueSchema>::Key,
-                    ValueEntry<<FlatKeyValue as VersionedKeyValueSchema>::Value>,
+                    <FlatKeyValue as VersionedKeyValueSchema>::Value,
                 ),
             >,
     > {
