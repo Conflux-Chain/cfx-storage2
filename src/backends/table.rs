@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::serde::{Decode, Encode, EncodeSubKey};
 use super::table_name::TableName;
+use super::DatabaseTrait;
 use crate::combine_traits;
 
 use crate::errors::{DbResult, Result};
@@ -13,14 +14,28 @@ pub type TableItem<'a, T> = (
     Cow<'a, <T as TableSchema>::Key>,
     Cow<'a, <T as TableSchema>::Value>,
 );
-pub type TableIter<'a, 'b, T> = Box<dyn 'a + Iterator<Item = DbResult<TableItem<'b, T>>>>;
+pub type TableIter<'a, T> = Box<dyn 'a + Iterator<Item = DbResult<TableItem<'a, T>>>>;
 pub type TableReader<'a, T> = Arc<dyn 'a + TableRead<T> + Send + Sync>;
+
+pub struct GuardedIterator<'a, T: TableSchema, D: DatabaseTrait> {
+    pub(crate) guard: parking_lot::MutexGuard<'a, D>,
+    pub(crate) iter: dyn 'a + Iterator<Item = DbResult<TableItem<'a, T>>>,
+}
+
+// 为结构体实现 Iterator trait
+impl<'a, T: TableSchema, D: DatabaseTrait> Iterator for GuardedIterator<'a, T, D> {
+    type Item = DbResult<TableItem<'a, T>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
 
 #[auto_impl(&, Arc)]
 pub trait TableRead<T: TableSchema> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>>;
 
-    fn iter<'a>(&'a self, key: &T::Key) -> Result<TableIter<'a, '_, T>>;
+    fn iter<'a>(&'a self, key: &T::Key) -> Result<TableIter<'a, T>>;
 
     fn iter_from_start(&self) -> Result<TableIter<T>>;
 }

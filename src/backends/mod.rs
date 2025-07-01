@@ -7,6 +7,7 @@ mod write_schema;
 use std::sync::Arc;
 
 pub use impls::in_memory_db::InMemoryDatabase;
+use parking_lot::Mutex;
 pub use table::{TableIter, TableKey, TableRead, TableReader, TableSchema, TableValue};
 pub use table_name::{TableName, VersionedKVName};
 pub use write_schema::WriteSchemaTrait;
@@ -33,7 +34,7 @@ pub trait DatabaseTrait: Sized + Send + Sync {
     /// # Returns
     ///
     /// A `Result` containing an implementation of `TableReader` for the specified schema.
-    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T> + Send + Sync>;
+    fn view<T: TableSchema>(shared: &Arc<Mutex<Self>>) -> Result<impl 'static + TableRead<T> + Send + Sync>;
 
     /// Creates a new WriteSchema instance.
     ///
@@ -51,5 +52,5 @@ pub trait DatabaseTrait: Sized + Send + Sync {
     /// # Returns
     ///
     /// A `Result` indicating success or failure of the commit operation.
-    fn commit(&mut self, changes: Self::WriteSchema) -> Result<()>;
+    fn commit(shared: Arc<Mutex<Self>>, changes: Self::WriteSchema) -> Result<()>;
 }
