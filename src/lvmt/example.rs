@@ -18,16 +18,16 @@ use super::{
 };
 
 pub struct LvmtStorage<D: DatabaseTrait> {
-    backend: Arc<Mutex<D>>,
+    backend: Arc<D>,
     key_value_cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue>>>,
     amt_node_cache: Arc<Mutex<VersionedStoreCache<AmtNodes>>>,
     slot_alloc_cache: Arc<Mutex<VersionedStoreCache<SlotAllocations>>>,
 }
 
 impl<D: DatabaseTrait> LvmtStorage<D> {
-    pub fn new(backend: Arc<Mutex<D>>) -> Result<Self> {
+    pub fn new(backend: Arc<D>) -> Result<Self> {
         Ok(Self {
-            backend: backend.clone(),
+            backend,
             key_value_cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
             amt_node_cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
             slot_alloc_cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
@@ -42,7 +42,7 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         let slot_alloc_store =
             VersionedStore::new(self.backend.clone(), self.slot_alloc_cache.clone())?;
         let auth_changes =
-            KeyValueStoreBulks::new(Arc::new(D::view::<AuthChangeTable>(&self.backend)?));
+            KeyValueStoreBulks::new(Arc::new(self.backend.view::<AuthChangeTable>()?));
 
         Ok(LvmtStore::new(
             key_value_store,
@@ -53,7 +53,9 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
     }
 
     pub fn commit(&mut self, write_schema: <D as DatabaseTrait>::WriteSchema) -> Result<()> {
-        D::commit(self.backend, write_schema)
+        let backend =
+            Arc::get_mut(&mut self.backend).expect("Exclusive access to backend required");
+        backend.commit(write_schema)
     }
 
     pub fn confirmed_pending_to_history(

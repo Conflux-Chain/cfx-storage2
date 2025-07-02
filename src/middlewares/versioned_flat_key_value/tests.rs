@@ -689,7 +689,7 @@ pub fn gen_updates(
 
 #[allow(clippy::type_complexity)]
 fn gen_init<D: DatabaseTrait>(
-    db: Arc<Mutex<D>>,
+    db: Arc<D>,
     num_history: usize,
     rng: &mut ChaChaRng,
     max_num_new_keys: usize,
@@ -1166,7 +1166,7 @@ fn test_versioned_store<D: DatabaseTrait>(
 
     // init history part
     let write_schema = D::write_schema();
-    let mut db_arc = Arc::new(Mutex::new(db));
+    let mut db_arc = Arc::new(db);
     let (history_cids, history_updates, pending_part) = gen_init(
         db_arc.clone(),
         num_history,

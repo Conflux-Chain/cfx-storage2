@@ -4,7 +4,6 @@ use std::{
 };
 
 use once_cell::sync::Lazy;
-use parking_lot::Mutex;
 use rand_chacha::ChaChaRng;
 
 use amt::{AmtParams, CreateMode};
@@ -91,7 +90,7 @@ fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
     let changes_3 = get_changes_from_updates(updates_3);
 
     // Initialize db
-    let mut db = LvmtStorage::<D>::new(Arc::new(Mutex::new(backend))).unwrap();
+    let mut db = LvmtStorage::<D>::new(Arc::new(backend).clone()).unwrap();
 
     // Get a manager for db
     let mut lvmt = db.as_manager().unwrap();

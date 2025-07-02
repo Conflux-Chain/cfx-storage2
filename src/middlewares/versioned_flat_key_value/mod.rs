@@ -70,14 +70,14 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     }
 
     pub fn new<D: DatabaseTrait>(
-        db: Arc<Mutex<D>>,
+        db: Arc<D>,
         pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
     ) -> Result<Self> {
-        let history_index_table = Arc::new(D::view::<HistoryIndicesTable<T>>(&db)?);
-        let commit_id_table = Arc::new(D::view::<CommitIDSchema>(&db)?);
-        let history_number_table = Arc::new(D::view::<HistoryNumberSchema>(&db)?);
+        let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
+        let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
+        let history_number_table = Arc::new(db.view::<HistoryNumberSchema>()?);
         let change_history_table =
-            KeyValueStoreBulks::new(Arc::new(D::view::<HistoryChangeTable<T>>(&db)?));
+            KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
 
         let versioned_store = VersionedStore {
             pending_part,
@@ -307,7 +307,7 @@ fn iter_history<'db, T: VersionedKeyValueSchema>(
 }
 
 pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
-    db: Arc<Mutex<D>>,
+    db: Arc<D>,
     pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
     new_root_commit_id: CommitID,
     write_schema: &D::WriteSchema,
@@ -333,14 +333,14 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
 }
 
 pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
-    db: Arc<Mutex<D>>,
+    db: Arc<D>,
     to_confirm_start_height: usize,
     to_confirm_maps: Vec<HashMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    let history_index_table = D::view::<HistoryIndicesTable<T>>(&db)?;
+    let history_index_table = db.view::<HistoryIndicesTable<T>>()?;
     let change_history_table =
-        KeyValueStoreBulks::new(Arc::new(D::view::<HistoryChangeTable<T>>(&db)?));
+        KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
 
     let mut history_index_cache = HistoryIndexCache::new();
     for (delta_height, updates) in to_confirm_maps.into_iter().enumerate() {
@@ -371,13 +371,13 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
 }
 
 pub fn confirm_ids_to_history<D: DatabaseTrait>(
-    db: Arc<Mutex<D>>,
+    db: Arc<D>,
     to_confirm_start_height: usize,
     to_confirm_ids: &[CommitID],
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    let commit_id_table = D::view::<CommitIDSchema>(&db)?;
-    let history_number_table = D::view::<HistoryNumberSchema>(&db)?;
+    let commit_id_table = db.view::<CommitIDSchema>()?;
+    let history_number_table = db.view::<HistoryNumberSchema>()?;
 
     for (delta_height, confirmed_commit_id) in to_confirm_ids.iter().enumerate() {
         let height = to_confirm_start_height + delta_height;

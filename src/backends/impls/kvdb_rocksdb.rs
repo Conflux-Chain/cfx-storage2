@@ -12,12 +12,12 @@ use super::super::{
 };
 use crate::errors::{DatabaseError, Result};
 
+use kvdb::KeyValueDB;
 use kvdb_rocksdb::DatabaseConfig;
-use parking_lot::Mutex;
 
 pub struct RocksDBColumn {
     col: u32,
-    inner: Arc<Mutex<kvdb_rocksdb::Database>>,
+    inner: Arc<kvdb_rocksdb::Database>,
 }
 
 pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database> {
@@ -28,7 +28,7 @@ pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database
 
 impl<T: TableSchema> TableRead<T> for RocksDBColumn {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
-        if let Some(v) = self.inner.lock().get(self.col, key.encode().borrow())? {
+        if let Some(v) = self.inner.get(self.col, key.encode().borrow())? {
             let owned = <T::Value>::decode_owned(v)?;
             Ok(Some(Cow::Owned(owned)))
         } else {
@@ -39,7 +39,6 @@ impl<T: TableSchema> TableRead<T> for RocksDBColumn {
     fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
         let iter = self
             .inner
-            .lock()
             .iter_from(self.col, &key.encode())
             .map(|kv| match kv {
                 Ok((k, v)) => Ok((
@@ -53,7 +52,7 @@ impl<T: TableSchema> TableRead<T> for RocksDBColumn {
     }
 
     fn iter_from_start(&self) -> Result<TableIter<T>> {
-        let iter = self.inner.lock().iter(self.col).map(|kv| match kv {
+        let iter = self.inner.iter(self.col).map(|kv| match kv {
             Ok((k, v)) => Ok((
                 Cow::Owned(<T::Key>::decode_owned(k.into_vec())?),
                 Cow::Owned(<T::Value>::decode_owned(v)?),
@@ -69,10 +68,10 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
     type TableID = u32;
     type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
 
-    fn view<T: TableSchema>(shared: &Arc<Mutex<Self>>) -> Result<impl 'static + TableRead<T>> {
+    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T>> {
         Ok(RocksDBColumn {
             col: T::NAME.into(),
-            inner: shared.clone(),
+            inner: self.clone(),
         })
     }
 
@@ -80,7 +79,7 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
         Self::WriteSchema::new()
     }
 
-    fn commit(shared: Arc<Mutex<Self>>, changes: Self::WriteSchema) -> Result<()> {
+    fn commit(&mut self, changes: Self::WriteSchema) -> Result<()> {
         let mut tx = kvdb::DBTransaction::new();
         for (col, key, value) in changes.drain() {
             if let Some(v) = value {
@@ -89,8 +88,7 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
                 tx.delete(col, key.borrow())
             }
         }
-        
-        let guard = shared.lock();
-        Ok(guard.write(tx)?)
+
+        Ok(KeyValueDB::write(self, tx)?)
     }
 }

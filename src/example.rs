@@ -11,14 +11,14 @@ use parking_lot::Mutex;
 use static_assertions::assert_impl_all;
 
 pub struct Storage {
-    backend: Arc<Mutex<InMemoryDatabase>>,
+    backend: Arc<InMemoryDatabase>,
     cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue>>>,
 }
 
 impl Storage {
     pub fn new() -> Self {
         Self {
-            backend: Mutex::new(InMemoryDatabase::empty()).into(),
+            backend: InMemoryDatabase::empty().into(),
             cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
         }
     }
