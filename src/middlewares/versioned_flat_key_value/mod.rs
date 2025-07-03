@@ -91,7 +91,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     }
 
     pub fn add_to_pending_part(
-        &mut self,
+        &self,
         parent_commit: Option<CommitID>,
         commit: CommitID,
         updates: HashMap<T::Key, Option<T::Value>>,

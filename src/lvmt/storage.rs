@@ -64,7 +64,7 @@ impl<'db> LvmtStore<'db> {
     }
 
     pub fn commit(
-        &mut self,
+        &self,
         old_commit: Option<CommitID>,
         new_commit: CommitID,
         changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
