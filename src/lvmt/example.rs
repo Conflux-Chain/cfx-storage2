@@ -34,7 +34,11 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         })
     }
 
-    pub fn as_manager(&mut self) -> Result<LvmtStore<'_>> {
+    pub fn get_backend(&self) -> Arc<D> {
+        self.backend.clone()
+    }
+
+    pub fn as_manager(&self) -> Result<LvmtStore<'_>> {
         let key_value_store =
             VersionedStore::new(self.backend.clone(), self.key_value_cache.clone())?;
         let amt_node_store =
@@ -59,7 +63,7 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
     }
 
     pub fn confirmed_pending_to_history(
-        &mut self,
+        &self,
         new_root_commit_id: CommitID,
         write_schema: &D::WriteSchema,
     ) -> Result<()> {

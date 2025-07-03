@@ -53,7 +53,7 @@ impl DatabaseTrait for InMemoryDatabase {
     type TableID = u32;
     type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
 
-    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T>> {
+    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T> + Send + Sync> {
         Ok(InMemoryTable {
             inner: self.clone(),
             col: T::NAME.into(),
