@@ -34,25 +34,47 @@ fn warmup<D: DatabaseTrait>(
 
     // Get a manager for db
     let mut lvmt = db.as_manager().unwrap();
-    let write_schema = D::write_schema();
+    let mut write_schema = D::write_schema();
 
     let mut old_commit = None;
     let mut num_epochs = 0;
+    let mut batched_changes = Vec::new();
     for (epoch, events) in tasks.enumerate() {
-        num_epochs += 1;
-
-        // Perform a non-forking commit; the current version including no deletion
         let changes = events.0.into_iter().filter_map(|event| match event {
             Event::Write(key, value) => {
                 Some((key.into_boxed_slice(), Some(value.into_boxed_slice())))
             }
             Event::Read(_) => None,
         });
-        let current_commit = get_commit_id_from_epoch_id(epoch);
-        lvmt.commit(old_commit, current_commit, changes, &write_schema, &AMT)
-            .unwrap();
 
-        old_commit = Some(current_commit);
+        batched_changes.extend(changes);
+
+        if (epoch + 1) % opts.commit_epoch == 0 {
+            num_epochs += 1;
+
+            // Perform a non-forking commit; the current version including no deletion
+            
+            let current_commit = get_commit_id_from_epoch_id(num_epochs);
+            lvmt.commit(old_commit, current_commit, batched_changes.into_iter(), &write_schema, &AMT)
+                .unwrap();
+
+            old_commit = Some(current_commit);
+
+            batched_changes = Vec::new();
+
+            // Persist confirmed commits from caches to the backend.
+            // Must drop the manager first because it holds a read reference to the backend.
+            drop(lvmt);
+            if let Some(last_commit) = old_commit {
+                db.confirmed_pending_to_history(last_commit, &write_schema)
+                    .unwrap();
+                db.commit(write_schema).unwrap();
+            }
+
+            // Get a new manager for db
+            lvmt = db.as_manager().unwrap();
+            write_schema = D::write_schema();
+        }
 
         if (epoch + 1) % opts.report_epoch == 0 {
             println!(
@@ -65,14 +87,28 @@ fn warmup<D: DatabaseTrait>(
 
     // Persist confirmed commits from caches to the backend.
     // Must drop the manager first because it holds a read reference to the backend.
-    drop(lvmt);
-    if let Some(last_commit) = old_commit {
-        db.confirmed_pending_to_history(last_commit, &write_schema)
+    if !batched_changes.is_empty() {
+        num_epochs += 1;
+
+        // Perform a non-forking commit; the current version including no deletion
+        
+        let current_commit = get_commit_id_from_epoch_id(num_epochs);
+        lvmt.commit(old_commit, current_commit, batched_changes.into_iter(), &write_schema, &AMT)
             .unwrap();
-        db.commit(write_schema).unwrap();
+
+        old_commit = Some(current_commit);
+
+        // Persist confirmed commits from caches to the backend.
+        // Must drop the manager first because it holds a read reference to the backend.
+        drop(lvmt);
+        if let Some(last_commit) = old_commit {
+            db.confirmed_pending_to_history(last_commit, &write_schema)
+                .unwrap();
+            db.commit(write_schema).unwrap();
+        }
     }
 
-    (old_commit, num_epochs)
+    (old_commit, num_epochs + 1)
 }
 
 #[inline]

@@ -75,7 +75,7 @@ fn warmup<D: DatabaseTrait>(
 
     // Get a manager for db
     let mut manager = db.as_manager().unwrap();
-    let write_schema = D::write_schema();
+    let mut write_schema = D::write_schema();
 
     let mut old_commit = None;
     let mut num_epochs = 0;
@@ -107,15 +107,21 @@ fn warmup<D: DatabaseTrait>(
                 epoch + 1
             );
         }
-    }
 
-    // Persist confirmed commits from caches to the backend.
-    // Must drop the manager first because it holds a read reference to the backend.
-    drop(manager);
-    if let Some(last_commit) = old_commit {
-        db.confirmed_pending_to_history(last_commit, &write_schema)
-            .unwrap();
-        db.commit(write_schema).unwrap();
+        if (epoch + 1) % opts.commit_epoch == 0 {
+            // Persist confirmed commits from caches to the backend.
+            // Must drop the manager first because it holds a read reference to the backend.
+            drop(manager);
+            if let Some(last_commit) = old_commit {
+                db.confirmed_pending_to_history(last_commit, &write_schema)
+                    .unwrap();
+                db.commit(write_schema).unwrap();
+            }
+
+            // Get a new manager for db
+            manager = db.as_manager().unwrap();
+            write_schema = D::write_schema();
+        }
     }
 
     (old_commit, num_epochs)
