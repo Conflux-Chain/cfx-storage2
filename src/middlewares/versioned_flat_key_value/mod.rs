@@ -49,7 +49,7 @@ use std::collections::BTreeMap;
 ///    - An `end_version_number` for a previous (immutable) record
 ///
 /// Used in conjunction with [`history_indices::HistoryIndices`] to maintain version history through chained records.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 
 pub type HistoryChangeKey<K> = ChangeKey<HistoryNumber, K>;

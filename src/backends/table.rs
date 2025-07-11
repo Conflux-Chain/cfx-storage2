@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::hash::Hash;
 
 use super::serde::{Decode, Encode, EncodeSubKey};
 use super::table_name::TableName;
@@ -30,7 +31,7 @@ combine_traits!(TableValue: 'static + Encode + Decode + ToOwned  + Send + Sync +
 
 pub trait TableSchema: 'static + Copy + Send + Sync {
     const NAME: TableName;
-    type Key: TableKey + ?Sized;
+    type Key: TableKey + ?Sized + Hash;
     type Value: TableValue + ?Sized;
 }
 

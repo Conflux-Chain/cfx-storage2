@@ -1,5 +1,5 @@
 use std::{
-    borrow::{Borrow, Cow}, collections::HashMap, path::PathBuf
+    borrow::{Borrow, Cow}, collections::HashMap, num::NonZeroUsize, path::PathBuf
 };
 
 use super::super::{
@@ -12,10 +12,13 @@ use crate::errors::{DatabaseError, Result};
 
 use kvdb::KeyValueDB;
 use kvdb_rocksdb::DatabaseConfig;
+use lru::LruCache;
+use parking_lot::Mutex;
 
-pub struct RocksDBColumn<'a> {
+pub struct CachedRocksDBColumn<'a, T: TableSchema> {
     col: u32,
     inner: &'a kvdb_rocksdb::Database,
+    cache: Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>,
 }
 
 pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database> {
@@ -31,14 +34,33 @@ pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database
     Ok(kvdb_rocksdb::Database::open(&config, db_path)?)
 }
 
-impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
+impl<'b, T: TableSchema> TableRead<T> for CachedRocksDBColumn<'b, T> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
-        if let Some(v) = KeyValueDB::get(self.inner, self.col, key.encode().borrow())? {
-            let owned = <T::Value>::decode_owned(v)?;
-            Ok(Some(Cow::Owned(owned)))
-        } else {
-            Ok(None)
-        }
+        // 1. get from cache
+        {
+            let mut cache = self.cache.lock();
+            if let Some(cached_result) = cache.get(key) {
+                return Ok(cached_result.as_ref().map(|v| Cow::Owned(v.clone())));
+            }
+        } // unlock
+
+        // 2. cache miss, get from db
+        let db_result = match KeyValueDB::get(self.inner, self.col, key.encode().borrow())? {
+            Some(v_bytes) => {
+                let value = <T::Value>::decode_owned(v_bytes)?;
+                Some(value)
+            }
+            None => None,
+        };
+
+        // 3. write db result to cache
+        {
+            let mut cache = self.cache.lock();
+            cache.put(Box::new(key.clone()), db_result.clone());
+        } // unlock
+
+        // 4. return db result
+        Ok(db_result.map(Cow::Owned))
     }
 
     fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
@@ -74,9 +96,11 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
     type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
 
     fn view<T: TableSchema>(&self) -> Result<impl '_ + TableRead<T>> {
-        Ok(RocksDBColumn {
+        const CACHE_CAPACITY: usize = 100_000;
+        Ok(CachedRocksDBColumn {
             col: T::NAME.into(),
             inner: self,
+            cache: Mutex::new(LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap())),
         })
     }
 
