@@ -128,10 +128,10 @@ pub fn run_tasks<D: DatabaseTrait>(
                     }
                 }
                 Event::Write(key, value) => {
-                    write_count += 1;
-                    // if write_count <= 1 {
+                    if write_count <= 1 {
+                        write_count += 1;
                         changes.push((Cow::Owned::<[u8]>(key), Some(Cow::Owned::<[u8]>(value))))
-                    // }
+                    }
                 }
             }
         }
@@ -195,7 +195,7 @@ fn main() {
 
     match options.backend {
         asb_options::Backend::RocksDB => {
-            let backend = open_database(TableName::max_index() + 1, db_dir).unwrap();
+            let backend = open_database(1, db_dir).unwrap();
             let (mut db, reporter) = initialize_lvmt(backend, &options);
             run_tasks(&mut db, tasks, reporter, &options);
         }

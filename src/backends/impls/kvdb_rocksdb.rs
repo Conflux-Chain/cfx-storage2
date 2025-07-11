@@ -1,6 +1,5 @@
 use std::{
-    borrow::{Borrow, Cow},
-    path::PathBuf,
+    borrow::{Borrow, Cow}, collections::HashMap, path::PathBuf
 };
 
 use super::super::{
@@ -20,7 +19,14 @@ pub struct RocksDBColumn<'a> {
 }
 
 pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database> {
-    let config = DatabaseConfig::with_columns(num_cols);
+    let mut config = DatabaseConfig::with_columns(num_cols);
+    let total_memory_budget = 8 * 1024;
+    let column_memory_budget = total_memory_budget / num_cols as usize;
+    let mut map = HashMap::new();
+    for i in 0..num_cols {
+        map.insert(i, column_memory_budget);
+    }
+    config.memory_budget = map;
     let db_path = PathBuf::from(path);
     Ok(kvdb_rocksdb::Database::open(&config, db_path)?)
 }

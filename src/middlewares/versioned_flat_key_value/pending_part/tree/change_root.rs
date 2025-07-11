@@ -42,6 +42,28 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         })
     }
 
+    pub fn remove_root(&mut self, commit_id: S::CommitId) -> PendResult<ConfirmedPathInfo<S>, S> {
+        let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
+
+        assert_eq!(self.index_map.len(), 1);
+
+        let target_node = self.get_node_by_slab_index(slab_index);
+        let to_commit = vec![(target_node.get_commit_id(), target_node.get_updates())];
+
+        self.height_of_root += 1;
+        self.parent_of_root = Some(commit_id);
+
+        // height of old_root
+        let start_height_to_commit = self.height_of_root - to_commit.len();
+        let (to_commit_ids, to_commit_maps) = to_commit.into_iter().unzip();
+
+        Ok(ConfirmedPathInfo {
+            start_height: start_height_to_commit,
+            commit_ids: to_commit_ids,
+            key_value_maps: to_commit_maps,
+        })
+    }
+
     // excluding target
     fn find_path(&self, target_slab_index: SlabIndex) -> Vec<(S::CommitId, KeyValueMap<S>)> {
         let mut target_node = self.get_node_by_slab_index(target_slab_index);

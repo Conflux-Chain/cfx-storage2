@@ -1,0 +1,1 @@
+~/gopath/bin/pprof -svg -output=$2.svg /home/marong/vscode-workspace/cfx-storage2/target/release/$1 $2.pb

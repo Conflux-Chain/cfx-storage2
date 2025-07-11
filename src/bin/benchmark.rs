@@ -13,9 +13,9 @@ use ethereum_types::H256;
 use fs_extra::dir::CopyOptions;
 
 use cfx_storage2::{
-    backends::{impls::kvdb_rocksdb::open_database, DatabaseTrait, InMemoryDatabase, TableName},
+    backends::{impls::kvdb_rocksdb::open_database, DatabaseTrait, InMemoryDatabase, TableName, TableRead},
     lvmt::{crypto::PE, example::LvmtStorage},
-    middlewares::CommitID,
+    middlewares::{CommitID, HistoryNumberSchema},
 };
 
 use once_cell::sync::Lazy;
@@ -40,6 +40,7 @@ fn warmup<D: DatabaseTrait>(
     let mut num_epochs = 0;
     let mut batched_changes = Vec::new();
     for (epoch, events) in tasks.enumerate() {
+        dbg!(epoch);
         let changes = events.0.into_iter().filter_map(|event| match event {
             Event::Write(key, value) => {
                 Some((key.into_boxed_slice(), Some(value.into_boxed_slice())))
@@ -56,6 +57,7 @@ fn warmup<D: DatabaseTrait>(
             // Perform a non-forking commit; the current version including no deletion
             
             let current_commit = get_commit_id_from_epoch_id(num_epochs);
+            dbg!(current_commit);
             lvmt.commit(old_commit, current_commit, batched_changes.into_iter(), &write_schema, &AMT)
                 .unwrap();
 
@@ -105,6 +107,13 @@ fn warmup<D: DatabaseTrait>(
         if let Some(last_commit) = old_commit {
             db.confirmed_pending_to_history(last_commit, &write_schema)
                 .unwrap();
+            db.remove_pending_to_history(last_commit, &write_schema).unwrap();
+            db.commit(write_schema).unwrap();
+        }
+    } else {
+        drop(lvmt);
+        if let Some(last_commit) = old_commit {
+            db.remove_pending_to_history(last_commit, &write_schema).unwrap();
             db.commit(write_schema).unwrap();
         }
     }
@@ -127,6 +136,8 @@ pub fn run_tasks<D: DatabaseTrait>(
     println!("Start warming up");
     let (mut old_commit, num_warmup_epochs) = if opts.warmup_from.is_none() && !opts.no_warmup {
         let old_commit = warmup(db, tasks.warmup(), opts);
+        db.iter_view();
+        dbg!(old_commit);
         if let Some(ref warmup_dir) = opts.warmup_to() {
             println!("Waiting for post ops");
 
@@ -158,9 +169,14 @@ pub fn run_tasks<D: DatabaseTrait>(
         }
         old_commit
     } else {
-        (None, 0)
+        if opts.warmup_from.is_some() {
+            let warmup_epoch_size = opts.epoch_size * 100;
+            (Some(get_commit_id_from_epoch_id(opts.total_keys / warmup_epoch_size)), opts.total_keys / warmup_epoch_size + 1)
+        } else { (None, 0) }
     };
     println!("Warm up done");
+    dbg!(old_commit);
+    dbg!(num_warmup_epochs);
 
     let frequency = if opts.report_dir.is_none() { -1 } else { 250 };
     let mut profiler = Profiler::new(frequency);
@@ -190,16 +206,17 @@ pub fn run_tasks<D: DatabaseTrait>(
 
         // Perform a non-forking commit; the current version including no deletion
         let mut changes = Vec::new();
+        let maybe_view = if let Some(old_commit) = old_commit {
+                        // lvmt.get_key(old_commit, &key).unwrap()
+                        Some(lvmt.get_state(old_commit, false)
+                            .unwrap())} else {None};
         for event in events.0.into_iter() {
             match event {
                 Event::Read(key) => {
                     read_count += 1;
 
-                    let ans = if let Some(old_commit) = old_commit {
-                        // lvmt.get_key(old_commit, &key).unwrap()
-                        lvmt.get_state(old_commit, false)
-                            .unwrap()
-                            .get(&key.into_boxed_slice())
+                    let ans = if let Some(ref view) = maybe_view {
+                            view.get(&key.into_boxed_slice())
                             .unwrap()
                     } else {
                         None
@@ -210,13 +227,14 @@ pub fn run_tasks<D: DatabaseTrait>(
                     }
                 }
                 Event::Write(key, value) => {
-                    write_count += 1;
-                    if write_count <= 1 {
+                    // if write_count <= 1 {
+                        write_count += 1;
                         changes.push((key.into_boxed_slice(), Some(value.into_boxed_slice())))
-                    }
+                    // }
                 }
             }
         }
+        drop(maybe_view);
 
         let current_commit = get_commit_id_from_epoch_id(epoch);
         lvmt.commit(
@@ -256,7 +274,12 @@ pub fn initialize_lvmt<D: DatabaseTrait>(
     opts: &Options,
 ) -> (LvmtStorage<D>, Reporter<'_>) {
     // omit opts.algorithm, use LVMT directly
-    let db = LvmtStorage::<D>::new(backend).unwrap();
+    let warmup_epoch_size = opts.epoch_size * 100;
+    let db = if opts.warmup_from.is_some() {
+        LvmtStorage::<D>::new_nonempty(backend, Some(get_commit_id_from_epoch_id(opts.total_keys / warmup_epoch_size)), opts.total_keys / warmup_epoch_size + 1).unwrap()
+    } else {
+        LvmtStorage::<D>::new(backend).unwrap()
+    };
     let counter = Box::<Counter>::default();
 
     let mut reporter = Reporter::new(opts);
