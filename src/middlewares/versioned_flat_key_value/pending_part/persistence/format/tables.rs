@@ -11,7 +11,7 @@ pub struct SnapshotsTable<S: PendingKeyValueSchema>(S);
 
 impl<S: PendingKeyValueSchema> TableSchema for SnapshotsTable<S>
 where
-    SnapshotValue<S>: Encode + Decode,
+    SnapshotValue<S>: Encode + Decode + ToOwned<Owned = SnapshotValue<S>>,
 {
     type TableName = PendingTableName;
     const NAME: PendingTableName = PendingTableName::Snapshots(S::KV_NAME);

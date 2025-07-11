@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::hash::Hash;
 
 use super::serde::{Decode, Encode, EncodeSubKey};
 use super::table_name::TableNameTrait;
@@ -33,8 +34,8 @@ pub trait TableSchema: 'static + Copy + Send + Sync {
     // Associate the schema with a specific TableName enum type
     type TableName: TableNameTrait;
     const NAME: Self::TableName;
-    type Key: TableKey + ?Sized;
-    type Value: TableValue + ?Sized;
+    type Key: TableKey + ?Sized + Hash + Clone + ToOwned<Owned = Self::Key>;
+    type Value: TableValue + ?Sized + Clone + ToOwned<Owned = Self::Value>;
 }
 
 /// A type-safe wrapper for a key that is intended to be used as the
@@ -68,8 +69,8 @@ mod tests {
     impl TableSchema for MockTable1 {
         type TableName = MockTableName;
         const NAME: MockTableName = MockTableName::MockTable1;
-        type Key = [u8];
-        type Value = [u8];
+        type Key = Vec<u8>;
+        type Value = Vec<u8>;
     }
 
     #[derive(Clone, Copy)]
@@ -77,8 +78,8 @@ mod tests {
     impl TableSchema for MockTable2 {
         type TableName = MockTableName;
         const NAME: MockTableName = MockTableName::MockTable2;
-        type Key = [u8];
-        type Value = [u8];
+        type Key = Vec<u8>;
+        type Value = Vec<u8>;
     }
 
     #[derive(Clone, Copy)]
@@ -86,8 +87,8 @@ mod tests {
     impl TableSchema for MockTable3 {
         type TableName = MockTableName;
         const NAME: MockTableName = MockTableName::MockTable3;
-        type Key = [u8];
-        type Value = [u8];
+        type Key = Vec<u8>;
+        type Value = Vec<u8>;
     }
 
     /// Generic test to verify `DatabaseTrait` implementations.
@@ -130,19 +131,19 @@ mod tests {
 
         // --- Test: get() ---
         let val = reader
-            .get(b"key2:20")?
+            .get(&b"key2:20".to_vec())?
             .expect("Value for key2:20 should exist");
         assert_eq!(*val, b"value2:twenty".to_vec());
 
         // Verify that keys from other tables are not accessible.
-        let val_none_other_table = reader.get(b"key1:10")?;
+        let val_none_other_table = reader.get(&b"key1:10".to_vec())?;
         assert!(
             val_none_other_table.is_none(),
             "Should not find a key from another table"
         );
 
         // Verify that a non-existent key returns None.
-        let val_none = reader.get(b"key2:99")?;
+        let val_none = reader.get(&b"key2:99".to_vec())?;
         assert!(val_none.is_none(), "Value for key2:99 should not exist");
 
         // --- Test: iter_from_start() ---
@@ -164,19 +165,19 @@ mod tests {
 
         // --- Test: iter() ---
         let iter_from_20: Vec<_> = reader
-            .iter(b"key2:20")?
+            .iter(&b"key2:20".to_vec())?
             .map(|kv| kv.map(|(k, v)| (k.into_owned(), v.into_owned())))
             .collect::<std::result::Result<Vec<_>, DatabaseError>>()?;
         assert_eq!(iter_from_20, &test_data2[1..]);
 
         let iter_from_25: Vec<_> = reader
-            .iter(b"key2:25")?
+            .iter(&b"key2:25".to_vec())?
             .map(|kv| kv.map(|(k, v)| (k.into_owned(), v.into_owned())))
             .collect::<std::result::Result<Vec<_>, DatabaseError>>()?;
         assert_eq!(iter_from_25, &test_data2[2..]);
 
         let iter_from_50: Vec<_> = reader
-            .iter(b"key2:50")?
+            .iter(&b"key2:50".to_vec())?
             .map(|kv| kv.map(|(k, v)| (k.into_owned(), v.into_owned())))
             .collect::<std::result::Result<Vec<_>, DatabaseError>>()?;
         assert!(iter_from_50.is_empty());

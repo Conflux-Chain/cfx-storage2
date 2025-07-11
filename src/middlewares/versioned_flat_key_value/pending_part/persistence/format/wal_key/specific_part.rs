@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::hash::{Hash, Hasher};
 
 use super::{DecResult, Decode, DecodeError, Encode, PendingKeyValueSchema};
 
@@ -64,6 +65,23 @@ where
                 key1.cmp(key2)
             }
             _ => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
+impl<S: PendingKeyValueSchema> Hash for WalKeySpecificPart<S> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+
+        match self {
+            WalKeySpecificPart::AddNodeMapKey(key) => {
+                key.hash(state);
+            }
+            
+            WalKeySpecificPart::AddNodeMeta
+            | WalKeySpecificPart::ChangeRootMeta
+            | WalKeySpecificPart::MakePivotMeta
+            | WalKeySpecificPart::DiscardMeta => {}
         }
     }
 }
