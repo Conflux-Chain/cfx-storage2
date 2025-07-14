@@ -1,5 +1,9 @@
 use std::{
-    borrow::Cow, fs, sync::Arc, thread::sleep, time::{Duration, Instant}
+    borrow::Cow,
+    fs,
+    sync::Arc,
+    thread::sleep,
+    time::{Duration, Instant},
 };
 
 use asb_options::{Options, StructOpt};
@@ -7,7 +11,10 @@ use asb_profile::{Counter, Profiler, Reporter};
 use asb_tasks::{Event, Events, TaskTrait};
 use fs_extra::dir::CopyOptions;
 
-use cfx_storage2::backends::{impls::kvdb_rocksdb::open_database, DatabaseTrait, InMemoryDatabase, TableName, TableRead, TableSchema, WriteSchemaTrait};
+use cfx_storage2::backends::{
+    impls::kvdb_rocksdb::CachedDB, DatabaseTrait, InMemoryDatabase, TableName, TableRead,
+    TableSchema, WriteSchemaTrait,
+};
 
 #[derive(Clone, Copy)]
 struct MockTable;
@@ -23,20 +30,20 @@ fn warmup<D: DatabaseTrait>(
     opts: &Options,
 ) {
     let time = Instant::now();
-    
+
     for (epoch, events) in tasks.enumerate() {
         let changes = events.0.into_iter().filter_map(|event| match event {
-            Event::Write(key, value) => {
-                Some((Cow::Owned::<Vec<u8>>(key), Some(Cow::Owned::<Vec<u8>>(value))))
-            }
+            Event::Write(key, value) => Some((
+                Cow::Owned::<Vec<u8>>(key),
+                Some(Cow::Owned::<Vec<u8>>(value)),
+            )),
             Event::Read(_) => None,
         });
 
         let write_schema = D::write_schema();
         write_schema.write_batch::<MockTable>(changes);
 
-        db.commit(write_schema)
-                .unwrap();
+        db.commit(write_schema).unwrap();
 
         if (epoch + 1) % opts.report_epoch == 0 {
             println!(
@@ -87,7 +94,7 @@ pub fn run_tasks<D: DatabaseTrait>(
 
             panic!("Retry limit exceeds!");
         }
-    } 
+    }
     println!("Warm up done");
 
     let frequency = if opts.report_dir.is_none() { -1 } else { 250 };
@@ -130,7 +137,10 @@ pub fn run_tasks<D: DatabaseTrait>(
                 Event::Write(key, value) => {
                     if write_count <= 1 {
                         write_count += 1;
-                        changes.push((Cow::Owned::<Vec<u8>>(key), Some(Cow::Owned::<Vec<u8>>(value))))
+                        changes.push((
+                            Cow::Owned::<Vec<u8>>(key),
+                            Some(Cow::Owned::<Vec<u8>>(value)),
+                        ))
                     }
                 }
             }
@@ -148,10 +158,7 @@ pub fn run_tasks<D: DatabaseTrait>(
     reporter.collect_profiling(profiler);
 }
 
-pub fn initialize_lvmt<D: DatabaseTrait>(
-    backend: D,
-    opts: &Options,
-) -> (D, Reporter<'_>) {
+pub fn initialize_lvmt<D: DatabaseTrait>(backend: D, opts: &Options) -> (D, Reporter<'_>) {
     // omit opts.algorithm, use LVMT directly
     let counter = Box::<Counter>::default();
 
@@ -195,7 +202,7 @@ fn main() {
 
     match options.backend {
         asb_options::Backend::RocksDB => {
-            let backend = open_database(1, db_dir).unwrap();
+            let backend = CachedDB::open(1, db_dir).unwrap();
             let (mut db, reporter) = initialize_lvmt(backend, &options);
             run_tasks(&mut db, tasks, reporter, &options);
         }

@@ -59,8 +59,14 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         {
             (
                 Some(self.amt_node_store.get_versioned_store(&old_commit, true)?),
-                Some(self.slot_alloc_store.get_versioned_store(&old_commit, true)?),
-                Some(self.key_value_store.get_versioned_store(&old_commit, true)?),
+                Some(
+                    self.slot_alloc_store
+                        .get_versioned_store(&old_commit, true)?,
+                ),
+                Some(
+                    self.key_value_store
+                        .get_versioned_store(&old_commit, true)?,
+                ),
             )
         } else {
             (None, None, None)

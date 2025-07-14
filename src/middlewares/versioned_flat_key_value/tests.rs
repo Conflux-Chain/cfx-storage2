@@ -5,9 +5,7 @@ use super::{
     VersionedStore,
 };
 use crate::{
-    backends::{
-        impls::kvdb_rocksdb::open_database, DatabaseTrait, InMemoryDatabase, VersionedKVName,
-    },
+    backends::{impls::kvdb_rocksdb::CachedDB, DatabaseTrait, InMemoryDatabase, VersionedKVName},
     errors::Result,
     middlewares::{
         versioned_flat_key_value::{
@@ -167,7 +165,11 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
 {
     type Store<'a> = MockOneStore<T::Key, T::Value> where Self: 'a;
 
-    fn get_versioned_store<'a>(&'a self, commit: &CommitID, _checkout_current: bool) -> Result<Self::Store<'a>> {
+    fn get_versioned_store<'a>(
+        &'a self,
+        commit: &CommitID,
+        _checkout_current: bool,
+    ) -> Result<Self::Store<'a>> {
         if let Some(pending_res) = self.pending.tree.get(commit) {
             Ok(MockOneStore::from_mock_map(&pending_res.store))
         } else if let Some((_, history_res)) = self.history.get(commit) {
@@ -1296,7 +1298,7 @@ fn test_versioned_store<D: DatabaseTrait>(
     }
 }
 
-pub fn empty_rocksdb(db_path: &str) -> Result<kvdb_rocksdb::Database> {
+pub fn empty_rocksdb(db_path: &str) -> Result<CachedDB> {
     use crate::backends::TableName;
 
     if std::path::Path::new(db_path).exists() {
@@ -1304,7 +1306,7 @@ pub fn empty_rocksdb(db_path: &str) -> Result<kvdb_rocksdb::Database> {
     }
     std::fs::create_dir_all(db_path).unwrap();
 
-    open_database(TableName::max_index() + 1, db_path)
+    CachedDB::open(TableName::max_index() + 1, db_path)
 }
 
 #[test]

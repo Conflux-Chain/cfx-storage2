@@ -6,7 +6,7 @@ use rand_chacha::ChaChaRng;
 use amt::{AmtParams, CreateMode};
 
 use crate::{
-    backends::{DatabaseTrait, InMemoryDatabase},
+    backends::{impls::kvdb_rocksdb::CachedDB, DatabaseTrait, InMemoryDatabase},
     errors::Result,
     lvmt::types::{LvmtValue, KEY_SLOT_SIZE},
     middlewares::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test, CommitID},
@@ -137,7 +137,7 @@ fn test_lvmt_store_rocksdb() {
     let db_path = "__test_lvmt_store";
 
     let backend = empty_rocksdb(db_path).unwrap();
-    test_lvmt_store::<kvdb_rocksdb::Database>(backend, 100000);
+    test_lvmt_store::<CachedDB>(backend, 100000);
 
     if std::path::Path::new(db_path).exists() {
         std::fs::remove_dir_all(db_path).unwrap();
@@ -161,9 +161,15 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             types::SLOT_SIZE,
         };
 
-        let amt_node_view = self.get_amt_node_store().get_versioned_store(&commit, true)?;
-        let slot_alloc_view = self.get_slot_alloc_store().get_versioned_store(&commit, true)?;
-        let key_value_view = self.get_key_value_store().get_versioned_store(&commit, true)?;
+        let amt_node_view = self
+            .get_amt_node_store()
+            .get_versioned_store(&commit, true)?;
+        let slot_alloc_view = self
+            .get_slot_alloc_store()
+            .get_versioned_store(&commit, true)?;
+        let key_value_view = self
+            .get_key_value_store()
+            .get_versioned_store(&commit, true)?;
 
         // For each Amt tree (except the children of the root Amt),
         // the leaf node with the same AmtId in its parent Amt tree must be fully allocated.

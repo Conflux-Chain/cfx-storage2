@@ -188,7 +188,11 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
     for VersionedStore<'cache, 'db, T>
 {
     type Store<'a> = SnapshotView<'a, 'db, T> where Self: 'a;
-    fn get_versioned_store<'a>(&'a self, commit: &CommitID, checkout_current: bool) -> Result<Self::Store<'a>> {
+    fn get_versioned_store<'a>(
+        &'a self,
+        commit: &CommitID,
+        checkout_current: bool,
+    ) -> Result<Self::Store<'a>> {
         if self.pending_part.contains_commit_id(commit) {
             let latest_history =
                 if let Some(history_commit) = self.pending_part.get_parent_of_root() {

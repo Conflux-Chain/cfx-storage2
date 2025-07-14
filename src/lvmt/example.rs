@@ -4,7 +4,8 @@ use crate::{
     backends::{DatabaseTrait, TableRead},
     errors::Result,
     middlewares::{
-        confirm_ids_to_history, confirm_maps_to_history, CommitID, HistoryNumber, HistoryNumberSchema, KeyValueStoreBulks, VersionedStore, VersionedStoreCache
+        confirm_ids_to_history, confirm_maps_to_history, CommitID, HistoryNumber,
+        HistoryNumberSchema, KeyValueStoreBulks, VersionedStore, VersionedStoreCache,
     },
 };
 
@@ -48,7 +49,11 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         })
     }
 
-    pub fn new_nonempty(backend: D, parent_of_root: Option<CommitID>, height_of_root: usize) -> Result<Self> {
+    pub fn new_nonempty(
+        backend: D,
+        parent_of_root: Option<CommitID>,
+        height_of_root: usize,
+    ) -> Result<Self> {
         Ok(Self {
             backend,
             key_value_cache: VersionedStoreCache::new(parent_of_root, height_of_root),

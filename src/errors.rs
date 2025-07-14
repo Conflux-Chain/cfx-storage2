@@ -51,6 +51,9 @@ pub enum DatabaseError {
 
     #[error("io error {0:?}")]
     IoError(std::io::Error),
+
+    #[error("shared access error: {0}")]
+    SharedAccessError(String),
 }
 
 pub type DbResult<T> = ::std::result::Result<T, DatabaseError>;

@@ -9,4 +9,4 @@ pub mod table_schema;
 mod tests;
 pub mod types;
 pub use auth_changes::AuthChangeTable;
-pub use table_schema::{FlatKeyValue, AmtNodes, SlotAllocations};
+pub use table_schema::{AmtNodes, FlatKeyValue, SlotAllocations};
