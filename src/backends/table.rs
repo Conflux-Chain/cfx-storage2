@@ -31,8 +31,8 @@ combine_traits!(TableValue: 'static + Encode + Decode + ToOwned  + Send + Sync +
 
 pub trait TableSchema: 'static + Copy + Send + Sync {
     const NAME: TableName;
-    type Key: TableKey + ?Sized + Hash;
-    type Value: TableValue + ?Sized;
+    type Key: TableKey + ?Sized + Hash + Clone;
+    type Value: TableValue + ?Sized + Clone + ToOwned<Owned = Self::Value>;
 }
 
 #[cfg(test)]
@@ -43,7 +43,7 @@ mod tests {
     struct MockTable;
     impl TableSchema for MockTable {
         const NAME: TableName = TableName::MockTable;
-        type Key = [u8];
-        type Value = [u8];
+        type Key = Vec<u8>;
+        type Value = Vec<u8>;
     }
 }

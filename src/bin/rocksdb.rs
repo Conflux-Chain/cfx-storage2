@@ -13,8 +13,8 @@ use cfx_storage2::backends::{impls::kvdb_rocksdb::open_database, DatabaseTrait, 
 struct MockTable;
 impl TableSchema for MockTable {
     const NAME: TableName = TableName::CommitID;
-    type Key = [u8];
-    type Value = [u8];
+    type Key = Vec<u8>;
+    type Value = Vec<u8>;
 }
 
 fn warmup<D: DatabaseTrait>(
@@ -27,7 +27,7 @@ fn warmup<D: DatabaseTrait>(
     for (epoch, events) in tasks.enumerate() {
         let changes = events.0.into_iter().filter_map(|event| match event {
             Event::Write(key, value) => {
-                Some((Cow::Owned::<[u8]>(key), Some(Cow::Owned::<[u8]>(value))))
+                Some((Cow::Owned::<Vec<u8>>(key), Some(Cow::Owned::<Vec<u8>>(value))))
             }
             Event::Read(_) => None,
         });
@@ -130,7 +130,7 @@ pub fn run_tasks<D: DatabaseTrait>(
                 Event::Write(key, value) => {
                     if write_count <= 1 {
                         write_count += 1;
-                        changes.push((Cow::Owned::<[u8]>(key), Some(Cow::Owned::<[u8]>(value))))
+                        changes.push((Cow::Owned::<Vec<u8>>(key), Some(Cow::Owned::<Vec<u8>>(value))))
                     }
                 }
             }

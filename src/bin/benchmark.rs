@@ -13,9 +13,9 @@ use ethereum_types::H256;
 use fs_extra::dir::CopyOptions;
 
 use cfx_storage2::{
-    backends::{impls::kvdb_rocksdb::open_database, DatabaseTrait, InMemoryDatabase, TableName, TableRead},
+    backends::{impls::kvdb_rocksdb::open_database, DatabaseTrait, InMemoryDatabase, TableName},
     lvmt::{crypto::PE, example::LvmtStorage},
-    middlewares::{CommitID, HistoryNumberSchema},
+    middlewares::CommitID,
 };
 
 use once_cell::sync::Lazy;

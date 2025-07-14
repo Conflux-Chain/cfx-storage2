@@ -40,7 +40,11 @@ impl<'b, T: TableSchema> TableRead<T> for CachedRocksDBColumn<'b, T> {
         {
             let mut cache = self.cache.lock();
             if let Some(cached_result) = cache.get(key) {
-                return Ok(cached_result.as_ref().map(|v| Cow::Owned(v.clone())));
+                // if let Some(cached_existing) = cached_result.as_ref() {
+                //     let cached_existing_v = *cached_existing.clone();
+                //     return Ok(Some(Cow::Owned(cached_existing_v.to_owned())))
+                // }
+                return Ok(cached_result.as_ref().map(|v| Cow::Owned((*v.clone()).to_owned())));
             }
         } // unlock
 
@@ -56,7 +60,7 @@ impl<'b, T: TableSchema> TableRead<T> for CachedRocksDBColumn<'b, T> {
         // 3. write db result to cache
         {
             let mut cache = self.cache.lock();
-            cache.put(Box::new(key.clone()), db_result.clone());
+            cache.put(Box::new(key.clone()), db_result.as_ref().map(|v| Box::new(v.clone())));
         } // unlock
 
         // 4. return db result
