@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::fmt::Debug;
-use std::sync::Arc;
 use std::hash::Hash;
+use std::sync::Arc;
 
 use super::serde::{Decode, Encode, EncodeSubKey};
 use super::table_name::TableNameTrait;

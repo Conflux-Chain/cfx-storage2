@@ -1,5 +1,5 @@
 use std::{
-    borrow::{Borrow, Cow}, collections::HashMap, marker::PhantomData, path::Path, sync::Arc, num::NonZeroUsize
+    borrow::{Borrow, Cow}, collections::HashMap, marker::PhantomData, path::Path, sync::Arc, num::NonZeroUsize, any::Any,
 };
 
 use super::super::{
@@ -18,12 +18,6 @@ use kvdb_rocksdb::DatabaseConfig;
 use lru::LruCache;
 use parking_lot::Mutex;
 
-pub struct CachedRocksDBColumn<T: TableSchema> {
-    col: u32,
-    inner: Arc<kvdb_rocksdb::Database>,
-    cache: Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>,
-}
-
 pub fn open_database<P: AsRef<Path>>(num_cols: u32, path: P) -> Result<kvdb_rocksdb::Database> {
     let mut config = DatabaseConfig::with_columns(num_cols);
     let total_memory_budget = 8 * 1024;
@@ -37,13 +31,25 @@ pub fn open_database<P: AsRef<Path>>(num_cols: u32, path: P) -> Result<kvdb_rock
     Ok(kvdb_rocksdb::Database::open(&config, path)?)
 }
 
+pub struct CachedRocksDBColumn<T: TableSchema> {
+    col: u32,
+    inner: Arc<kvdb_rocksdb::Database>,
+    cache: Arc<Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>>,
+}
+
 impl<T: TableSchema> TableRead<T> for CachedRocksDBColumn<T> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
         // 1. get from cache
         {
             let mut cache = self.cache.lock();
             if let Some(cached_result) = cache.get(key) {
-                return Ok(cached_result.as_ref().map(|v| Cow::Owned((*v.clone()).to_owned())));
+                // if let Some(cached_existing) = cached_result.as_ref() {
+                //     let cached_existing_v = *cached_existing.clone();
+                //     return Ok(Some(Cow::Owned(cached_existing_v.to_owned())))
+                // }
+                return Ok(cached_result
+                    .as_ref()
+                    .map(|v| Cow::Owned((*v.clone()).to_owned())));
             }
         } // unlock
 
@@ -59,7 +65,10 @@ impl<T: TableSchema> TableRead<T> for CachedRocksDBColumn<T> {
         // 3. write db result to cache
         {
             let mut cache = self.cache.lock();
-            cache.put(Box::new(key.clone()), db_result.as_ref().map(|v| Box::new(v.clone())));
+            cache.put(
+                Box::new(key.clone()),
+                db_result.as_ref().map(|v| Box::new(v.clone())),
+            );
         } // unlock
 
         // 4. return db result
@@ -114,6 +123,8 @@ pub struct WrappedRocksDb<TN: TableNameTrait> {
     // This is crucial for the type system to associate WrappedRocksDb<HistoricalTableName>
     // with HistoricalTableName.
     _phantom: PhantomData<TN>,
+    
+    caches: Mutex<HashMap<u32, Arc<dyn Any + Send + Sync>>>,
 }
 
 impl<TN: TableNameTrait> WrappedRocksDb<TN> {
@@ -122,7 +133,13 @@ impl<TN: TableNameTrait> WrappedRocksDb<TN> {
         Ok(Self {
             inner: Arc::new(db),
             _phantom: PhantomData,
+            caches: Mutex::new(HashMap::new()),
         })
+    }
+
+    pub fn clear_all_caches(&self) {
+        self.caches.lock().clear();
+        // dbg!("All caches have been cleared.");
     }
 }
 
@@ -130,15 +147,32 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
     // type TableID = u32;
     type WriteSchema = WriteSchemaNoSubkey<TN>;
 
-    fn view<T: TableSchema<TableName = TN>>(
-        self: &Arc<Self>,
-    ) -> Result<impl 'static + TableRead<T> + Send + Sync> {
-        const CACHE_CAPACITY: usize = 100_000;
+    fn view<T: TableSchema<TableName = TN>>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T> + Send + Sync> {
+        const CACHE_CAPACITY: usize = 200_000;
+        let col_id: u32 = T::NAME.into();
+
+        let mut caches_map = self.caches.lock();
+
+        let cache_any = caches_map.entry(col_id).or_insert_with(|| {
+            // println!(
+            //     "Creating new cache for table '{:?}' (col {})",
+            //     T::NAME,
+            //     col_id
+            // );
+            let new_cache: LruCache<Box<T::Key>, Option<Box<T::Value>>> =
+                LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap());
+            Arc::new(Mutex::new(new_cache))
+        });
+
+        let cache_typed = cache_any
+            .clone()
+            .downcast::<Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>>()
+            .expect("Cache type mismatch. This should not happen.");
 
         Ok(CachedRocksDBColumn {
-            col: T::NAME.into(),
+            col: col_id,
             inner: self.inner.clone(),
-            cache: Mutex::new(LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap())),
+            cache: cache_typed,
         })
     }
 
@@ -147,6 +181,8 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
     }
 
     fn commit(&self, changes: Self::WriteSchema) -> Result<()> {
+        self.clear_all_caches();
+
         let mut tx = kvdb::DBTransaction::new();
         for (col, key, value) in changes.drain() {
             if let Some(v) = value {
