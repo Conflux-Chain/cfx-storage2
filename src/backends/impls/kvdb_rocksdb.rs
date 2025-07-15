@@ -5,11 +5,11 @@ use std::{
 use super::super::{
     serde::{Decode, Encode},
     table::TableSchema,
-    write_schema::WriteSchemaNoSubkey,
     DatabaseTrait, TableIter, TableRead,
 };
 use crate::{
     backends::table_name::TableNameTrait,
+    backends::write_schema::HybridWriteSchema,
     errors::{DatabaseError, Result},
 };
 
@@ -145,7 +145,7 @@ impl<TN: TableNameTrait> WrappedRocksDb<TN> {
 
 impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
     // type TableID = u32;
-    type WriteSchema = WriteSchemaNoSubkey<TN>;
+    type WriteSchema = HybridWriteSchema<TN>;
 
     fn view<T: TableSchema<TableName = TN>>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T> + Send + Sync> {
         const CACHE_CAPACITY: usize = 200_000;
@@ -181,16 +181,22 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
     }
 
     fn commit(&self, changes: Self::WriteSchema) -> Result<()> {
-        self.clear_all_caches();
-
+        let caches_map = self.caches.lock();
         let mut tx = kvdb::DBTransaction::new();
-        for (col, key, value) in changes.drain() {
-            if let Some(v) = value {
-                tx.put_vec(col.into(), &key, v);
+
+        for op in changes.drain() {
+            if let Some(cache_any) = caches_map.get(&op.col_id()) {
+                op.apply_to_cache(cache_any);
+            }
+
+            if let Some(v) = op.raw_value() {
+                tx.put_vec(op.col_id(), op.raw_key(), v.to_vec());
             } else {
-                tx.delete(col.into(), key.borrow())
+                tx.delete(op.col_id(), op.raw_key())
             }
         }
+
+        drop(caches_map);
 
         Ok(KeyValueDB::write(&*self.inner, tx)?)
     }
