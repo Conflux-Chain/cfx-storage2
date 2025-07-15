@@ -31,7 +31,7 @@ combine_traits!(TableValue: 'static + Encode + Decode + ToOwned  + Send + Sync +
 
 pub trait TableSchema: 'static + Copy + Send + Sync {
     const NAME: TableName;
-    type Key: TableKey + ?Sized + Hash + Clone;
+    type Key: TableKey + ?Sized + Hash + Clone + ToOwned<Owned = Self::Key>;
     type Value: TableValue + ?Sized + Clone + ToOwned<Owned = Self::Value>;
 }
 

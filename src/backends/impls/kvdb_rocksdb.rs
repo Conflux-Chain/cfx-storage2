@@ -10,10 +10,12 @@ use std::{
 use super::super::{
     serde::{Decode, Encode},
     table::TableSchema,
-    write_schema::WriteSchemaNoSubkey,
     DatabaseTrait, TableIter, TableRead,
 };
-use crate::errors::{DatabaseError, Result};
+use crate::{
+    backends::write_schema::HybridWriteSchema,
+    errors::{DatabaseError, Result},
+};
 
 use kvdb::KeyValueDB;
 use kvdb_rocksdb::DatabaseConfig;
@@ -129,7 +131,7 @@ impl<'b, T: TableSchema> TableRead<T> for CachedRocksDBColumn<'b, T> {
 
 impl DatabaseTrait for CachedDB {
     type TableID = u32;
-    type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
+    type WriteSchema = HybridWriteSchema;
 
     fn view<T: TableSchema>(&self) -> Result<impl '_ + TableRead<T>> {
         const CACHE_CAPACITY: usize = 200_000;
@@ -165,16 +167,22 @@ impl DatabaseTrait for CachedDB {
     }
 
     fn commit(&mut self, changes: Self::WriteSchema) -> Result<()> {
-        self.clear_all_caches();
-
+        let caches_map = self.caches.lock();
         let mut tx = kvdb::DBTransaction::new();
-        for (col, key, value) in changes.drain() {
-            if let Some(v) = value {
-                tx.put_vec(col, &key, v);
+
+        for op in changes.drain() {
+            if let Some(cache_any) = caches_map.get(&op.col_id()) {
+                op.apply_to_cache(cache_any);
+            }
+
+            if let Some(v) = op.raw_value() {
+                tx.put_vec(op.col_id(), op.raw_key(), v.to_vec());
             } else {
-                tx.delete(col, key.borrow())
+                tx.delete(op.col_id(), op.raw_key())
             }
         }
+
+        drop(caches_map);
 
         let db_mut = Arc::get_mut(&mut self.db).ok_or_else(|| {
             DatabaseError::SharedAccessError(
