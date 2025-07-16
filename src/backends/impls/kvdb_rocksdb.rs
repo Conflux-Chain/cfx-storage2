@@ -1,7 +1,7 @@
 use std::{
     any::Any,
     borrow::{Borrow, Cow},
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     num::NonZeroUsize,
     path::PathBuf,
     sync::{
@@ -47,17 +47,23 @@ pub struct CachedDB {
     caches: Mutex<HashMap<u32, Arc<dyn Any + Send + Sync>>>,
     // metrics for each cache
     metrics: Mutex<HashMap<u32, Arc<CacheMetrics>>>,
-    cached_tables: HashSet<u32>,
+    cached_tables: HashMap<u32, usize>,
 }
 
 impl CachedDB {
     pub fn open(num_cols: u32, path: &str) -> Result<Self> {
         let db = open_database(num_cols, path)?;
 
-        let cached_tables = HashSet::from_iter(vec![
-            TableName::CommitID.into(),
-            TableName::HistoryIndex(crate::backends::VersionedKVName::FlatKV).into(),
-            TableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into(),
+        let cached_tables = HashMap::from_iter(vec![
+            (TableName::CommitID.into(), 1_000),
+            (
+                TableName::HistoryIndex(crate::backends::VersionedKVName::FlatKV).into(),
+                120_000,
+            ),
+            (
+                TableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into(),
+                70_000,
+            ),
         ]);
 
         Ok(Self {
@@ -273,16 +279,15 @@ impl DatabaseTrait for CachedDB {
     type WriteSchema = HybridWriteSchema;
 
     fn view<T: TableSchema>(&self) -> Result<Box<dyn '_ + TableRead<T>>> {
-        const CACHE_CAPACITY: usize = 120_000;
         let col_id: u32 = T::NAME.into();
 
-        if self.cached_tables.contains(&col_id) {
+        if let Some(&cache_capacity) = self.cached_tables.get(&col_id) {
             let mut caches_map = self.caches.lock();
             let mut metrics_map = self.metrics.lock();
 
             let cache_any = caches_map.entry(col_id).or_insert_with(|| {
                 let new_cache: LruCache<Box<T::Key>, Option<Box<T::Value>>> =
-                    LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap());
+                    LruCache::new(NonZeroUsize::new(cache_capacity).unwrap());
                 Arc::new(Mutex::new(new_cache))
             });
 
