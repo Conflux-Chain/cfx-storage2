@@ -250,10 +250,8 @@ pub fn run_tasks<D: DatabaseTrait>(
                     }
                 }
                 Event::Write(key, value) => {
-                    // if write_count <= 1 {
                     write_count += 1;
                     changes.push((key.into_boxed_slice(), Some(value.into_boxed_slice())))
-                    // }
                 }
             }
         }

@@ -56,3 +56,8 @@ rand_chacha = "0.2.1"
 [features]
 default = ["parallel-crypto"]
 parallel-crypto = ["ark-poly/parallel", "ark-ec/parallel", "amt/parallel"]
+
+[profile.release]
+lto = "fat"       # 或者 "thin"
+codegen-units = 1 # 为了最大化优化，但会增加编译时间
+panic = "abort"   # 在生产环境中，abort 通常比 unwind 更快
