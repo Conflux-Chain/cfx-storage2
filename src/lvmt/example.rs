@@ -27,8 +27,6 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         let view = self.backend.view::<HistoryNumberSchema>().unwrap();
         for i in view.iter_from_start().unwrap() {
             let (history_number, commit) = i.unwrap();
-            dbg!(history_number);
-            dbg!(commit);
         }
         drop(view);
     }

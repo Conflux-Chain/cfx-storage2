@@ -25,6 +25,12 @@ impl Storage {
     }
 }
 
+impl Default for Storage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 assert_impl_all!(VersionedStore<'_, '_, FlatKeyValue>: KeyValueStoreManager<Box<[u8]>, Box<[u8]>, H256>);
 
 #[derive(Clone, Copy, Debug)]

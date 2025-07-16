@@ -54,14 +54,11 @@ impl CachedDB {
     pub fn open(num_cols: u32, path: &str) -> Result<Self> {
         let db = open_database(num_cols, path)?;
 
-        let cached_tables = HashSet::from_iter(
-            vec![
-                TableName::CommitID.into(),
-                TableName::HistoryIndex(crate::backends::VersionedKVName::FlatKV).into(),
-                TableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into(),
-            ]
-            .into_iter(),
-        );
+        let cached_tables = HashSet::from_iter(vec![
+            TableName::CommitID.into(),
+            TableName::HistoryIndex(crate::backends::VersionedKVName::FlatKV).into(),
+            TableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into(),
+        ]);
 
         Ok(Self {
             db: Arc::new(db),
@@ -69,19 +66,6 @@ impl CachedDB {
             metrics: Mutex::new(HashMap::new()),
             cached_tables,
         })
-    }
-
-    pub fn clear_all_caches(&self) {
-        self.caches.lock().clear();
-        // dbg!("All caches have been cleared.");
-    }
-
-    pub fn clear_caches_except(&self, id_to_keep: u32) {
-        let mut caches_guard = self.caches.lock();
-        caches_guard.retain(|&key, _| key == id_to_keep);
-
-        let mut metrics_guard = self.metrics.lock();
-        metrics_guard.retain(|&key, _| key == id_to_keep);
     }
 
     pub fn print_cache_stats(&self) {
@@ -169,10 +153,12 @@ pub struct UncachedRocksDBColumn<'a> {
     inner: &'a kvdb_rocksdb::Database,
 }
 
+type TableCache<T> = LruCache<Box<<T as TableSchema>::Key>, Option<Box<<T as TableSchema>::Value>>>;
+
 pub struct CachedRocksDBColumn<'a, T: TableSchema> {
     col: u32,
     inner: &'a kvdb_rocksdb::Database,
-    cache: Arc<Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>>,
+    cache: Arc<Mutex<TableCache<T>>>,
     metrics: Arc<CacheMetrics>,
 }
 
@@ -332,9 +318,7 @@ impl DatabaseTrait for CachedDB {
             TableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into();
         type AmtHistoryKey = HistoryIndexKey<<AmtNodes as VersionedKeyValueSchema>::Key>;
 
-        // self.clear_all_caches();
         self.print_cache_stats();
-        // self.clear_caches_except(amt_history_index_col_id);
 
         let caches_map = self.caches.lock();
         let metrics_map = self.metrics.lock();

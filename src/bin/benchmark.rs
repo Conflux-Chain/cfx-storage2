@@ -40,7 +40,6 @@ fn warmup<D: DatabaseTrait>(
     let mut num_epochs = 0;
     let mut batched_changes = Vec::new();
     for (epoch, events) in tasks.enumerate() {
-        dbg!(epoch);
         let changes = events.0.into_iter().filter_map(|event| match event {
             Event::Write(key, value) => {
                 Some((key.into_boxed_slice(), Some(value.into_boxed_slice())))
@@ -51,39 +50,37 @@ fn warmup<D: DatabaseTrait>(
         batched_changes.extend(changes);
 
         // if (epoch + 1) % opts.commit_epoch == 0 {
-        if (epoch + 1) % 1 == 0 {
-            num_epochs += 1;
+        num_epochs += 1;
 
-            // Perform a non-forking commit; the current version including no deletion
+        // Perform a non-forking commit; the current version including no deletion
 
-            let current_commit = get_commit_id_from_epoch_id(num_epochs);
-            dbg!(current_commit);
-            lvmt.commit(
-                old_commit,
-                current_commit,
-                batched_changes.into_iter(),
-                &write_schema,
-                &AMT,
-            )
-            .unwrap();
+        let current_commit = get_commit_id_from_epoch_id(num_epochs);
+        lvmt.commit(
+            old_commit,
+            current_commit,
+            batched_changes.into_iter(),
+            &write_schema,
+            &AMT,
+        )
+        .unwrap();
 
-            old_commit = Some(current_commit);
+        old_commit = Some(current_commit);
 
-            batched_changes = Vec::new();
+        batched_changes = Vec::new();
 
-            // Persist confirmed commits from caches to the backend.
-            // Must drop the manager first because it holds a read reference to the backend.
-            drop(lvmt);
-            if let Some(last_commit) = old_commit {
-                db.confirmed_pending_to_history(last_commit, &write_schema)
-                    .unwrap();
-                db.commit(write_schema).unwrap();
-            }
-
-            // Get a new manager for db
-            lvmt = db.as_manager().unwrap();
-            write_schema = D::write_schema();
+        // Persist confirmed commits from caches to the backend.
+        // Must drop the manager first because it holds a read reference to the backend.
+        drop(lvmt);
+        if let Some(last_commit) = old_commit {
+            db.confirmed_pending_to_history(last_commit, &write_schema)
+                .unwrap();
+            db.commit(write_schema).unwrap();
         }
+
+        // Get a new manager for db
+        lvmt = db.as_manager().unwrap();
+        write_schema = D::write_schema();
+        // }
 
         if (epoch + 1) % opts.report_epoch == 0 {
             println!(
@@ -151,7 +148,6 @@ pub fn run_tasks<D: DatabaseTrait>(
     let (mut old_commit, num_warmup_epochs) = if opts.warmup_from.is_none() && !opts.no_warmup {
         let old_commit = warmup(db, tasks.warmup(), opts);
         db.iter_view();
-        dbg!(old_commit);
         if let Some(ref warmup_dir) = opts.warmup_to() {
             println!("Waiting for post ops");
 
@@ -182,22 +178,18 @@ pub fn run_tasks<D: DatabaseTrait>(
             panic!("Retry limit exceeds!");
         }
         old_commit
+    } else if opts.warmup_from.is_some() {
+        let warmup_epoch_size = opts.epoch_size * 100;
+        (
+            Some(get_commit_id_from_epoch_id(
+                opts.total_keys / warmup_epoch_size,
+            )),
+            opts.total_keys / warmup_epoch_size + 1,
+        )
     } else {
-        if opts.warmup_from.is_some() {
-            let warmup_epoch_size = opts.epoch_size * 100;
-            (
-                Some(get_commit_id_from_epoch_id(
-                    opts.total_keys / warmup_epoch_size,
-                )),
-                opts.total_keys / warmup_epoch_size + 1,
-            )
-        } else {
-            (None, 0)
-        }
+        (None, 0)
     };
     println!("Warm up done");
-    dbg!(old_commit);
-    dbg!(num_warmup_epochs);
 
     let frequency = if opts.report_dir.is_none() { -1 } else { 250 };
     let mut profiler = Profiler::new(frequency);
@@ -228,12 +220,7 @@ pub fn run_tasks<D: DatabaseTrait>(
 
         // Perform a non-forking commit; the current version including no deletion
         let mut changes = Vec::new();
-        let maybe_view = if let Some(old_commit) = old_commit {
-            // lvmt.get_key(old_commit, &key).unwrap()
-            Some(lvmt.get_state(old_commit, false).unwrap())
-        } else {
-            None
-        };
+        let maybe_view = old_commit.map(|old_commit| lvmt.get_state(old_commit, false).unwrap());
         for event in events.0.into_iter() {
             match event {
                 Event::Read(key) => {
