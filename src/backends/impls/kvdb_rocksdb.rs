@@ -1,6 +1,6 @@
 use std::{
-    any::Any, borrow::{Borrow, Cow}, collections::HashMap, marker::PhantomData, num::NonZeroUsize, path::Path, sync::{
-        atomic::AtomicU64,
+    any::{Any, TypeId}, borrow::{Borrow, Cow}, collections::HashMap, marker::PhantomData, num::NonZeroUsize, path::Path, sync::{
+        atomic::{AtomicU64, Ordering},
         Arc,
     }
 };
@@ -11,7 +11,7 @@ use super::super::{
     DatabaseTrait, TableIter, TableRead,
 };
 use crate::{
-    backends::{table_name::TableNameTrait, write_schema::HybridWriteSchema, TableReader},
+    backends::{table_name::TableNameTrait, write_schema::HybridWriteSchema, HistoricalTableName, TableReader},
     errors::{DatabaseError, Result},
 };
 
@@ -50,11 +50,13 @@ pub struct UncachedRocksDBColumn {
     inner: Arc<kvdb_rocksdb::Database>,
 }
 
+type TableCache<T> = LruCache<Box<<T as TableSchema>::Key>, Option<Box<<T as TableSchema>::Value>>>;
+
 pub struct CachedRocksDBColumn<T: TableSchema> {
     col: u32,
     inner: Arc<kvdb_rocksdb::Database>,
     cache: Arc<Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>>,
-    // metrics: Arc<CacheMetrics>,
+    metrics: Arc<CacheMetrics>,
 }
 
 impl<T: TableSchema> TableRead<T> for UncachedRocksDBColumn {
@@ -113,7 +115,7 @@ impl<T: TableSchema> TableRead<T> for CachedRocksDBColumn<T> {
         {
             let mut cache = self.cache.lock();
             if let Some(cached_result) = cache.get(key) {
-                // self.metrics.hits.fetch_add(1, Ordering::Relaxed);
+                self.metrics.hits.fetch_add(1, Ordering::Relaxed);
                 return Ok(cached_result
                     .as_ref()
                     .map(|v| Cow::Owned((*v.clone()).to_owned())));
@@ -121,7 +123,7 @@ impl<T: TableSchema> TableRead<T> for CachedRocksDBColumn<T> {
         } // unlock
 
         // 2. cache miss, get from db
-        // self.metrics.misses.fetch_add(1, Ordering::Relaxed);
+        self.metrics.misses.fetch_add(1, Ordering::Relaxed);
         let db_result = match self.inner.get(self.col, key.encode().borrow())? {
             Some(v_bytes) => {
                 let value = <T::Value>::decode_owned(v_bytes)?;
@@ -133,15 +135,15 @@ impl<T: TableSchema> TableRead<T> for CachedRocksDBColumn<T> {
         // 3. write db result to cache
         {
             let mut cache = self.cache.lock();
-            // let evicted_item = 
+            let evicted_item = 
             cache.put(
                 Box::new(key.clone()),
                 db_result.as_ref().map(|v| Box::new(v.clone())),
             );
-            // if evicted_item.is_some() {
-            //     self.metrics.evictions.fetch_add(1, Ordering::Relaxed);
-            // }
-            // self.metrics.puts.fetch_add(1, Ordering::Relaxed);
+            if evicted_item.is_some() {
+                self.metrics.evictions.fetch_add(1, Ordering::Relaxed);
+            }
+            self.metrics.puts.fetch_add(1, Ordering::Relaxed);
         } // unlock
 
         // 4. return db result
@@ -214,77 +216,64 @@ impl<TN: TableNameTrait> WrappedRocksDb<TN> {
         })
     }
 
-    pub fn clear_all_caches(&self) {
-        self.caches.lock().clear();
-        // dbg!("All caches have been cleared.");
+    pub fn print_cache_stats(&self) {
+        const TABLE_WIDTH: usize = 140;
+
+        println!("{:-<width$}", "", width = TABLE_WIDTH);
+        println!("{:^width$}", "Cache Performance Statistics", width = TABLE_WIDTH);
+        println!("{:-<width$}", "", width = TABLE_WIDTH);
+        println!(
+            "{:<12} | {:<28} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10}",
+            "Historical?", "Table Name", "Size", "Hit Rate", "Hits", "Misses", "Puts", "Evictions", "Pops", "Not Pops"
+        );
+        println!("{:-<width$}", "", width = TABLE_WIDTH);
+
+        let is_historical = TypeId::of::<TN>() == TypeId::of::<HistoricalTableName>();
+
+        let caches_map = self.caches.lock();
+        let metrics_map = self.metrics.lock();
+
+        for (col_id, metrics) in metrics_map.iter() {
+            let hits = metrics.hits.load(Ordering::Relaxed);
+            let misses = metrics.misses.load(Ordering::Relaxed);
+            let total = hits + misses;
+            let hit_rate = if total == 0 {
+                0.0
+            } else {
+                (hits as f64 / total as f64) * 100.0
+            };
+
+            let cache_size_str = if let Some(cache_any) = caches_map.get(col_id) {
+                TN::get_cache_size_for_col(cache_any.as_ref(), *col_id)
+            } else {
+                "N/A".to_string()
+            };
+
+            let table_name: String = TN::try_from(*col_id)
+                .map_or_else(
+                    |_| format!("Invalid Col ID ({})", col_id),
+                    |table_instance| {
+                        let static_str: &'static str = table_instance.into();
+                        static_str.to_string()
+                    }
+                );
+
+            println!(
+                "{:<12} | {:<28} | {:>10} | {:>9.2}% | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10}",
+                if is_historical { "Yes" } else { "No" },
+                table_name,
+                cache_size_str,
+                hit_rate,
+                hits,
+                misses,
+                metrics.puts.load(Ordering::Relaxed),
+                metrics.evictions.load(Ordering::Relaxed),
+                metrics.pops.load(Ordering::Relaxed),
+                metrics.not_pops.load(Ordering::Relaxed),
+            );
+        }
+        println!("{:-<width$}", "", width = TABLE_WIDTH);
     }
-
-    pub fn clear_caches_except(&self, id_to_keep: u32) {
-        let mut caches_guard = self.caches.lock();
-        caches_guard.retain(|&key, _| key == id_to_keep);
-
-        // let mut metrics_guard = self.metrics.lock();
-        // metrics_guard.retain(|&key, _| key == id_to_keep);
-    }
-
-    // pub fn print_cache_stats(&self) {
-    //     const TABLE_WIDTH: usize = 140;
-
-    //     println!("{:-<width$}", "", width = TABLE_WIDTH);
-    //     println!("{:^width$}", "Cache Performance Statistics", width = TABLE_WIDTH);
-    //     println!("{:-<width$}", "", width = TABLE_WIDTH);
-    //     println!(
-    //         "{:<12} | {:<28} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10}",
-    //         "Historical?", "Table Name", "Size", "Hit Rate", "Hits", "Misses", "Puts", "Evictions", "Pops", "Not Pops"
-    //     );
-    //     println!("{:-<width$}", "", width = TABLE_WIDTH);
-
-    //     let is_historical = TypeId::of::<TN>() == TypeId::of::<HistoricalTableName>();
-
-    //     let caches_map = self.caches.lock();
-    //     let metrics_map = self.metrics.lock();
-
-    //     for (col_id, metrics) in metrics_map.iter() {
-    //         let hits = metrics.hits.load(Ordering::Relaxed);
-    //         let misses = metrics.misses.load(Ordering::Relaxed);
-    //         let total = hits + misses;
-    //         let hit_rate = if total == 0 {
-    //             0.0
-    //         } else {
-    //             (hits as f64 / total as f64) * 100.0
-    //         };
-
-    //         let cache_size_str = if let Some(cache_any) = caches_map.get(col_id) {
-    //             TN::get_cache_size_for_col(cache_any.as_ref(), *col_id)
-    //         } else {
-    //             "N/A".to_string()
-    //         };
-
-    //         let table_name: String = TN::try_from(*col_id)
-    //             .map_or_else(
-    //                 |_| format!("Invalid Col ID ({})", col_id),
-    //                 |table_instance| {
-    //                     let static_str: &'static str = table_instance.into();
-    //                     static_str.to_string()
-    //                 }
-    //             );
-
-    //         println!(
-    //             "{:<12} | {:<28} | {:>10} | {:>9.2}% | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10}",
-    //             if is_historical { "Yes" } else { "No" },
-    //             table_name,
-    //             cache_size_str,
-    //             hit_rate,
-    //             hits,
-    //             misses,
-    //             metrics.puts.load(Ordering::Relaxed),
-    //             metrics.evictions.load(Ordering::Relaxed),
-    //             metrics.pops.load(Ordering::Relaxed),
-    //             metrics.not_pops.load(Ordering::Relaxed),
-    //         );
-    //     }
-    //     println!("{:-<width$}", "", width = TABLE_WIDTH);
-    // }
 }
 
 impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
@@ -297,7 +286,7 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
 
         if TN::is_cacheable(col_id) {
             let mut caches_map = self.caches.lock();
-            // let mut metrics_map = self.metrics.lock();
+            let mut metrics_map = self.metrics.lock();
 
             let cache_any = caches_map.entry(col_id).or_insert_with(|| {
                 let new_cache: LruCache<Box<T::Key>, Option<Box<T::Value>>> =
@@ -310,15 +299,15 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
                 .downcast::<Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>>()
                 .expect("Cache type mismatch. This should not happen.");
 
-            // let metrics = metrics_map
-            //     .entry(col_id)
-            //     .or_insert_with(|| Arc::new(CacheMetrics::default()));
+            let metrics = metrics_map
+                .entry(col_id)
+                .or_insert_with(|| Arc::new(CacheMetrics::default()));
 
             Ok(Arc::new(CachedRocksDBColumn {
                 col: col_id,
                 inner: self.inner.clone(),
                 cache: cache_typed,
-                // metrics: metrics.clone(),
+                metrics: metrics.clone(),
             }))
         } else {
             Ok(Arc::new(UncachedRocksDBColumn {
@@ -333,18 +322,16 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
     }
 
     fn commit(&self, changes: Self::WriteSchema) -> Result<()> {
-        // self.clear_all_caches();
-        // self.print_cache_stats();
-        // self.clear_caches_except(amt_history_index_col_id);
+        self.print_cache_stats();
 
         let caches_map = self.caches.lock();
-        // let metrics_map = self.metrics.lock();
+        let metrics_map = self.metrics.lock();
         let mut tx = kvdb::DBTransaction::new();
 
         for op in changes.drain() {
             let col_id = op.col_id();
             if let Some(cache_any) = caches_map.get(&col_id) {
-                // let metrics = metrics_map.get(&col_id).expect("Metrics should exist if cache exists");
+                let metrics = metrics_map.get(&col_id).expect("Metrics should exist if cache exists");
                 TN::apply_cache_update_policy(col_id, &op, cache_any);
             }
 
@@ -356,7 +343,7 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
         }
 
         drop(caches_map);
-        // drop(metrics_map);
+        drop(metrics_map);
 
         // self.print_cache_stats();
 
