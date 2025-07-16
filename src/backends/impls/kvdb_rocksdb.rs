@@ -284,13 +284,13 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
         const CACHE_CAPACITY: usize = 200_000;
         let col_id: u32 = T::NAME.into();
 
-        if TN::is_cacheable(col_id) {
+        if let Some(cache_capacity) = TN::get_cache_capacity(col_id) {
             let mut caches_map = self.caches.lock();
             let mut metrics_map = self.metrics.lock();
 
             let cache_any = caches_map.entry(col_id).or_insert_with(|| {
                 let new_cache: LruCache<Box<T::Key>, Option<Box<T::Value>>> =
-                    LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap());
+                    LruCache::new(NonZeroUsize::new(cache_capacity).unwrap());
                 Arc::new(Mutex::new(new_cache))
             });
 

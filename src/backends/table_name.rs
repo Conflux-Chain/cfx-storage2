@@ -5,7 +5,11 @@ pub trait TableNameTrait: Send + Sync + 'static + Copy + Into<u32> + Into<&'stat
 
     fn get_cache_size_for_col(cache_any: &dyn Any, col_id: u32) -> String;
 
-    fn is_cacheable(col_id: u32) -> bool;
+    /// Returns the cache capacity for a given column, if it is cacheable.
+    ///
+    /// Returns `Some(capacity)` if the column should be cached, 
+    /// or `None` if it is not cacheable.
+    fn get_cache_capacity(col_id: u32) -> Option<usize>;
 
     /// Applies the appropriate cache update policy for a given column.
     fn apply_cache_update_policy(
@@ -58,11 +62,20 @@ impl TableNameTrait for HistoricalTableName {
         }
     }
 
-    fn is_cacheable(col_id: u32) -> bool {
-        matches!(
-            HistoricalTableName::try_from(col_id),
-            Ok(HistoricalTableName::CommitID) | Ok(HistoricalTableName::HistoryIndex(FlatKV)) | Ok(HistoricalTableName::HistoryIndex(AmtNode))
-        )
+    fn get_cache_capacity(col_id: u32) -> Option<usize> {
+        const COMMIT_ID_CAPACITY: usize = 1_000;
+        const FLAT_KV_INDEX_CAPACITY: usize = 120_000;
+        const AMT_NODE_INDEX_CAPACITY: usize = 70_000;
+
+        let table_name_result = HistoricalTableName::try_from(col_id);
+
+        match table_name_result {
+            Ok(HistoricalTableName::CommitID) => Some(COMMIT_ID_CAPACITY),
+            Ok(HistoricalTableName::HistoryIndex(FlatKV)) => Some(FLAT_KV_INDEX_CAPACITY),
+            Ok(HistoricalTableName::HistoryIndex(AmtNode)) => Some(AMT_NODE_INDEX_CAPACITY),
+
+            _ => None,
+        }
     }
 
     fn apply_cache_update_policy(
@@ -160,8 +173,8 @@ impl TableNameTrait for PendingTableName {
         "N/A".to_string()
     }
 
-    fn is_cacheable(_col_id: u32) -> bool {
-        false
+    fn get_cache_capacity(col_id: u32) -> Option<usize> {
+        None
     }
 
     fn apply_cache_update_policy(
@@ -243,8 +256,8 @@ impl TableNameTrait for MockTableName {
         "N/A".to_string()
     }
 
-    fn is_cacheable(_col_id: u32) -> bool {
-        false
+    fn get_cache_capacity(col_id: u32) -> Option<usize> {
+        None
     }
 
     fn apply_cache_update_policy(
@@ -301,23 +314,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_historical_is_cacheable_exhaustive() {
+    fn test_historical_get_cache_capacity_exhaustive() {
         for i in 0..HistoricalTableName::num_tables() {
             let table_name = HistoricalTableName::try_from(i).unwrap();
             
-            let actual_is_cacheable = HistoricalTableName::is_cacheable(i);
+            let actual_cacheable_capacity = HistoricalTableName::get_cache_capacity(i);
 
-            let expected_is_cacheable = match table_name {
-                HistoricalTableName::CommitID => true,
-                HistoricalTableName::HistoryIndex(FlatKV) => true,
-                HistoricalTableName::HistoryIndex(AmtNode) => true,
-                _ => false,
+            let expected_cacheable_capacity = match table_name {
+                HistoricalTableName::CommitID => Some(1_000),
+                HistoricalTableName::HistoryIndex(FlatKV) => Some(120_000),
+                HistoricalTableName::HistoryIndex(AmtNode) => Some(70_000),
+                _ => None,
             };
 
             assert_eq!(
-                actual_is_cacheable,
-                expected_is_cacheable,
-                "is_cacheable mismatch for HistoricalTableName::{:?} (col_id {})",
+                actual_cacheable_capacity,
+                expected_cacheable_capacity,
+                "get_cache_capacity mismatch for HistoricalTableName::{:?} (col_id {})",
                 table_name,
                 i
             );
@@ -325,21 +338,21 @@ mod tests {
 
         // Test invalid col_id
         assert_eq!(
-            HistoricalTableName::is_cacheable(99),
-            false,
-            "is_cacheable should return false for an invalid col_id"
+            HistoricalTableName::get_cache_capacity(99),
+            None,
+            "get_cache_capacity should return None for an invalid col_id"
         );
     }
 
     #[test]
-    fn test_pending_is_cacheable_exhaustive() {
+    fn test_pending_get_cache_capacity_exhaustive() {
         for i in 0..PendingTableName::num_tables() {
             let table_name = PendingTableName::try_from(i).unwrap();
             
             assert_eq!(
-                PendingTableName::is_cacheable(i),
-                false,
-                "is_cacheable should be false for all PendingTableName variants, but was true for {:?} (col_id {})",
+                PendingTableName::get_cache_capacity(i),
+                None,
+                "get_cache_capacity should be None for all PendingTableName variants, but was Some for {:?} (col_id {})",
                 table_name,
                 i
             );
@@ -347,22 +360,22 @@ mod tests {
 
         // Test invalid col_id
         assert_eq!(
-            PendingTableName::is_cacheable(99),
-            false,
-            "is_cacheable should return false for an invalid col_id on PendingTableName"
+            PendingTableName::get_cache_capacity(99),
+            None,
+            "get_cache_capacity should return None for an invalid col_id on PendingTableName"
         );
     }
 
     #[test]
-    fn test_mock_is_cacheable_exhaustive() {
+    fn test_mock_get_cache_capacity_exhaustive() {
         // Test valid col_id
         for i in 0..MockTableName::num_tables() {
             let table_name = MockTableName::try_from(i).unwrap();
 
             assert_eq!(
-                MockTableName::is_cacheable(i),
-                false,
-                "is_cacheable should be false for all MockTableName variants, but was true for {:?} (col_id {})",
+                MockTableName::get_cache_capacity(i),
+                None,
+                "get_cache_capacity should be None for all MockTableName variants, but was Some for {:?} (col_id {})",
                 table_name,
                 i
             );
@@ -370,9 +383,9 @@ mod tests {
 
         // Test invalid col_id
         assert_eq!(
-            MockTableName::is_cacheable(99),
-            false,
-            "is_cacheable should return false for an invalid col_id on MockTableName"
+            MockTableName::get_cache_capacity(99),
+            None,
+            "get_cache_capacity should return None for an invalid col_id on MockTableName"
         );
     }
 }
