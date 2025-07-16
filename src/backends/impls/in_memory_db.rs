@@ -53,11 +53,11 @@ impl DatabaseTrait for InMemoryDatabase {
     type TableID = u32;
     type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
 
-    fn view<T: TableSchema>(&self) -> Result<impl '_ + TableRead<T>> {
-        Ok(InMemoryTable {
+    fn view<T: TableSchema>(&self) -> Result<Box<dyn '_ + TableRead<T>>> {
+        Ok(Box::new(InMemoryTable {
             inner: self,
             col: T::NAME.into(),
-        })
+        }))
     }
 
     fn write_schema() -> Self::WriteSchema {

@@ -12,8 +12,8 @@ use asb_tasks::{Event, Events, TaskTrait};
 use fs_extra::dir::CopyOptions;
 
 use cfx_storage2::backends::{
-    impls::kvdb_rocksdb::CachedDB, DatabaseTrait, InMemoryDatabase, TableName, TableRead,
-    TableSchema, WriteSchemaTrait,
+    impls::kvdb_rocksdb::CachedDB, DatabaseTrait, InMemoryDatabase, TableName, TableSchema,
+    WriteSchemaTrait,
 };
 
 #[derive(Clone, Copy)]

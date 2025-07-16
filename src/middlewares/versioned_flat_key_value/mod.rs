@@ -67,11 +67,11 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
         db: &'db D,
         pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
     ) -> Result<Self> {
-        let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
-        let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
-        let history_number_table = Arc::new(db.view::<HistoryNumberSchema>()?);
+        let history_index_table = Arc::from(db.view::<HistoryIndicesTable<T>>()?);
+        let commit_id_table = Arc::from(db.view::<CommitIDSchema>()?);
+        let history_number_table = Arc::from(db.view::<HistoryNumberSchema>()?);
         let change_history_table =
-            KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
+            KeyValueStoreBulks::new(Arc::from(db.view::<HistoryChangeTable<T>>()?));
 
         let versioned_store = VersionedStore {
             pending_part,
@@ -244,9 +244,10 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     to_confirm_maps: Vec<HashMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    let history_index_table = db.view::<HistoryIndicesTable<T>>()?;
+    let history_index_table: Box<dyn TableRead<HistoryIndicesTable<T>>> =
+        db.view::<HistoryIndicesTable<T>>()?;
     let change_history_table =
-        KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
+        KeyValueStoreBulks::new(Arc::from(db.view::<HistoryChangeTable<T>>()?));
 
     let mut history_index_cache = HistoryIndexCache::new();
     for (delta_height, updates) in to_confirm_maps.into_iter().enumerate() {
@@ -261,7 +262,7 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
                     k.clone(),
                     value.clone(),
                     history_number,
-                    &history_index_table,
+                    &*history_index_table,
                 )?;
                 Ok((k, value))
             })

@@ -10,7 +10,7 @@ use cfx_storage2::{
     },
 };
 
-fn count<T: TableSchema>(view: impl TableRead<T>) {
+fn count<T: TableSchema>(view: Box<dyn '_ + TableRead<T>>) {
     println!("-----------------------------------------");
     println!("{:?}", T::NAME);
     let mut count: u64 = 0;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    backends::{DatabaseTrait, TableRead},
+    backends::DatabaseTrait,
     errors::Result,
     middlewares::{
         confirm_ids_to_history, confirm_maps_to_history, CommitID, HistoryNumber,
@@ -67,7 +67,7 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         let amt_node_store = VersionedStore::new(&self.backend, &mut self.amt_node_cache)?;
         let slot_alloc_store = VersionedStore::new(&self.backend, &mut self.slot_alloc_cache)?;
         let auth_changes =
-            KeyValueStoreBulks::new(Arc::new(self.backend.view::<AuthChangeTable>()?));
+            KeyValueStoreBulks::new(Arc::from(self.backend.view::<AuthChangeTable>()?));
 
         Ok(LvmtStore::new(
             key_value_store,
