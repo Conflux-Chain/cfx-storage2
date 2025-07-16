@@ -54,6 +54,12 @@ pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 
 pub type HistoryChangeKey<K> = ChangeKey<HistoryNumber, K>;
 
+impl<K: Clone> HistoryIndexKey<K> {
+    pub fn is_latest(&self) -> bool {
+        self.1 == LATEST
+    }
+}
+
 pub struct VersionedStore<'cache, 'db, T: VersionedKeyValueSchema> {
     pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,

@@ -1,12 +1,12 @@
 use std::{
     any::Any,
-    sync::{atomic::Ordering, Arc},
+    sync::Arc,
 };
 
 use lru::LruCache;
 use parking_lot::Mutex;
 
-use crate::backends::{impls::kvdb_rocksdb::CacheMetrics, serde::Encode, TableSchema};
+use crate::backends::{serde::Encode, TableSchema};
 
 use super::{TableWriteOp, WriteSchemaTrait};
 
@@ -82,12 +82,14 @@ pub trait GenericWriteOperation: Send + Sync {
 
     fn raw_value(&self) -> &Option<Vec<u8>>;
 
-    fn apply_to_cache(&self, cache_any: &Arc<dyn Any + Send + Sync>, metrics: &Arc<CacheMetrics>);
+    fn structured_key_any(&self) -> &dyn Any;
+
+    fn apply_to_cache(&self, cache_any: &Arc<dyn Any + Send + Sync>);//, metrics: &Arc<CacheMetrics>);
 
     fn invalidate_in_cache(
         &self,
         cache_any: &Arc<dyn Any + Send + Sync>,
-        metrics: &Arc<CacheMetrics>,
+        // metrics: &Arc<CacheMetrics>,
     );
 }
 
@@ -112,18 +114,22 @@ impl<T: TableSchema> GenericWriteOperation for TypedWriteOperation<T> {
         &self.raw_value
     }
 
-    fn apply_to_cache(&self, cache_any: &Arc<dyn Any + Send + Sync>, metrics: &Arc<CacheMetrics>) {
+    fn structured_key_any(&self) -> &dyn Any {
+        &self.structured_key
+    }
+
+    fn apply_to_cache(&self, cache_any: &Arc<dyn Any + Send + Sync>) { //, metrics: &Arc<CacheMetrics>) {
         if let Ok(typed_cache_arc) = cache_any
             .clone()
             .downcast::<Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>>()
         {
             let mut cache = typed_cache_arc.lock();
-            let evicted_item =
+            // let evicted_item =
                 cache.put(self.structured_key.clone(), self.structured_value.clone());
-            metrics.puts.fetch_add(1, Ordering::Relaxed);
-            if evicted_item.is_some() {
-                metrics.evictions.fetch_add(1, Ordering::Relaxed);
-            }
+            // metrics.puts.fetch_add(1, Ordering::Relaxed);
+            // if evicted_item.is_some() {
+            //     metrics.evictions.fetch_add(1, Ordering::Relaxed);
+            // }
         } else {
             unreachable!();
         }
@@ -132,7 +138,7 @@ impl<T: TableSchema> GenericWriteOperation for TypedWriteOperation<T> {
     fn invalidate_in_cache(
         &self,
         cache_any: &Arc<dyn Any + Send + Sync>,
-        metrics: &Arc<CacheMetrics>,
+        // metrics: &Arc<CacheMetrics>,
     ) {
         if let Ok(typed_cache_arc) = cache_any
             .clone()
@@ -140,12 +146,13 @@ impl<T: TableSchema> GenericWriteOperation for TypedWriteOperation<T> {
         {
             let mut cache = typed_cache_arc.lock();
             // Just pop! No clones of the value needed.
-            let popped_item = cache.pop(&self.structured_key);
-            if popped_item.is_some() {
-                metrics.pops.fetch_add(1, Ordering::Relaxed);
-            } else {
-                metrics.not_pops.fetch_add(1, Ordering::Relaxed);
-            }
+            // let popped_item = 
+            cache.pop(&self.structured_key);
+            // if popped_item.is_some() {
+            //     metrics.pops.fetch_add(1, Ordering::Relaxed);
+            // } else {
+            //     metrics.not_pops.fetch_add(1, Ordering::Relaxed);
+            // }
         } else {
             unreachable!();
         }
