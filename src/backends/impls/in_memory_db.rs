@@ -6,7 +6,7 @@ use super::super::{
     write_schema::WriteSchemaNoSubkey,
     DatabaseTrait, TableIter, TableRead,
 };
-use crate::{backends::table_name::TableNameTrait, errors::Result};
+use crate::{backends::{table_name::TableNameTrait, TableReader}, errors::Result};
 use std::{borrow::Cow, collections::BTreeMap, marker::PhantomData, sync::Arc};
 
 type InMemoryKVMap = BTreeMap<(u32, Vec<u8>), Vec<u8>>;
@@ -150,11 +150,11 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedInMemoryDb<TN> {
 
     fn view<T: TableSchema<TableName = TN>>(
         self: &Arc<Self>,
-    ) -> Result<impl 'static + TableRead<T> + Send + Sync> {
-        Ok(InMemoryTable {
+    ) -> Result<TableReader<'static, T>> {
+        Ok(Arc::new(InMemoryTable {
             inner: self.inner.clone(),
             col: T::NAME.into(),
-        })
+        }))
     }
 
     fn write_schema() -> Self::WriteSchema {

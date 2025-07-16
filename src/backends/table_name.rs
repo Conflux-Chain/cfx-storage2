@@ -1,7 +1,11 @@
-pub trait TableNameTrait: Send + Sync + 'static + Copy + Into<u32> + Into<&'static str> {
+pub trait TableNameTrait: Send + Sync + 'static + Copy + Into<u32> + Into<&'static str> + TryFrom<u32, Error = ()> {
     /// Returns the total number of Column Families in the Historical DB.
     /// This value can be used directly to configure a RocksDB instance.
     fn num_tables() -> u32;
+
+    fn get_cache_size_for_col(cache_any: &dyn Any, col_id: u32) -> String;
+
+    fn is_cacheable(col_id: u32) -> bool;
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -11,8 +15,16 @@ pub enum VersionedKVName {
     SlotAllocation,
 }
 
+use std::any::Any;
+
+use lru::LruCache;
+use parking_lot::Mutex;
 // Use a `use` statement to simplify subsequent code.
 use VersionedKVName::*;
+
+use crate::{lvmt::table_schema::{AmtNodes, FlatKeyValue}, middlewares::{table_schema::HistoryIndicesTable, CommitIDSchema}};
+
+use super::TableSchema;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum HistoricalTableName {
@@ -25,6 +37,22 @@ pub enum HistoricalTableName {
 impl TableNameTrait for HistoricalTableName {
     fn num_tables() -> u32 {
         8
+    }
+
+    fn get_cache_size_for_col(cache_any: &dyn Any, col_id: u32) -> String {
+        match col_id {
+            id if id == HistoricalTableName::CommitID.into() => cache_any.downcast_ref::<Mutex<LruCache<Box<<CommitIDSchema as TableSchema>::Key>, Option<Box<<CommitIDSchema as TableSchema>::Value>>>>>().map(|c| c.lock().len()).unwrap_or_default().to_string(),
+            id if id == HistoricalTableName::HistoryIndex(FlatKV).into() => cache_any.downcast_ref::<Mutex<LruCache<Box<<HistoryIndicesTable<FlatKeyValue> as TableSchema>::Key>, Option<Box<<HistoryIndicesTable<FlatKeyValue> as TableSchema>::Value>>>>>().map(|c| c.lock().len()).unwrap_or_default().to_string(),
+            id if id == HistoricalTableName::HistoryIndex(AmtNode).into() => cache_any.downcast_ref::<Mutex<LruCache<Box<<HistoryIndicesTable<AmtNodes> as TableSchema>::Key>, Option<Box<<HistoryIndicesTable<AmtNodes> as TableSchema>::Value>>>>>().map(|c| c.lock().len()).unwrap_or_default().to_string(),
+            _ => "N/A".to_string(), 
+        }
+    }
+
+    fn is_cacheable(col_id: u32) -> bool {
+        matches!(
+            HistoricalTableName::try_from(col_id),
+            Ok(HistoricalTableName::CommitID) | Ok(HistoricalTableName::HistoryIndex(FlatKV)) | Ok(HistoricalTableName::HistoryIndex(AmtNode))
+        )
     }
 }
 
@@ -41,6 +69,25 @@ impl From<HistoricalTableName> for u32 {
             HistoryIndex(AmtNode) => 5,
             HistoryChange(SlotAllocation) => 6,
             HistoryIndex(SlotAllocation) => 7,
+        }
+    }
+}
+
+impl TryFrom<u32> for HistoricalTableName {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        use HistoricalTableName::*;
+        match value {
+            0 => Ok(CommitID),
+            1 => Ok(HistoryNumber),
+            2 => Ok(HistoryChange(FlatKV)),
+            3 => Ok(HistoryIndex(FlatKV)),
+            4 => Ok(HistoryChange(AmtNode)),
+            5 => Ok(HistoryIndex(AmtNode)),
+            6 => Ok(HistoryChange(SlotAllocation)),
+            7 => Ok(HistoryIndex(SlotAllocation)),
+            _ => Err(()),
         }
     }
 }
@@ -73,6 +120,14 @@ impl TableNameTrait for PendingTableName {
     fn num_tables() -> u32 {
         8
     }
+
+    fn get_cache_size_for_col(_cache_any: &dyn Any, _col_id: u32) -> String {
+        "N/A".to_string()
+    }
+
+    fn is_cacheable(_col_id: u32) -> bool {
+        false
+    }
 }
 
 impl From<PendingTableName> for u32 {
@@ -87,6 +142,25 @@ impl From<PendingTableName> for u32 {
             Wal(SlotAllocation) => 5,
             AuthNodeChange => 6,
             StateRoot => 7,
+        }
+    }
+}
+
+impl TryFrom<u32> for PendingTableName {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        use PendingTableName::*;
+        match value {
+            0 => Ok(Snapshots(FlatKV)),
+            1 => Ok(Wal(FlatKV)),
+            2 => Ok(Snapshots(AmtNode)),
+            3 => Ok(Wal(AmtNode)),
+            4 => Ok(Snapshots(SlotAllocation)),
+            5 => Ok(Wal(SlotAllocation)),
+            6 => Ok(AuthNodeChange),
+            7 => Ok(StateRoot),
+            _ => Err(()),
         }
     }
 }
@@ -120,6 +194,14 @@ impl TableNameTrait for MockTableName {
     fn num_tables() -> u32 {
         3
     }
+
+    fn get_cache_size_for_col(_cache_any: &dyn Any, _col_id: u32) -> String {
+        "N/A".to_string()
+    }
+
+    fn is_cacheable(_col_id: u32) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -135,6 +217,21 @@ impl From<MockTableName> for u32 {
 }
 
 #[cfg(test)]
+impl TryFrom<u32> for MockTableName {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        use MockTableName::*;
+        match value {
+            0 => Ok(MockTable1),
+            1 => Ok(MockTable2),
+            2 => Ok(MockTable3),
+            _ => Err(()),
+        }
+    }
+}
+
+#[cfg(test)]
 impl From<MockTableName> for &'static str {
     fn from(t: MockTableName) -> Self {
         use MockTableName::*;
@@ -143,5 +240,86 @@ impl From<MockTableName> for &'static str {
             MockTable2 => "mock_table2",
             MockTable3 => "mock_table3",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_historical_is_cacheable_exhaustive() {
+        for i in 0..HistoricalTableName::num_tables() {
+            let table_name = HistoricalTableName::try_from(i).unwrap();
+            
+            let actual_is_cacheable = HistoricalTableName::is_cacheable(i);
+
+            let expected_is_cacheable = match table_name {
+                HistoricalTableName::CommitID => true,
+                HistoricalTableName::HistoryIndex(FlatKV) => true,
+                HistoricalTableName::HistoryIndex(AmtNode) => true,
+                _ => false,
+            };
+
+            assert_eq!(
+                actual_is_cacheable,
+                expected_is_cacheable,
+                "is_cacheable mismatch for HistoricalTableName::{:?} (col_id {})",
+                table_name,
+                i
+            );
+        }
+
+        // Test invalid col_id
+        assert_eq!(
+            HistoricalTableName::is_cacheable(99),
+            false,
+            "is_cacheable should return false for an invalid col_id"
+        );
+    }
+
+    #[test]
+    fn test_pending_is_cacheable_exhaustive() {
+        for i in 0..PendingTableName::num_tables() {
+            let table_name = PendingTableName::try_from(i).unwrap();
+            
+            assert_eq!(
+                PendingTableName::is_cacheable(i),
+                false,
+                "is_cacheable should be false for all PendingTableName variants, but was true for {:?} (col_id {})",
+                table_name,
+                i
+            );
+        }
+
+        // Test invalid col_id
+        assert_eq!(
+            PendingTableName::is_cacheable(99),
+            false,
+            "is_cacheable should return false for an invalid col_id on PendingTableName"
+        );
+    }
+
+    #[test]
+    fn test_mock_is_cacheable_exhaustive() {
+        // Test valid col_id
+        for i in 0..MockTableName::num_tables() {
+            let table_name = MockTableName::try_from(i).unwrap();
+
+            assert_eq!(
+                MockTableName::is_cacheable(i),
+                false,
+                "is_cacheable should be false for all MockTableName variants, but was true for {:?} (col_id {})",
+                table_name,
+                i
+            );
+        }
+
+        // Test invalid col_id
+        assert_eq!(
+            MockTableName::is_cacheable(99),
+            false,
+            "is_cacheable should return false for an invalid col_id on MockTableName"
+        );
     }
 }
