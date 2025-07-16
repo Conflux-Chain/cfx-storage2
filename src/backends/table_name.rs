@@ -6,6 +6,14 @@ pub trait TableNameTrait: Send + Sync + 'static + Copy + Into<u32> + Into<&'stat
     fn get_cache_size_for_col(cache_any: &dyn Any, col_id: u32) -> String;
 
     fn is_cacheable(col_id: u32) -> bool;
+
+    /// Applies the appropriate cache update policy for a given column.
+    fn apply_cache_update_policy(
+        col_id: u32,
+        op: &Box<dyn GenericWriteOperation<Self>>,
+        cache_any: &Arc<dyn Any + Send + Sync>,
+    ) where
+        Self: Sized;
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -15,16 +23,16 @@ pub enum VersionedKVName {
     SlotAllocation,
 }
 
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 
 use lru::LruCache;
 use parking_lot::Mutex;
 // Use a `use` statement to simplify subsequent code.
 use VersionedKVName::*;
 
-use crate::{lvmt::table_schema::{AmtNodes, FlatKeyValue}, middlewares::{table_schema::HistoryIndicesTable, CommitIDSchema}};
+use crate::{lvmt::table_schema::{AmtNodes, FlatKeyValue}, middlewares::{table_schema::{HistoryIndicesTable, VersionedKeyValueSchema}, CommitIDSchema, HistoryIndexKey}};
 
-use super::TableSchema;
+use super::{write_schema::GenericWriteOperation, TableSchema};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum HistoricalTableName {
@@ -33,6 +41,8 @@ pub enum HistoricalTableName {
     HistoryChange(VersionedKVName),
     HistoryIndex(VersionedKVName),
 }
+
+type AmtHistoryKey = HistoryIndexKey<<AmtNodes as VersionedKeyValueSchema>::Key>;
 
 impl TableNameTrait for HistoricalTableName {
     fn num_tables() -> u32 {
@@ -53,6 +63,31 @@ impl TableNameTrait for HistoricalTableName {
             HistoricalTableName::try_from(col_id),
             Ok(HistoricalTableName::CommitID) | Ok(HistoricalTableName::HistoryIndex(FlatKV)) | Ok(HistoricalTableName::HistoryIndex(AmtNode))
         )
+    }
+
+    fn apply_cache_update_policy(
+        col_id: u32,
+        op: &Box<dyn GenericWriteOperation<Self>>,
+        cache_any: &Arc<dyn Any + Send + Sync>,
+    ) where
+        Self: Sized
+    {
+        let amt_history_index_col_id: u32 = HistoricalTableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into();
+        
+        if col_id == amt_history_index_col_id {
+            if let Some(structured_key) = op.structured_key_any().downcast_ref::<Box<AmtHistoryKey>>() {
+                if structured_key.is_latest() {
+                    op.apply_to_cache(cache_any);//, metrics);
+                } else {
+                    op.invalidate_in_cache(cache_any);//, metrics);
+                }
+            } else {
+                unreachable!("Type mismatch for AmtNode HistoryIndex key. Expected Box<HistoryIndexKey<<AmtNodes as VersionedKeyValueSchema>::Key>>");
+            }
+        } else {
+            op.invalidate_in_cache(cache_any);//, metrics);
+            // ()
+        }
     }
 }
 
@@ -128,6 +163,15 @@ impl TableNameTrait for PendingTableName {
     fn is_cacheable(_col_id: u32) -> bool {
         false
     }
+
+    fn apply_cache_update_policy(
+        _col_id: u32,
+        _op: &Box<dyn GenericWriteOperation<Self>>,
+        _cache_any: &Arc<dyn Any + Send + Sync>,
+    ) where
+        Self: Sized
+    {
+    }
 }
 
 impl From<PendingTableName> for u32 {
@@ -201,6 +245,15 @@ impl TableNameTrait for MockTableName {
 
     fn is_cacheable(_col_id: u32) -> bool {
         false
+    }
+
+    fn apply_cache_update_policy(
+        _col_id: u32,
+        _op: &Box<dyn GenericWriteOperation<Self>>,
+        _cache_any: &Arc<dyn Any + Send + Sync>,
+    ) where
+        Self: Sized
+    {
     }
 }
 
