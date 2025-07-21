@@ -6,34 +6,42 @@ use std::{
 use lru::LruCache;
 use parking_lot::Mutex;
 
-use crate::backends::{impls::kvdb_rocksdb::CacheMetrics, serde::Encode, TableSchema};
+use crate::backends::{impls::kvdb_rocksdb::CacheMetrics, serde::Encode, TableName, TableSchema};
 
 use super::{TableWriteOp, WriteSchemaTrait};
 
-pub struct HybridWriteSchema {
-    inner: Mutex<Vec<Box<dyn GenericWriteOperation>>>,
+// Supports both serialized data and structured data to
+// support writing to the database and updating the cache respectively
+pub struct HybridWriteSchemaNoSubkey<Name> {
+    inner: Mutex<Vec<Box<dyn GenericWriteOperation<Name>>>>,
 }
 
-impl HybridWriteSchema {
-    pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(Vec::new()),
-        }
-    }
-
-    pub fn drain(self) -> Vec<Box<dyn GenericWriteOperation>> {
-        self.inner.into_inner()
-    }
-}
-
-impl Default for HybridWriteSchema {
+impl<Name> Default for HybridWriteSchemaNoSubkey<Name> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl WriteSchemaTrait for HybridWriteSchema {
-    fn write<T: TableSchema>(&self, op: TableWriteOp<'_, T>) {
+impl<Name> HybridWriteSchemaNoSubkey<Name> {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(vec![]),
+        }
+    }
+
+    pub fn drain(self) -> Vec<Box<dyn GenericWriteOperation<Name>>> {
+        let mut inner = self.inner.lock();
+
+        std::mem::take(&mut *inner)
+    }
+}
+
+impl<Name: From<TableName> + Send + Sync + Copy + 'static> HybridWriteSchemaNoSubkey<Name> {
+    #[inline]
+    fn write_inner<T: TableSchema>(
+        inner: &mut Vec<Box<dyn GenericWriteOperation<Name>>>,
+        op: TableWriteOp<T>,
+    ) {
         let (key, value) = op;
 
         let raw_key = <T::Key as Encode>::encode_cow(key.clone()).into_owned();
@@ -41,7 +49,7 @@ impl WriteSchemaTrait for HybridWriteSchema {
             .clone()
             .map(|v| <T::Value as Encode>::encode_cow(v).into_owned());
 
-        let operation = TypedWriteOperation::<T> {
+        let operation = TypedWriteOperation::<T, Name> {
             col: T::NAME.into(),
             raw_key,
             raw_value,
@@ -49,7 +57,16 @@ impl WriteSchemaTrait for HybridWriteSchema {
             structured_value: value.map(|v| Box::new(v.into_owned())),
         };
 
-        self.inner.lock().push(Box::new(operation));
+        inner.push(Box::new(operation));
+    }
+}
+
+impl<Name: From<TableName> + Send + Sync + Copy + 'static> WriteSchemaTrait
+    for HybridWriteSchemaNoSubkey<Name>
+{
+    fn write<T: TableSchema>(&self, op: TableWriteOp<'_, T>) {
+        let mut inner = self.inner.lock();
+        Self::write_inner::<T>(&mut *inner, op)
     }
 
     fn write_batch<'a, T: TableSchema>(
@@ -58,25 +75,13 @@ impl WriteSchemaTrait for HybridWriteSchema {
     ) {
         let mut inner = self.inner.lock();
         for op in changes {
-            let (key, value) = op;
-            let raw_key = T::Key::encode_cow(key.clone()).into_owned();
-            let raw_value = value
-                .as_ref()
-                .map(|v| T::Value::encode_cow(v.clone()).into_owned());
-            let operation = TypedWriteOperation::<T> {
-                col: T::NAME.into(),
-                raw_key,
-                raw_value,
-                structured_key: Box::new(key.into_owned()),
-                structured_value: value.map(|v| Box::new(v.into_owned())),
-            };
-            inner.push(Box::new(operation));
+            Self::write_inner::<T>(&mut *inner, op)
         }
     }
 }
 
-pub trait GenericWriteOperation: Send + Sync {
-    fn col_id(&self) -> u32;
+pub trait GenericWriteOperation<Name>: Send + Sync {
+    fn col_id(&self) -> Name;
 
     fn raw_key(&self) -> &[u8];
 
@@ -93,16 +98,18 @@ pub trait GenericWriteOperation: Send + Sync {
     );
 }
 
-struct TypedWriteOperation<T: TableSchema> {
-    col: u32,
+struct TypedWriteOperation<T: TableSchema, Name> {
+    col: Name,
     raw_key: Vec<u8>,
     raw_value: Option<Vec<u8>>,
     structured_key: Box<T::Key>,
     structured_value: Option<Box<T::Value>>,
 }
 
-impl<T: TableSchema> GenericWriteOperation for TypedWriteOperation<T> {
-    fn col_id(&self) -> u32 {
+impl<T: TableSchema, Name: From<TableName> + Send + Sync + Copy> GenericWriteOperation<Name>
+    for TypedWriteOperation<T, Name>
+{
+    fn col_id(&self) -> Name {
         self.col
     }
 

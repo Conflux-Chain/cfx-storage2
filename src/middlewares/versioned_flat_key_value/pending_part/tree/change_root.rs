@@ -42,6 +42,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         })
     }
 
+    // This function is not well designed and only used in the warmup phase of benchmarking.
     pub fn remove_root(&mut self, commit_id: S::CommitId) -> PendResult<ConfirmedPathInfo<S>, S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 

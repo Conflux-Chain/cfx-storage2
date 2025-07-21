@@ -16,7 +16,7 @@ use super::super::{
     DatabaseTrait, TableIter, TableRead,
 };
 use crate::{
-    backends::{write_schema::HybridWriteSchema, TableName},
+    backends::{write_schema::HybridWriteSchemaNoSubkey, TableName},
     errors::{DatabaseError, Result},
     lvmt::{AmtNodes, FlatKeyValue},
     middlewares::{
@@ -232,13 +232,10 @@ impl<'b, T: TableSchema> TableRead<T> for CachedRocksDBColumn<'b, T> {
         // 3. write db result to cache
         {
             let mut cache = self.cache.lock();
-            let evicted_item = cache.put(
+            cache.put(
                 Box::new(key.clone()),
                 db_result.as_ref().map(|v| Box::new(v.clone())),
             );
-            if evicted_item.is_some() {
-                self.metrics.evictions.fetch_add(1, Ordering::Relaxed);
-            }
             self.metrics.puts.fetch_add(1, Ordering::Relaxed);
         } // unlock
 
@@ -276,7 +273,7 @@ impl<'b, T: TableSchema> TableRead<T> for CachedRocksDBColumn<'b, T> {
 
 impl DatabaseTrait for CachedDB {
     type TableID = u32;
-    type WriteSchema = HybridWriteSchema;
+    type WriteSchema = HybridWriteSchemaNoSubkey<Self::TableID>;
 
     fn view<T: TableSchema>(&self) -> Result<Box<dyn '_ + TableRead<T>>> {
         let col_id: u32 = T::NAME.into();
@@ -331,6 +328,8 @@ impl DatabaseTrait for CachedDB {
 
         for op in changes.drain() {
             let col_id = op.col_id();
+
+            // Update cache
             if let Some(cache_any) = caches_map.get(&col_id) {
                 let metrics = metrics_map
                     .get(&col_id)
@@ -349,10 +348,10 @@ impl DatabaseTrait for CachedDB {
                     }
                 } else {
                     op.invalidate_in_cache(cache_any, metrics);
-                    // ()
                 }
             }
 
+            // Write to db
             if let Some(v) = op.raw_value() {
                 tx.put_vec(op.col_id(), op.raw_key(), v.to_vec());
             } else {

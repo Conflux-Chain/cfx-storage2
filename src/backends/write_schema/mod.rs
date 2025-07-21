@@ -1,7 +1,7 @@
-mod hybrid;
+mod hybrid_no_sub_key;
 mod no_sub_key;
 
-pub use hybrid::HybridWriteSchema;
+pub use hybrid_no_sub_key::HybridWriteSchemaNoSubkey;
 pub use no_sub_key::WriteSchemaNoSubkey;
 
 use super::TableSchema;
