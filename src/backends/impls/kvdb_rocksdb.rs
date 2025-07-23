@@ -18,7 +18,7 @@ use super::super::{
 use crate::{
     backends::{write_schema::HybridWriteSchemaNoSubkey, TableName},
     errors::{DatabaseError, Result},
-    lvmt::{AmtNodes, FlatKeyValue},
+    lvmt::{AmtNodes, FlatKeyValue, SlotAllocations},
     middlewares::{
         table_schema::{HistoryIndicesTable, VersionedKeyValueSchema},
         CommitIDSchema, HistoryIndexKey,
@@ -62,6 +62,10 @@ impl CachedDB {
             ),
             (
                 TableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into(),
+                70_000,
+            ),
+            (
+                TableName::HistoryIndex(crate::backends::VersionedKVName::SlotAllocation).into(),
                 70_000,
             ),
         ]);
@@ -116,6 +120,7 @@ impl CachedDB {
                     id if *id == TableName::CommitID.into() => cache_any.downcast_ref::<Mutex<LruCache<Box<<CommitIDSchema as TableSchema>::Key>, Option<Box<<CommitIDSchema as TableSchema>::Value>>>>>().map(|c| c.lock().len()).unwrap_or_default().to_string(),
                     id if *id == TableName::HistoryIndex(crate::backends::VersionedKVName::FlatKV).into() => cache_any.downcast_ref::<Mutex<LruCache<Box<<HistoryIndicesTable<FlatKeyValue> as TableSchema>::Key>, Option<Box<<HistoryIndicesTable<FlatKeyValue> as TableSchema>::Value>>>>>().map(|c| c.lock().len()).unwrap_or_default().to_string(),
                     id if *id == TableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into() => cache_any.downcast_ref::<Mutex<LruCache<Box<<HistoryIndicesTable<AmtNodes> as TableSchema>::Key>, Option<Box<<HistoryIndicesTable<AmtNodes> as TableSchema>::Value>>>>>().map(|c| c.lock().len()).unwrap_or_default().to_string(),
+                    id if *id == TableName::HistoryIndex(crate::backends::VersionedKVName::SlotAllocation).into() => cache_any.downcast_ref::<Mutex<LruCache<Box<<HistoryIndicesTable<SlotAllocations> as TableSchema>::Key>, Option<Box<<HistoryIndicesTable<SlotAllocations> as TableSchema>::Value>>>>>().map(|c| c.lock().len()).unwrap_or_default().to_string(),
                     _ => panic!("Uncached TableName"),
                 }
             } else {
@@ -319,8 +324,10 @@ impl DatabaseTrait for CachedDB {
         let amt_history_index_col_id: u32 =
             TableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into();
         type AmtHistoryKey = HistoryIndexKey<<AmtNodes as VersionedKeyValueSchema>::Key>;
+        let slot_history_index_col_id: u32 =
+            TableName::HistoryIndex(crate::backends::VersionedKVName::SlotAllocation).into();
 
-        self.print_cache_stats();
+        // self.print_cache_stats();
 
         let caches_map = self.caches.lock();
         let metrics_map = self.metrics.lock();
@@ -362,7 +369,7 @@ impl DatabaseTrait for CachedDB {
         drop(caches_map);
         drop(metrics_map);
 
-        self.print_cache_stats();
+        // self.print_cache_stats();
 
         let db_mut = Arc::get_mut(&mut self.db).ok_or_else(|| {
             DatabaseError::SharedAccessError(

@@ -90,7 +90,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
             } else {
                 let allocation = allocate_version_slot(&key, &mut allocations)?;
                 (allocation, ALLOC_START_VERSION)
-            };
+            }; // todo: allocate table has not been cached
 
             amt_change_manager.record_with_allocation(allocation, &key);
 

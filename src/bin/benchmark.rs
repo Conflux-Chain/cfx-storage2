@@ -129,6 +129,8 @@ fn warmup<D: DatabaseTrait>(
         }
     }
 
+    dbg!(old_commit);
+    dbg!(num_epochs + 1);
     (old_commit, num_epochs + 1)
 }
 
@@ -179,7 +181,7 @@ pub fn run_tasks<D: DatabaseTrait>(
         }
         old_commit
     } else if opts.warmup_from.is_some() {
-        let warmup_epoch_size = opts.epoch_size * 100;
+        let warmup_epoch_size = opts.epoch_size;
         (
             Some(get_commit_id_from_epoch_id(
                 opts.total_keys / warmup_epoch_size,
@@ -190,6 +192,8 @@ pub fn run_tasks<D: DatabaseTrait>(
         (None, 0)
     };
     println!("Warm up done");
+    dbg!(old_commit);
+    dbg!(num_warmup_epochs);
 
     let frequency = if opts.report_dir.is_none() { -1 } else { 250 };
     let mut profiler = Profiler::new(frequency);
@@ -282,7 +286,7 @@ pub fn initialize_lvmt<D: DatabaseTrait>(
     opts: &Options,
 ) -> (LvmtStorage<D>, Reporter<'_>) {
     // omit opts.algorithm, use LVMT directly
-    let warmup_epoch_size = opts.epoch_size * 100;
+    let warmup_epoch_size = opts.epoch_size;
     let db = if opts.warmup_from.is_some() {
         LvmtStorage::<D>::new_nonempty(
             backend,
