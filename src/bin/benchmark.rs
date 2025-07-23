@@ -129,8 +129,6 @@ fn warmup<D: DatabaseTrait>(
         }
     }
 
-    dbg!(old_commit);
-    dbg!(num_epochs + 1);
     (old_commit, num_epochs + 1)
 }
 
@@ -192,8 +190,6 @@ pub fn run_tasks<D: DatabaseTrait>(
         (None, 0)
     };
     println!("Warm up done");
-    dbg!(old_commit);
-    dbg!(num_warmup_epochs);
 
     let frequency = if opts.report_dir.is_none() { -1 } else { 250 };
     let mut profiler = Profiler::new(frequency);
@@ -204,7 +200,6 @@ pub fn run_tasks<D: DatabaseTrait>(
     let mut write_schema = D::write_schema();
 
     for (delta_epoch, events) in tasks.tasks().enumerate() {
-        // dbg!(delta_epoch);
         // epoch should be different from those in warmup
         let epoch = delta_epoch + num_warmup_epochs;
 
