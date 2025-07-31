@@ -42,6 +42,30 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         })
     }
 
+    /// This function discards the siblings of the nodes from the root (excluded) to `commit_id` (included).
+    /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
+    pub fn make_pivot(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
+        let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
+
+        // old_root..=new_root's parent
+        let to_check_children = self.find_path(slab_index);
+
+        let mut has_discarded_nodes = false;
+
+        if let Some(last) = to_check_children.last() {
+            for (ancester, _) in to_check_children.iter() {
+                if self.discard(*ancester)? {
+                    has_discarded_nodes = true;
+                };
+            }
+            if self.discard(commit_id)? {
+                has_discarded_nodes = true;
+            };
+        }
+
+        Ok(has_discarded_nodes)
+    }
+
     // excluding target
     fn find_path(&self, target_slab_index: SlabIndex) -> Vec<(S::CommitId, KeyValueMap<S>)> {
         let mut target_node = self.get_node_by_slab_index(target_slab_index);

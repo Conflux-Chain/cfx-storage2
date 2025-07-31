@@ -70,7 +70,9 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         Ok(None)
     }
 
-    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
+    /// This function discards the siblings of the node at `commit_id`.
+    /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
+    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
         if let Some(parent_of_discard) = self.get_node_by_slab_index(slab_index).get_parent() {
             let parent_node = self.get_node_by_slab_index(parent_of_discard);
@@ -80,14 +82,18 @@ impl<S: PendingKeyValueSchema> Tree<S> {
                     to_remove.append(&mut self.bfs_subtree(*child));
                 }
             }
+
+            if to_remove.is_empty() {
+                return Ok(false);
+            }
+
             for idx in to_remove {
                 self.detach_node(idx);
             }
-
             let parent_node = self.get_node_mut_by_slab_index(parent_of_discard);
             parent_node.remove_child_except(&slab_index);
         } // else // root is already the unique child of its parent, so do nothing
 
-        Ok(())
+        Ok(true)
     }
 }

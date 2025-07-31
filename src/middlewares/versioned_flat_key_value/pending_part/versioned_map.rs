@@ -133,6 +133,18 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
         Ok(confirm_path_info)
     }
+
+    pub fn make_pivot(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
+        let has_discarded_nodes = self.tree.make_pivot(commit_id)?;
+
+        if has_discarded_nodes {
+            // clear current is necessary
+            // because apply_commit_id in current.map may be removed from pending part
+            self.clear_removed_current();
+        }
+
+        Ok(has_discarded_nodes)
+    }
 }
 
 // Helper methods in pending part to support
