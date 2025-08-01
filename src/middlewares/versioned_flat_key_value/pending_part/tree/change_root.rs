@@ -32,7 +32,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
 
         // height of old_root
-        let start_height_to_commit = self.height_of_root - to_commit.len();
+        let start_height_to_commit = self.height_of_root - to_commit.len() as u64;
         let (to_commit_ids, to_commit_maps) = to_commit.into_iter().unzip();
 
         Ok(ConfirmedPathInfo {

@@ -6,7 +6,8 @@ use crate::{
     backends::{DatabaseTrait, TableRead},
     errors::Result,
     middlewares::{
-        confirm_ids_to_history, confirm_maps_to_history, CommitID, CommitIDSchema, KeyValueStoreBulks, VersionedStore, VersionedStoreCache
+        confirm_ids_to_history, confirm_maps_to_history, CommitID, CommitIDSchema,
+        KeyValueStoreBulks, VersionedStore, VersionedStoreCache,
     },
 };
 
@@ -77,7 +78,7 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
     /// The input `commit_id` may be already in historical part, so the first thing is to check this.
     pub fn make_pivot(&self, commit_id: CommitID) -> Result<bool> {
         if self.is_in_historical_part(commit_id)? {
-            return Ok(false)
+            return Ok(false);
         }
 
         let mut key_value_cache = self.key_value_cache.lock();
@@ -95,6 +96,12 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         }
 
         Ok(key_value_has_discarded_nodes)
+    }
+
+    pub fn is_newer_than_pending_root(&self, height: u64) -> bool {
+        let key_value_cache = self.key_value_cache.lock();
+        let height_of_root = key_value_cache.get_height_of_root();
+        height > height_of_root
     }
 
     pub fn confirmed_pending_to_history(

@@ -14,7 +14,7 @@ pub(super) struct TreeNode<S: PendingKeyValueSchema> {
 
     // todo: test lazy height
     // height will not be changed even when root is changed
-    height: usize,
+    height: u64,
 
     commit_id: S::CommitId,
     // before current node, the old value of this key is modified by which commit_id,
@@ -24,7 +24,7 @@ pub(super) struct TreeNode<S: PendingKeyValueSchema> {
 }
 
 impl<S: PendingKeyValueSchema> TreeNode<S> {
-    pub fn new_root(commit_id: S::CommitId, modifications: RecoverMap<S>, height: usize) -> Self {
+    pub fn new_root(commit_id: S::CommitId, modifications: RecoverMap<S>, height: u64) -> Self {
         Self {
             height,
             commit_id,
@@ -37,7 +37,7 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
     pub fn new_non_root_node(
         commit_id: S::CommitId,
         parent: SlabIndex,
-        height: usize,
+        height: u64,
         modifications: RecoverMap<S>,
     ) -> Self {
         Self {
@@ -69,7 +69,7 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         self.children = BTreeSet::from([*child_to_remove]);
     }
 
-    pub fn get_height(&self) -> usize {
+    pub fn get_height(&self) -> u64 {
         self.height
     }
 

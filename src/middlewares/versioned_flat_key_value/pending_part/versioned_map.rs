@@ -19,7 +19,7 @@ pub struct VersionedMap<S: PendingKeyValueSchema> {
 }
 
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: usize) -> Self {
+    pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: u64) -> Self {
         VersionedMap {
             tree: Tree::new(parent_of_root, height_of_root),
             current: RwLock::new(None),
@@ -31,7 +31,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 
     #[cfg(test)]
-    pub fn check_consistency(&self, height_of_root: usize) -> bool {
+    pub fn check_consistency(&self, height_of_root: u64) -> bool {
         if self.tree.check_consistency(height_of_root) {
             // todo: check current
             true
@@ -42,6 +42,10 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
         self.tree.get_parent_of_root()
+    }
+
+    pub fn get_height_of_root(&self) -> u64 {
+        self.tree.get_height_of_root()
     }
 }
 
@@ -134,6 +138,8 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         Ok(confirm_path_info)
     }
 
+    /// This function discards the siblings of the nodes from the root (excluded) to `commit_id` (included).
+    /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
     pub fn make_pivot(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
         let has_discarded_nodes = self.tree.make_pivot(commit_id)?;
 

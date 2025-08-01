@@ -334,7 +334,7 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
 
 pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     db: Arc<D>,
-    to_confirm_start_height: usize,
+    to_confirm_start_height: u64,
     to_confirm_maps: Vec<HashMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
@@ -344,7 +344,7 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
 
     let mut history_index_cache = HistoryIndexCache::new();
     for (delta_height, updates) in to_confirm_maps.into_iter().enumerate() {
-        let height = to_confirm_start_height + delta_height;
+        let height = to_confirm_start_height + delta_height as u64;
         let history_number = height_to_history_number(height);
 
         let commit_data = updates
@@ -372,7 +372,7 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
 
 pub fn confirm_ids_to_history<D: DatabaseTrait>(
     db: Arc<D>,
-    to_confirm_start_height: usize,
+    to_confirm_start_height: u64,
     to_confirm_ids: &[CommitID],
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
@@ -380,7 +380,7 @@ pub fn confirm_ids_to_history<D: DatabaseTrait>(
     let history_number_table = db.view::<HistoryNumberSchema>()?;
 
     for (delta_height, confirmed_commit_id) in to_confirm_ids.iter().enumerate() {
-        let height = to_confirm_start_height + delta_height;
+        let height = to_confirm_start_height + delta_height as u64;
         let history_number = height_to_history_number(height);
 
         if commit_id_table.get(confirmed_commit_id)?.is_some()

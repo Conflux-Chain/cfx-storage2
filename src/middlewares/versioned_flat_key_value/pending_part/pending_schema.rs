@@ -27,7 +27,7 @@ pub struct ApplyRecord<S: PendingKeyValueSchema> {
 
 /// `commit_ids` and `key_value_maps` should be ordered from the smallest height to the largest height.
 pub struct ConfirmedPathInfo<S: PendingKeyValueSchema> {
-    pub start_height: usize,
+    pub start_height: u64,
     pub commit_ids: Vec<S::CommitId>,
     pub key_value_maps: Vec<KeyValueMap<S>>,
 }
