@@ -123,6 +123,15 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
 // change_root
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
+    pub fn get_ancestor_commit_at_height(
+        &self,
+        ancestor_height: u64,
+        commit_id: S::CommitId,
+    ) -> PendResult<S::CommitId, S> {
+        self.tree
+            .get_ancestor_commit_at_height(ancestor_height, commit_id)
+    }
+
     pub fn change_root(&mut self, commit_id: S::CommitId) -> PendResult<ConfirmedPathInfo<S>, S> {
         let confirm_path_info = self.tree.change_root(commit_id)?;
 

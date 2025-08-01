@@ -116,7 +116,7 @@ fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
     // Persist confirmed commits from caches to the backend.
     // Must drop the manager first because it holds a read reference to the backend.
     drop(lvmt);
-    db.confirmed_pending_to_history(commit_2, &write_schema)
+    db.confirmed_pending_to_history_with_commit_id(commit_2, &write_schema)
         .unwrap();
 
     db.commit(write_schema).unwrap();

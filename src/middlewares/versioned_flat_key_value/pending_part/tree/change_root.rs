@@ -8,6 +8,28 @@ use super::{SlabIndex, Tree};
 
 // methods to support VersionedMap::change_root()
 impl<S: PendingKeyValueSchema> Tree<S> {
+    pub fn get_ancestor_commit_at_height(
+        &self,
+        ancestor_height: u64,
+        commit_id: S::CommitId,
+    ) -> PendResult<S::CommitId, S> {
+        let node = self.get_node_by_commit_id(commit_id)?;
+        let height = node.get_height();
+        if (ancestor_height < self.height_of_root) || (ancestor_height > height) {
+            return Err(crate::middlewares::PendingError::InvalidAncestorHeight);
+        }
+
+        let mut target_node = node;
+        while let Some(parent_slab_index) = target_node.get_parent() {
+            target_node = self.get_node_by_slab_index(parent_slab_index);
+            if target_node.get_height() == ancestor_height {
+                return Ok(target_node.get_commit_id());
+            }
+        }
+
+        Err(crate::middlewares::PendingError::InvalidAncestorHeight)
+    }
+
     pub fn change_root(&mut self, commit_id: S::CommitId) -> PendResult<ConfirmedPathInfo<S>, S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 

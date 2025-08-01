@@ -104,7 +104,25 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         height > height_of_root
     }
 
-    pub fn confirmed_pending_to_history(
+    /// `new_root_height` and `pivot_commit_id` should be in the pending part.
+    /// `new_root_height` should not be newer than `pivot_commit_id`.
+    /// This function make the ancestor of `pivot_commit_id` at `new_root_height` to be the new pending root.
+    pub fn confirmed_pending_to_history_with_height(
+        &self,
+        new_root_height: u64,
+        pivot_commit_id: CommitID,
+        write_schema: &D::WriteSchema,
+    ) -> Result<()> {
+        let key_value_cache = self.key_value_cache.lock();
+        let new_root_commit_id =
+            key_value_cache.get_ancestor_commit_at_height(new_root_height, pivot_commit_id)?;
+        drop(key_value_cache);
+
+        self.confirmed_pending_to_history_with_commit_id(new_root_commit_id, write_schema)
+    }
+
+    /// The `new_root_commit_id` should be in the pending part, otherwise, an error will be returned.
+    pub fn confirmed_pending_to_history_with_commit_id(
         &self,
         new_root_commit_id: CommitID,
         write_schema: &D::WriteSchema,
