@@ -63,6 +63,10 @@ impl<'db> LvmtStore<'db> {
         self.key_value_store.checkout_current(commit)
     }
 
+    pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
+        self.amt_node_store.query_commit_existence(commit)
+    }
+
     pub fn commit(
         &self,
         old_commit: Option<CommitID>,

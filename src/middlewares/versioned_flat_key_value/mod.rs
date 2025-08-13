@@ -60,6 +60,18 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
 }
 
 impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+    pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
+        if self.pending_part.lock().contains_commit_id(commit) {
+            return Ok(true);
+        }
+
+        if self.commit_id_table.get(commit)?.is_some() {
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
     pub fn checkout_current(&mut self, commit: CommitID) -> Result<()> {
         let pending_guard = self.pending_part.lock();
         Ok(pending_guard.checkout_current(commit)?)
