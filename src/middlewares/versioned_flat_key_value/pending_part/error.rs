@@ -14,4 +14,14 @@ pub enum PendingError<CommitId: Debug + Eq + Hash> {
     NonRootNodeShouldHaveParent,
     #[error("ancestor height should be in the range of the root height and this node height")]
     InvalidAncestorHeight,
+    #[error("persistence io error of kind {0:?}")]
+    PersistenceIOError(std::io::ErrorKind),
+    #[error("recovery inconsistent error")]
+    RecoveryInconsistentError,
+}
+
+impl<CommitId: Debug + Eq + Hash> From<std::io::Error> for PendingError<CommitId> {
+    fn from(err: std::io::Error) -> Self {
+        PendingError::PersistenceIOError(err.kind())
+    }
 }

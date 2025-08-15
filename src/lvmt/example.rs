@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use parking_lot::Mutex;
 
@@ -25,12 +25,12 @@ pub struct LvmtStorage<D: DatabaseTrait> {
 }
 
 impl<D: DatabaseTrait> LvmtStorage<D> {
-    pub fn new(backend: Arc<D>) -> Result<Self> {
+    pub fn new(backend: Arc<D>, log_path: impl AsRef<Path>) -> Result<Self> {
         Ok(Self {
             backend,
-            key_value_cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
-            amt_node_cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
-            slot_alloc_cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
+            key_value_cache: Mutex::new(VersionedStoreCache::new(&log_path)?).into(),
+            amt_node_cache: Mutex::new(VersionedStoreCache::new(&log_path)?).into(),
+            slot_alloc_cache: Mutex::new(VersionedStoreCache::new(log_path)?).into(),
         })
     }
 

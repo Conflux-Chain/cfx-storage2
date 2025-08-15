@@ -51,6 +51,9 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             new_root.set_as_root();
             self.height_of_root = new_root.get_height();
             self.parent_of_root = Some(last.0);
+
+            self.logger
+                .log_change(&self.parent_of_root, self.height_of_root)?;
         }
 
         // height of old_root

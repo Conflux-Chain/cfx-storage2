@@ -38,6 +38,9 @@ proptest = "1.5"
 
 amt = { git = "https://github.com/Conflux-Chain/amt", rev = "387995a", features = ["bls12-381"] }
 
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+
 [dev-dependencies]
 rand = "0.8.0"
 rand_distr = "0.4.0"

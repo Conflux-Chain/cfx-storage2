@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use crate::{
     backends::{InMemoryDatabase, VersionedKVName},
@@ -16,11 +16,11 @@ pub struct Storage {
 }
 
 impl Storage {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(log_path: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self {
             backend: InMemoryDatabase::empty().into(),
-            cache: Mutex::new(VersionedStoreCache::new_empty()).into(),
-        }
+            cache: Mutex::new(VersionedStoreCache::new(log_path)?).into(),
+        })
     }
 
     pub fn as_manager(&mut self) -> Result<VersionedStore<'_, FlatKeyValue>> {

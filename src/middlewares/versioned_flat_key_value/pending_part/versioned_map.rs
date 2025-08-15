@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::traits::{IsCompleted, NeedNext};
 use crate::types::ValueEntry;
@@ -19,15 +20,23 @@ pub struct VersionedMap<S: PendingKeyValueSchema> {
 }
 
 impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: u64) -> Self {
+    #[cfg(test)]
+    pub fn new_empty_log(
+        parent_of_root: Option<S::CommitId>,
+        height_of_root: u64,
+        log_path: impl AsRef<Path>,
+    ) -> Self {
         VersionedMap {
-            tree: Tree::new(parent_of_root, height_of_root),
+            tree: Tree::new_empty_log(parent_of_root, height_of_root, log_path),
             current: RwLock::new(None),
         }
     }
 
-    pub fn new_empty() -> Self {
-        Self::new(None, 0)
+    pub fn new(log_path: impl AsRef<Path>) -> PendResult<Self, S> {
+        Ok(VersionedMap {
+            tree: Tree::new(log_path)?,
+            current: RwLock::new(None),
+        })
     }
 
     #[cfg(test)]
@@ -323,12 +332,27 @@ mod tests {
         (key, value)
     }
 
+    fn set_log_path(log_dir: &str) -> (String, String) {
+        let tree_log_path = format!("{}/tree.wal", log_dir);
+        let map_log_path = format!("{}/map.wal", log_dir);
+
+        if std::path::Path::new(log_dir).exists() {
+            std::fs::remove_dir_all(log_dir).unwrap();
+        }
+        std::fs::create_dir_all(log_dir).unwrap();
+
+        (tree_log_path, map_log_path)
+    }
+
     fn generate_random_tree(
         num_nodes: usize,
         rng: &mut StdRng,
     ) -> (Tree<TestPendingConfig>, VersionedMap<TestPendingConfig>) {
-        let mut forward_only_tree = Tree::new(None, 0);
-        let mut versioned_map = VersionedMap::new(None, 0);
+        let log_dir = "__random_tree";
+        let (tree_log_path, map_log_path) = set_log_path(log_dir);
+
+        let mut forward_only_tree = Tree::new_empty_log(None, 0, tree_log_path);
+        let mut versioned_map = VersionedMap::new_empty_log(None, 0, map_log_path);
 
         for i in 1..=num_nodes as CommitId {
             let parent_commit_id = if i == 1 {
@@ -400,8 +424,13 @@ mod tests {
 
     #[test]
     fn test_multiple_roots_err() {
-        let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
-        let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
+        let log_dir = "__multiple_roots_tree";
+        let (tree_log_path, map_log_path) = set_log_path(log_dir);
+
+        let mut forward_only_tree =
+            Tree::<TestPendingConfig>::new_empty_log(None, 0, tree_log_path);
+        let mut versioned_map =
+            VersionedMap::<TestPendingConfig>::new_empty_log(None, 0, map_log_path);
 
         forward_only_tree.add_root(0, HashMap::new()).unwrap();
         versioned_map.add_node(HashMap::new(), 0, None).unwrap();
@@ -418,8 +447,13 @@ mod tests {
 
     #[test]
     fn test_commit_id_not_found_err() {
-        let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
-        let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
+        let log_dir = "__commit_id_not_found_tree";
+        let (tree_log_path, map_log_path) = set_log_path(log_dir);
+
+        let mut forward_only_tree =
+            Tree::<TestPendingConfig>::new_empty_log(None, 0, tree_log_path);
+        let mut versioned_map =
+            VersionedMap::<TestPendingConfig>::new_empty_log(None, 0, map_log_path);
 
         assert_eq!(
             forward_only_tree.add_non_root_node(1, 0, HashMap::new()),
@@ -433,8 +467,13 @@ mod tests {
 
     #[test]
     fn test_commit_id_already_exists_err() {
-        let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
-        let mut versioned_map = VersionedMap::<TestPendingConfig>::new(None, 0);
+        let log_dir = "__commit_id_already_exists_tree";
+        let (tree_log_path, map_log_path) = set_log_path(log_dir);
+
+        let mut forward_only_tree =
+            Tree::<TestPendingConfig>::new_empty_log(None, 0, tree_log_path);
+        let mut versioned_map =
+            VersionedMap::<TestPendingConfig>::new_empty_log(None, 0, map_log_path);
 
         forward_only_tree.add_root(0, HashMap::new()).unwrap();
         versioned_map.add_node(HashMap::new(), 0, None).unwrap();

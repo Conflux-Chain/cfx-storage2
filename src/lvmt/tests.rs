@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    path::Path,
     sync::Arc,
 };
 
@@ -54,7 +55,11 @@ fn gen_novel_commit_id(rng: &mut ChaChaRng, previous: &mut HashSet<CommitID>) ->
 }
 
 // num_keys = 8 * 10^6 has been tested, but still contain no amt_node_id whose depth > 1
-fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
+fn test_lvmt_store<D: DatabaseTrait>(
+    backend: D,
+    num_keys: usize,
+    pending_log_path: impl AsRef<Path>,
+) {
     let mut rng = get_rng_for_test();
 
     // Generate different commit_ids
@@ -90,7 +95,7 @@ fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
     let changes_3 = get_changes_from_updates(updates_3);
 
     // Initialize db
-    let mut db = LvmtStorage::<D>::new(Arc::new(backend).clone()).unwrap();
+    let mut db = LvmtStorage::<D>::new(Arc::new(backend).clone(), pending_log_path).unwrap();
 
     // Get a manager for db
     let mut lvmt = db.as_manager().unwrap();
@@ -139,9 +144,10 @@ fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
 #[test]
 fn test_lvmt_store_rocksdb() {
     let db_path = "__test_lvmt_store";
+    let pending_log_path = format!("{}/pending.wal", db_path);
 
     let backend = empty_rocksdb(db_path).unwrap();
-    test_lvmt_store::<kvdb_rocksdb::Database>(backend, 100000);
+    test_lvmt_store::<kvdb_rocksdb::Database>(backend, 100000, pending_log_path);
 
     if std::path::Path::new(db_path).exists() {
         std::fs::remove_dir_all(db_path).unwrap();
@@ -151,7 +157,19 @@ fn test_lvmt_store_rocksdb() {
 #[test]
 fn test_lvmt_store_inmemory() {
     let backend = InMemoryDatabase::empty();
-    test_lvmt_store::<InMemoryDatabase>(backend, 100000);
+
+    let log_dir = "__test_inmemory_store";
+    let pending_log_path = format!("{}/pending.wal", log_dir);
+    if std::path::Path::new(log_dir).exists() {
+        std::fs::remove_dir_all(log_dir).unwrap();
+    }
+    std::fs::create_dir_all(log_dir).unwrap();
+
+    test_lvmt_store::<InMemoryDatabase>(backend, 100000, pending_log_path);
+
+    if std::path::Path::new(log_dir).exists() {
+        std::fs::remove_dir_all(log_dir).unwrap();
+    }
 }
 
 impl<'db> LvmtStore<'db> {

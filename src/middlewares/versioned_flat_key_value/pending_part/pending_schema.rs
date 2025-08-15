@@ -1,5 +1,8 @@
 use std::{collections::HashMap, fmt::Debug, hash::Hash, marker::PhantomData};
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
 use crate::middlewares::versioned_flat_key_value::table_schema::VersionedKeyValueSchema;
 use crate::types::ValueEntry;
 
@@ -7,7 +10,7 @@ use super::PendingError;
 
 pub trait PendingKeyValueSchema {
     type Key: Eq + Hash + Clone + Ord;
-    type CommitId: Debug + Eq + Hash + Copy;
+    type CommitId: Debug + Eq + Hash + Copy + Serialize + DeserializeOwned;
     type Value: Clone;
 }
 
@@ -57,7 +60,7 @@ pub struct PendingKeyValueConfig<T, CId> {
 impl<T, CId> PendingKeyValueSchema for PendingKeyValueConfig<T, CId>
 where
     T: VersionedKeyValueSchema,
-    CId: Debug + Eq + Hash + Copy,
+    CId: Debug + Eq + Hash + Copy + Serialize + DeserializeOwned,
 {
     type Key = T::Key;
     type CommitId = CId;

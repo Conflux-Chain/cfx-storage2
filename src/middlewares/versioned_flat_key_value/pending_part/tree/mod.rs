@@ -3,17 +3,22 @@ mod change_root;
 mod checkout;
 mod commands;
 mod node;
+mod persistence;
 
 pub type SlabIndex = usize;
 
 use std::collections::HashMap;
+use std::io;
+use std::path::Path;
 
 use slab::Slab;
 
 use self::node::TreeNode;
+use self::persistence::TreeLogger;
 
 use super::pending_schema::{PendingKeyValueSchema, Result as PendResult};
 use super::PendingError;
+use crate::middlewares::versioned_flat_key_value::pending_part::tree::persistence::LogRecord;
 use crate::types::ValueEntry;
 
 pub struct Tree<S: PendingKeyValueSchema> {
@@ -21,16 +26,83 @@ pub struct Tree<S: PendingKeyValueSchema> {
     height_of_root: u64,
     nodes: Slab<TreeNode<S>>,
     index_map: HashMap<S::CommitId, SlabIndex>,
+
+    logger: TreeLogger,
 }
 
 // basic methods
 impl<S: PendingKeyValueSchema> Tree<S> {
-    pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: u64) -> Self {
+    #[cfg(test)]
+    pub fn new_empty_log(
+        parent_of_root: Option<S::CommitId>,
+        height_of_root: u64,
+        log_path: impl AsRef<Path>,
+    ) -> Self {
+        let logger = TreeLogger::new(log_path);
+
         Tree {
             parent_of_root,
             height_of_root,
             nodes: Slab::new(),
             index_map: HashMap::new(),
+
+            logger,
+        }
+    }
+
+    pub fn new(log_path: impl AsRef<Path>) -> PendResult<Self, S> {
+        let logger = TreeLogger::new(log_path);
+
+        match logger.read_rev::<S::CommitId>() {
+            Ok(rev_iterator) => {
+                // 文件存在，成功获取迭代器
+                // 倒序遍历日志
+                for record_result in rev_iterator {
+                    let record = record_result?;
+                    // 在这里，你可以加入你的逻辑：
+                    // "检查 `record` 中的状态是否与 DB 一致"
+                    // 如果一致，则恢复并停止，否则就接着遍历
+                    if record.check_consistency_with_db() {
+                        println!("Found valid record in log: {:?}", record);
+                        return Ok(Tree {
+                            parent_of_root: record.parent_of_root,
+                            height_of_root: record.height_of_root,
+                            nodes: Slab::new(),
+                            index_map: HashMap::new(),
+
+                            logger,
+                        });
+                    }
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                // 文件不存在，这是一种预期的“空状态”，可以安全地处理
+                println!("Log file not found, assuming no history.");
+                // 就相当于一种特殊的遍历日志已经结束
+            }
+            Err(e) => {
+                // 发生其他 I/O 错误，例如权限不足等
+                return Err(e.into());
+            }
+        }
+
+        // 如果循环结束（日志都不符合 db，或者压根没有日志），则判断没有历史的情况是否符合 db
+        let empty_record = LogRecord {
+            parent_of_root: None,
+            height_of_root: 0,
+        };
+        // 检查 empty_record 中的状态是否与 DB 一致
+        if empty_record.check_consistency_with_db() {
+            Ok(Tree {
+                parent_of_root: empty_record.parent_of_root,
+                height_of_root: empty_record.height_of_root,
+                nodes: Slab::new(),
+                index_map: HashMap::new(),
+
+                logger,
+            })
+        } else {
+            Err(PendingError::RecoveryInconsistentError)
         }
     }
 

@@ -22,6 +22,7 @@ use crate::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    path::Path,
     sync::Arc,
 };
 
@@ -687,20 +688,31 @@ pub fn gen_updates(
     updates
 }
 
+pub struct TestParams {
+    pub num_history: usize,
+    pub max_num_new_keys: usize,
+    pub max_num_previous_keys: usize,
+}
+
 #[allow(clippy::type_complexity)]
 fn gen_init<D: DatabaseTrait>(
     db: Arc<D>,
-    num_history: usize,
+    test_params: TestParams,
     rng: &mut ChaChaRng,
-    max_num_new_keys: usize,
-    max_num_previous_keys: usize,
     all_keys: &mut BTreeSet<u64>,
     write_schema: &D::WriteSchema,
+    pending_log_path: impl AsRef<Path>,
 ) -> (
     UniqueVec<CommitID>,
     Vec<HashMap<u64, Option<u64>>>,
     VersionedMap<PendingKeyValueConfig<TestSchema, CommitID>>,
 ) {
+    let TestParams {
+        num_history,
+        max_num_new_keys,
+        max_num_previous_keys,
+    } = test_params;
+
     let mut history_cids = UniqueVec::new();
     for _ in 0..num_history << 4 {
         if history_cids.len() < num_history {
@@ -726,9 +738,10 @@ fn gen_init<D: DatabaseTrait>(
         ));
     }
 
-    let pending_part = VersionedMap::new(
+    let pending_part = VersionedMap::new_empty_log(
         history_cids.items().last().copied(),
         history_cids.len() as u64,
+        pending_log_path,
     );
 
     confirm_ids_to_history::<D>(
@@ -1160,6 +1173,7 @@ fn test_versioned_store<D: DatabaseTrait>(
     num_history: usize,
     num_pending: usize,
     num_operations: usize,
+    pending_log_path: impl AsRef<Path>,
 ) {
     let mut rng = get_rng_for_test();
     let num_gen_new_keys = 10;
@@ -1172,12 +1186,15 @@ fn test_versioned_store<D: DatabaseTrait>(
     let mut db_arc = Arc::new(db);
     let (history_cids, history_updates, pending_part) = gen_init(
         db_arc.clone(),
-        num_history,
+        TestParams {
+            num_history,
+            max_num_new_keys: num_gen_new_keys,
+            max_num_previous_keys: num_gen_previous_keys,
+        },
         &mut rng,
-        num_gen_new_keys,
-        num_gen_previous_keys,
         &mut all_keys,
         &write_schema,
+        pending_log_path,
     );
 
     Arc::get_mut(&mut db_arc)
@@ -1341,15 +1358,28 @@ pub fn empty_rocksdb(db_path: &str) -> Result<kvdb_rocksdb::Database> {
 #[test]
 fn tests_versioned_store_inmemory() {
     let db = InMemoryDatabase::empty();
-    test_versioned_store(db, 2, 10, 1000);
+
+    let log_dir = "__test_inmemory_flat_store";
+    let pending_log_path = format!("{}/pending.wal", log_dir);
+    if std::path::Path::new(log_dir).exists() {
+        std::fs::remove_dir_all(log_dir).unwrap();
+    }
+    std::fs::create_dir_all(log_dir).unwrap();
+
+    test_versioned_store(db, 2, 10, 1000, pending_log_path);
+
+    if std::path::Path::new(log_dir).exists() {
+        std::fs::remove_dir_all(log_dir).unwrap();
+    }
 }
 
 #[test]
 fn tests_versioned_store_rocksdb() {
-    let db_path = "__test_database";
+    let db_path = "__test_flat_store";
+    let pending_log_path = format!("{}/pending.wal", db_path);
 
     let db = empty_rocksdb(db_path).unwrap();
-    test_versioned_store(db, 2, 10, 1000);
+    test_versioned_store(db, 2, 10, 1000, pending_log_path);
 
     if std::path::Path::new(db_path).exists() {
         std::fs::remove_dir_all(db_path).unwrap();
