@@ -50,7 +50,11 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
     }
 
-    pub fn new(log_path: impl AsRef<Path>) -> PendResult<Self, S> {
+    pub fn new(
+        log_path: impl AsRef<Path>,
+        parent_of_root: Option<S::CommitId>,
+        height_of_root: u64,
+    ) -> PendResult<Self, S> {
         let logger = TreeLogger::new(log_path);
 
         match logger.read_rev::<S::CommitId>() {
@@ -62,7 +66,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
                     // 在这里，你可以加入你的逻辑：
                     // "检查 `record` 中的状态是否与 DB 一致"
                     // 如果一致，则恢复并停止，否则就接着遍历
-                    if record.check_consistency_with_db() {
+                    if record.check_consistency_with_db(parent_of_root, height_of_root) {
                         println!("Found valid record in log: {:?}", record);
                         return Ok(Tree {
                             parent_of_root: record.parent_of_root,
@@ -92,7 +96,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             height_of_root: 0,
         };
         // 检查 empty_record 中的状态是否与 DB 一致
-        if empty_record.check_consistency_with_db() {
+        if empty_record.check_consistency_with_db(parent_of_root, height_of_root) {
             Ok(Tree {
                 parent_of_root: empty_record.parent_of_root,
                 height_of_root: empty_record.height_of_root,

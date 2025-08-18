@@ -62,6 +62,18 @@ impl<T: TableSchema> TableRead<T> for RocksDBColumn {
 
         Ok(Box::new(iter))
     }
+
+    fn iter_rev_from_end(&self) -> Result<TableIter<T>> {
+        let iter = self.inner.iter_rev(self.col).map(|kv| match kv {
+            Ok((k, v)) => Ok((
+                Cow::Owned(<T::Key>::decode_owned(k.into_vec())?),
+                Cow::Owned(<T::Value>::decode_owned(v)?),
+            )),
+            Err(e) => Err(DatabaseError::IoError(e)),
+        });
+
+        Ok(Box::new(iter))
+    }
 }
 
 impl DatabaseTrait for kvdb_rocksdb::Database {

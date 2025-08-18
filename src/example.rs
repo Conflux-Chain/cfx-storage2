@@ -16,10 +16,10 @@ pub struct Storage {
 }
 
 impl Storage {
-    pub fn new(log_path: impl AsRef<Path>) -> Result<Self> {
+    pub fn new_empty(log_path: impl AsRef<Path>) -> Result<Self> {
         Ok(Self {
             backend: InMemoryDatabase::empty().into(),
-            cache: Mutex::new(VersionedStoreCache::new(log_path)?).into(),
+            cache: Mutex::new(VersionedStoreCache::new(log_path, None, 0)?).into(),
         })
     }
 

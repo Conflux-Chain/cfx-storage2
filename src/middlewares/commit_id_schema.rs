@@ -30,7 +30,6 @@ pub fn height_to_history_number(height: u64) -> HistoryNumber {
 }
 
 /// Converts a `history_number` back to a `height`.
-#[cfg(test)]
 pub fn history_number_to_height(history_number: HistoryNumber) -> u64 {
     history_number
 }

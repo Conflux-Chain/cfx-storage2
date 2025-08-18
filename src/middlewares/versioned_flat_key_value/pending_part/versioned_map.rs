@@ -32,9 +32,13 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         }
     }
 
-    pub fn new(log_path: impl AsRef<Path>) -> PendResult<Self, S> {
+    pub fn new(
+        log_path: impl AsRef<Path>,
+        parent_of_root: Option<S::CommitId>,
+        height_of_root: u64,
+    ) -> PendResult<Self, S> {
         Ok(VersionedMap {
-            tree: Tree::new(log_path)?,
+            tree: Tree::new(log_path, parent_of_root, height_of_root)?,
             current: RwLock::new(None),
         })
     }

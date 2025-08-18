@@ -6,8 +6,9 @@ use crate::{
     backends::{DatabaseTrait, TableRead},
     errors::Result,
     middlewares::{
-        confirm_ids_to_history, confirm_maps_to_history, CommitID, CommitIDSchema,
-        KeyValueStoreBulks, VersionedStore, VersionedStoreCache,
+        confirm_ids_to_history, confirm_maps_to_history, history_number_to_height, CommitID,
+        CommitIDSchema, HistoryNumberSchema, KeyValueStoreBulks, VersionedStore,
+        VersionedStoreCache,
     },
 };
 
@@ -26,11 +27,40 @@ pub struct LvmtStorage<D: DatabaseTrait> {
 
 impl<D: DatabaseTrait> LvmtStorage<D> {
     pub fn new(backend: Arc<D>, log_path: impl AsRef<Path>) -> Result<Self> {
+        let history_number_table = Arc::new(backend.view::<HistoryNumberSchema>()?);
+        let (parent_of_root_commit_id, history_number_of_root) =
+            match history_number_table.iter_rev_from_end()?.next() {
+                Some(latest) => {
+                    let (parent_of_root_history_number, parent_of_root_cid) = latest?;
+                    (
+                        Some(*parent_of_root_cid.as_ref()),
+                        parent_of_root_history_number.as_ref() + 1,
+                    )
+                }
+                None => (None, 0),
+            };
+        let height_of_root = history_number_to_height(history_number_of_root);
+
         Ok(Self {
             backend,
-            key_value_cache: Mutex::new(VersionedStoreCache::new(&log_path)?).into(),
-            amt_node_cache: Mutex::new(VersionedStoreCache::new(&log_path)?).into(),
-            slot_alloc_cache: Mutex::new(VersionedStoreCache::new(log_path)?).into(),
+            key_value_cache: Mutex::new(VersionedStoreCache::new(
+                &log_path,
+                parent_of_root_commit_id,
+                height_of_root,
+            )?)
+            .into(),
+            amt_node_cache: Mutex::new(VersionedStoreCache::new(
+                &log_path,
+                parent_of_root_commit_id,
+                height_of_root,
+            )?)
+            .into(),
+            slot_alloc_cache: Mutex::new(VersionedStoreCache::new(
+                log_path,
+                parent_of_root_commit_id,
+                height_of_root,
+            )?)
+            .into(),
         })
     }
 

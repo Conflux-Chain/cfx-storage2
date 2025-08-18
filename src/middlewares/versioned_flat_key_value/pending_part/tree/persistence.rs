@@ -8,14 +8,18 @@ use std::path::{Path, PathBuf};
 // 这个结构体代表了需要持久化到日志中的单条记录。
 // 它必须是可序列化和反序列化的。
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-pub struct LogRecord<C> {
+pub struct LogRecord<C: PartialEq> {
     pub parent_of_root: Option<C>,
     pub height_of_root: u64,
 }
 
-impl<C> LogRecord<C> {
-    pub fn check_consistency_with_db(&self) -> bool {
-        true
+impl<C: PartialEq> LogRecord<C> {
+    pub fn check_consistency_with_db(
+        &self,
+        parent_of_root: Option<C>,
+        height_of_root: u64,
+    ) -> bool {
+        (self.parent_of_root == parent_of_root) && (self.height_of_root == height_of_root)
     }
 }
 
@@ -46,7 +50,7 @@ impl TreeLogger {
     /// * `height_of_root` - 新的 height_of_root 值。
     pub fn log_change<C>(&self, parent_of_root: &Option<C>, height_of_root: u64) -> io::Result<()>
     where
-        C: Clone + Serialize,
+        C: Clone + Serialize + PartialEq,
     {
         let record = LogRecord {
             parent_of_root: parent_of_root.clone(),
@@ -112,7 +116,7 @@ where
     }
 }
 
-impl<C> Iterator for LogRevIterator<C>
+impl<C: PartialEq> Iterator for LogRevIterator<C>
 where
     C: DeserializeOwned,
 {

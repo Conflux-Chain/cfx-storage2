@@ -47,6 +47,21 @@ impl<T: TableSchema> TableRead<T> for InMemoryTable {
             .map(|((_, k), v)| Ok((<T::Key>::decode(k)?, <T::Value>::decode(v)?)));
         Ok(Box::new(iter))
     }
+
+    fn iter_rev_from_end(&self) -> Result<TableIter<T>> {
+        type TmpItem<'a> = (&'a (u32, Vec<u8>), &'a Vec<u8>);
+        let range: Box<dyn DoubleEndedIterator<Item = TmpItem>> = if self.col == u32::MAX {
+            Box::new(self.inner.0.iter().rev())
+        } else {
+            let end_bound = (self.col + 1, Vec::new());
+            Box::new(self.inner.0.range(..end_bound).rev())
+        };
+        let iter = range
+            //.filter(|((col, _), _)| *col == self.col)
+            .take_while(move |((col, _), _)| *col == self.col)
+            .map(|((_, k), v)| Ok((<T::Key>::decode(k)?, <T::Value>::decode(v)?)));
+        Ok(Box::new(iter))
+    }
 }
 
 impl DatabaseTrait for InMemoryDatabase {
