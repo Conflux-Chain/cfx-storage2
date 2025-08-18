@@ -7,7 +7,11 @@ pub enum TableName {
     AuthNodeChange,
     StateRoot,
     #[cfg(test)]
-    MockTable,
+    MockTable1,
+    #[cfg(test)]
+    MockTable2,
+    #[cfg(test)]
+    MockTable3,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -48,7 +52,11 @@ impl From<TableName> for u32 {
             AuthNodeChange => 9,
             StateRoot => 10,
             #[cfg(test)]
-            MockTable => u32::MAX,
+            MockTable1 => 1,
+            #[cfg(test)]
+            MockTable2 => 2,
+            #[cfg(test)]
+            MockTable3 => 3,
         }
     }
 }
@@ -67,7 +75,11 @@ impl From<TableName> for &'static str {
             AuthNodeChange => "auth_node_change",
             StateRoot => "state_root",
             #[cfg(test)]
-            MockTable => "mock_table",
+            MockTable1 => "mock_table1",
+            #[cfg(test)]
+            MockTable2 => "mock_table2",
+            #[cfg(test)]
+            MockTable3 => "mock_table3",
         }
     }
 }
