@@ -10,10 +10,14 @@ use rand_chacha::ChaChaRng;
 use amt::{AmtParams, CreateMode};
 
 use crate::{
-    backends::{DatabaseTrait, InMemoryDatabase},
+    backends::{
+        impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, WrappedInMemoryDb,
+    },
     errors::Result,
     lvmt::types::{LvmtValue, KEY_SLOT_SIZE},
-    middlewares::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test, CommitID},
+    middlewares::{
+        clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test, CommitID,
+    },
     traits::{KeyValueStoreIterable, KeyValueStoreManager, KeyValueStoreRead},
 };
 
@@ -55,7 +59,7 @@ fn gen_novel_commit_id(rng: &mut ChaChaRng, previous: &mut HashSet<CommitID>) ->
 }
 
 // num_keys = 8 * 10^6 has been tested, but still contain no amt_node_id whose depth > 1
-fn test_lvmt_store<D: DatabaseTrait>(
+fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>>(
     backend: D,
     num_keys: usize,
     pending_log_path: impl AsRef<Path>,
@@ -143,20 +147,21 @@ fn test_lvmt_store<D: DatabaseTrait>(
 
 #[test]
 fn test_lvmt_store_rocksdb() {
-    let db_path = "__test_lvmt_store";
-    let pending_log_path = format!("{}/pending.wal", db_path);
+    let db_and_log_path = "__test_lvmt_store";
+    let pending_log_path = format!("{}/pending.wal", db_and_log_path);
 
-    let backend = empty_rocksdb(db_path).unwrap();
-    test_lvmt_store::<kvdb_rocksdb::Database>(backend, 100000, pending_log_path);
+    clear_dir_then_create(db_and_log_path);
+    let backend = WrappedRocksDb::open(db_and_log_path).unwrap();
+    test_lvmt_store::<WrappedRocksDb<HistoricalTableName>>(backend, 100000, pending_log_path);
 
-    if std::path::Path::new(db_path).exists() {
-        std::fs::remove_dir_all(db_path).unwrap();
+    if std::path::Path::new(db_and_log_path).exists() {
+        std::fs::remove_dir_all(db_and_log_path).unwrap();
     }
 }
 
 #[test]
 fn test_lvmt_store_inmemory() {
-    let backend = InMemoryDatabase::empty();
+    let backend = WrappedInMemoryDb::empty();
 
     let log_dir = "__test_inmemory_store";
     let pending_log_path = format!("{}/pending.wal", log_dir);
@@ -165,7 +170,7 @@ fn test_lvmt_store_inmemory() {
     }
     std::fs::create_dir_all(log_dir).unwrap();
 
-    test_lvmt_store::<InMemoryDatabase>(backend, 100000, pending_log_path);
+    test_lvmt_store::<WrappedInMemoryDb<HistoricalTableName>>(backend, 100000, pending_log_path);
 
     if std::path::Path::new(log_dir).exists() {
         std::fs::remove_dir_all(log_dir).unwrap();

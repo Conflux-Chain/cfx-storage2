@@ -8,7 +8,8 @@ use super::{
 };
 use crate::{
     backends::{
-        impls::kvdb_rocksdb::open_database, DatabaseTrait, InMemoryDatabase, VersionedKVName,
+        impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, VersionedKVName,
+        WrappedInMemoryDb,
     },
     errors::Result,
     middlewares::{
@@ -696,7 +697,7 @@ pub struct TestParams {
 }
 
 #[allow(clippy::type_complexity)]
-fn gen_init<D: DatabaseTrait>(
+fn gen_init<D: DatabaseTrait<HistoricalTableName>>(
     db: Arc<D>,
     test_params: TestParams,
     rng: &mut ChaChaRng,
@@ -1174,7 +1175,7 @@ impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
     }
 }
 
-fn test_versioned_store<D: DatabaseTrait>(
+fn test_versioned_store<D: DatabaseTrait<HistoricalTableName>>(
     db: D,
     num_history: usize,
     num_pending: usize,
@@ -1350,27 +1351,20 @@ fn test_versioned_store<D: DatabaseTrait>(
     }
 }
 
-pub fn empty_rocksdb(db_path: &str) -> Result<kvdb_rocksdb::Database> {
-    use crate::backends::TableName;
-
-    if std::path::Path::new(db_path).exists() {
-        std::fs::remove_dir_all(db_path).unwrap();
+pub fn clear_dir_then_create(dir_path: &str) {
+    if std::path::Path::new(dir_path).exists() {
+        std::fs::remove_dir_all(dir_path).unwrap();
     }
-    std::fs::create_dir_all(db_path).unwrap();
-
-    open_database(TableName::max_index() + 1, db_path)
+    std::fs::create_dir_all(dir_path).unwrap();
 }
 
 #[test]
 fn tests_versioned_store_inmemory() {
-    let db = InMemoryDatabase::empty();
+    let db = WrappedInMemoryDb::empty();
 
     let log_dir = "__test_inmemory_flat_store";
     let pending_log_path = format!("{}/pending.wal", log_dir);
-    if std::path::Path::new(log_dir).exists() {
-        std::fs::remove_dir_all(log_dir).unwrap();
-    }
-    std::fs::create_dir_all(log_dir).unwrap();
+    clear_dir_then_create(log_dir);
 
     test_versioned_store(db, 2, 10, 1000, pending_log_path);
 
@@ -1381,13 +1375,14 @@ fn tests_versioned_store_inmemory() {
 
 #[test]
 fn tests_versioned_store_rocksdb() {
-    let db_path = "__test_flat_store";
-    let pending_log_path = format!("{}/pending.wal", db_path);
+    let db_and_log_path = "__test_flat_store";
+    let pending_log_path = format!("{}/pending.wal", db_and_log_path);
 
-    let db = empty_rocksdb(db_path).unwrap();
+    clear_dir_then_create(db_and_log_path);
+    let db = WrappedRocksDb::open(db_and_log_path).unwrap();
     test_versioned_store(db, 2, 10, 1000, pending_log_path);
 
-    if std::path::Path::new(db_path).exists() {
-        std::fs::remove_dir_all(db_path).unwrap();
+    if std::path::Path::new(db_and_log_path).exists() {
+        std::fs::remove_dir_all(db_and_log_path).unwrap();
     }
 }

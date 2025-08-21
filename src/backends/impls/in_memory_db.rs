@@ -4,20 +4,35 @@ use super::super::{
     write_schema::WriteSchemaNoSubkey,
     DatabaseTrait, TableIter, TableRead,
 };
-use crate::errors::Result;
-use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
+use crate::{backends::table_name::TableNameTrait, errors::Result};
+use std::{borrow::Cow, collections::BTreeMap, marker::PhantomData, sync::Arc};
 
-pub struct InMemoryDatabase(BTreeMap<(u32, Vec<u8>), Vec<u8>>);
+struct InnerInMemoryDatabase(BTreeMap<(u32, Vec<u8>), Vec<u8>>);
 
-pub struct InMemoryTable {
-    inner: Arc<InMemoryDatabase>,
-    col: u32,
-}
-
-impl InMemoryDatabase {
+impl InnerInMemoryDatabase {
     pub fn empty() -> Self {
         Self(Default::default())
     }
+
+    pub fn commit<I>(&mut self, changes: I) -> Result<()>
+    where
+        I: Iterator<Item = (u32, Vec<u8>, Option<Vec<u8>>)>,
+    {
+        for (col, key, value) in changes {
+            let k = (col, key);
+            if let Some(v) = value {
+                self.0.insert(k, v);
+            } else {
+                self.0.remove(&k);
+            }
+        }
+        Ok(())
+    }
+}
+
+pub struct InMemoryTable {
+    inner: Arc<InnerInMemoryDatabase>,
+    col: u32,
 }
 
 impl<T: TableSchema> TableRead<T> for InMemoryTable {
@@ -64,13 +79,30 @@ impl<T: TableSchema> TableRead<T> for InMemoryTable {
     }
 }
 
-impl DatabaseTrait for InMemoryDatabase {
-    type TableID = u32;
-    type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
+// The public-facing database type, generic over the table name enum `TN`.
+pub struct WrappedInMemoryDb<TN: TableNameTrait> {
+    inner: Arc<InnerInMemoryDatabase>,
+    _phantom: PhantomData<TN>,
+}
 
-    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T> + Send + Sync> {
+impl<TN: TableNameTrait> WrappedInMemoryDb<TN> {
+    pub fn empty() -> Self {
+        Self {
+            inner: Arc::new(InnerInMemoryDatabase::empty()),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedInMemoryDb<TN> {
+    // type TableID = u32;
+    type WriteSchema = WriteSchemaNoSubkey<TN>;
+
+    fn view<T: TableSchema<TableName = TN>>(
+        self: &Arc<Self>,
+    ) -> Result<impl 'static + TableRead<T> + Send + Sync> {
         Ok(InMemoryTable {
-            inner: self.clone(),
+            inner: self.inner.clone(),
             col: T::NAME.into(),
         })
     }
@@ -79,15 +111,16 @@ impl DatabaseTrait for InMemoryDatabase {
         Self::WriteSchema::new()
     }
 
-    fn commit<'a>(&mut self, changes: Self::WriteSchema) -> Result<()> {
-        for (col, key, value) in changes.drain() {
-            let k = (col, key);
-            if let Some(v) = value {
-                self.0.insert(k, v)
-            } else {
-                self.0.remove(&k)
-            };
-        }
-        Ok(())
+    fn commit(&mut self, changes: Self::WriteSchema) -> Result<()> {
+        let inner_mut = Arc::get_mut(&mut self.inner).expect(
+            "Cannot get mutable access to InMemoryDatabase for commit. It is shared elsewhere.",
+        );
+
+        let raw_changes = changes
+            .drain()
+            .into_iter()
+            .map(|(col, key, val)| (col.into(), key, val));
+
+        inner_mut.commit(raw_changes)
     }
 }

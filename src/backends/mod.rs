@@ -6,23 +6,25 @@ mod write_schema;
 
 use std::sync::Arc;
 
-pub use impls::in_memory_db::InMemoryDatabase;
+pub use impls::in_memory_db::WrappedInMemoryDb;
 pub use table::{TableIter, TableKey, TableRead, TableReader, TableSchema, TableValue};
-pub use table_name::{TableName, VersionedKVName};
+pub use table_name::{HistoricalTableName, VersionedKVName};
 pub use write_schema::WriteSchemaTrait;
 
 use crate::errors::Result;
 
+use self::table_name::TableNameTrait;
+
 /// Trait defining the interface for a backend database, which provides multiple tables, each acting as a key-value store.
-pub trait DatabaseTrait: Sized + Send + Sync {
+pub trait DatabaseTrait<TN: TableNameTrait>: Sized + Send + Sync {
     /// Type for identifying tables. Different databases may specify different types.
     /// For example, MDBX uses 'static str, while kvdb-rocksdb uses u32.
-    type TableID: From<TableName> + Send + Sync;
+    // type TableID: From<TN> + Send + Sync;
 
     /// Type for collecting write operations.
     /// Each database can specify its own format to accommodate different key format extensions.
     /// For example, MDBX supports subkeys.
-    type WriteSchema: WriteSchemaTrait;
+    type WriteSchema: WriteSchemaTrait<TN>;
 
     /// Returns a read-only view of a table.
     ///
@@ -33,7 +35,9 @@ pub trait DatabaseTrait: Sized + Send + Sync {
     /// # Returns
     ///
     /// A `Result` containing an implementation of `TableReader` for the specified schema.
-    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T> + Send + Sync>;
+    fn view<T: TableSchema<TableName = TN>>(
+        self: &Arc<Self>,
+    ) -> Result<impl 'static + TableRead<T> + Send + Sync>;
 
     /// Creates a new WriteSchema instance.
     ///

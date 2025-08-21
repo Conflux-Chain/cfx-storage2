@@ -13,5 +13,5 @@ pub use versioned_flat_key_value::{
 
 #[cfg(test)]
 pub use versioned_flat_key_value::{
-    empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test,
+    clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test,
 };

@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use super::serde::{Decode, Encode, EncodeSubKey};
-use super::table_name::TableName;
+use super::table_name::TableNameTrait;
 use crate::combine_traits;
 
 use crate::errors::{DbResult, Result};
@@ -30,7 +30,9 @@ combine_traits!(TableKey: 'static + EncodeSubKey + Decode + ToOwned + Ord + Eq +
 combine_traits!(TableValue: 'static + Encode + Decode + ToOwned  + Send + Sync + Debug);
 
 pub trait TableSchema: 'static + Copy + Send + Sync {
-    const NAME: TableName;
+    // Associate the schema with a specific TableName enum type
+    type TableName: TableNameTrait;
+    const NAME: Self::TableName;
     type Key: TableKey + ?Sized;
     type Value: TableValue + ?Sized;
 }
@@ -40,16 +42,19 @@ mod tests {
     use std::borrow::Cow;
     use std::sync::Arc;
 
-    use crate::backends::{DatabaseTrait, InMemoryDatabase, TableRead, WriteSchemaTrait};
+    use crate::backends::impls::kvdb_rocksdb::WrappedRocksDb;
+    use crate::backends::table_name::MockTableName;
+    use crate::backends::{DatabaseTrait, TableRead, WrappedInMemoryDb, WriteSchemaTrait};
     use crate::errors::{DatabaseError, Result};
-    use crate::middlewares::empty_rocksdb;
+    use crate::middlewares::clear_dir_then_create;
 
-    use super::{TableName, TableSchema};
+    use super::TableSchema;
 
     #[derive(Clone, Copy)]
     struct MockTable1;
     impl TableSchema for MockTable1 {
-        const NAME: TableName = TableName::MockTable1;
+        type TableName = MockTableName;
+        const NAME: MockTableName = MockTableName::MockTable1;
         type Key = [u8];
         type Value = [u8];
     }
@@ -57,7 +62,8 @@ mod tests {
     #[derive(Clone, Copy)]
     struct MockTable2;
     impl TableSchema for MockTable2 {
-        const NAME: TableName = TableName::MockTable2;
+        type TableName = MockTableName;
+        const NAME: MockTableName = MockTableName::MockTable2;
         type Key = [u8];
         type Value = [u8];
     }
@@ -65,7 +71,8 @@ mod tests {
     #[derive(Clone, Copy)]
     struct MockTable3;
     impl TableSchema for MockTable3 {
-        const NAME: TableName = TableName::MockTable3;
+        type TableName = MockTableName;
+        const NAME: MockTableName = MockTableName::MockTable3;
         type Key = [u8];
         type Value = [u8];
     }
@@ -75,7 +82,7 @@ mod tests {
     /// This version writes to three separate tables but only reads from one
     /// to ensure that iterators and getters are properly isolated to the
     /// specified table (Column Family).
-    fn test_table_read_behavior<DB: DatabaseTrait>(mut db: DB) -> Result<()> {
+    fn test_table_read_behavior<DB: DatabaseTrait<MockTableName>>(mut db: DB) -> Result<()> {
         let test_data1: Vec<(Vec<u8>, Vec<u8>)> = vec![
             (b"key1:10".to_vec(), b"value1:ten".to_vec()),
             (b"key1:20".to_vec(), b"value1:twenty".to_vec()),
@@ -166,14 +173,15 @@ mod tests {
 
     #[test]
     fn test_in_memory_database_behavior() -> Result<()> {
-        let db = InMemoryDatabase::empty();
+        let db = WrappedInMemoryDb::empty();
         test_table_read_behavior(db)
     }
 
     #[test]
     fn test_rocksdb_database_behavior() -> Result<()> {
         let temp_dir = "__test_rocksdb_table_read";
-        let db = empty_rocksdb(temp_dir)?;
+        clear_dir_then_create(temp_dir);
+        let db = WrappedRocksDb::open(temp_dir)?;
         test_table_read_behavior(db)
     }
 }

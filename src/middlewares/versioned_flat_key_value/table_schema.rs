@@ -1,7 +1,7 @@
 use std::hash::Hash;
 
 use crate::{
-    backends::{TableKey, TableName, TableSchema, TableValue, VersionedKVName},
+    backends::{HistoricalTableName, TableKey, TableSchema, TableValue, VersionedKVName},
     traits::{KeyValueStoreIterable, KeyValueStoreRead},
 };
 
@@ -21,7 +21,8 @@ where
 pub struct HistoryChangeTable<T: VersionedKeyValueSchema>(T);
 
 impl<T: VersionedKeyValueSchema> TableSchema for HistoryChangeTable<T> {
-    const NAME: TableName = TableName::HistoryChange(T::NAME);
+    type TableName = HistoricalTableName;
+    const NAME: HistoricalTableName = HistoricalTableName::HistoryChange(T::NAME);
     type Key = HistoryChangeKey<T::Key>;
     type Value = T::Value;
 }
@@ -30,7 +31,8 @@ impl<T: VersionedKeyValueSchema> TableSchema for HistoryChangeTable<T> {
 pub struct HistoryIndicesTable<T: VersionedKeyValueSchema>(T);
 
 impl<T: VersionedKeyValueSchema> TableSchema for HistoryIndicesTable<T> {
-    const NAME: TableName = TableName::HistoryIndex(T::NAME);
+    type TableName = HistoricalTableName;
+    const NAME: HistoricalTableName = HistoricalTableName::HistoryIndex(T::NAME);
     type Key = HistoryIndexKey<T::Key>;
     type Value = HistoryIndices<T::Value>;
 }

@@ -1,4 +1,7 @@
-use crate::{backends::WriteSchemaTrait, errors::Result};
+use crate::{
+    backends::{HistoricalTableName, WriteSchemaTrait},
+    errors::Result,
+};
 
 pub trait KeyValueStoreRead<K, V>
 where
@@ -52,7 +55,7 @@ pub trait KeyValueStoreBulksTrait<K, V, C> {
         &self,
         commit: C,
         bulk: impl Iterator<Item = (K, Option<V>)>,
-        write_schema: &impl WriteSchemaTrait,
+        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
     ) -> Result<()>;
 
     /// Get with the given commit version and key.
@@ -62,6 +65,6 @@ pub trait KeyValueStoreBulksTrait<K, V, C> {
     fn gc_commit(
         &self,
         changes: impl Iterator<Item = (C, K, Option<V>)>,
-        write_schema: &impl WriteSchemaTrait,
+        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
     ) -> Result<()>;
 }

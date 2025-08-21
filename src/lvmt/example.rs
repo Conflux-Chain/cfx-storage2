@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use parking_lot::Mutex;
 
 use crate::{
-    backends::{DatabaseTrait, TableRead},
+    backends::{DatabaseTrait, HistoricalTableName, TableRead},
     errors::Result,
     middlewares::{
         confirm_ids_to_history, confirm_maps_to_history, history_number_to_height, CommitID,
@@ -18,14 +18,14 @@ use super::{
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
 };
 
-pub struct LvmtStorage<D: DatabaseTrait> {
+pub struct LvmtStorage<D: DatabaseTrait<HistoricalTableName>> {
     backend: Arc<D>,
     key_value_cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue>>>,
     amt_node_cache: Arc<Mutex<VersionedStoreCache<AmtNodes>>>,
     slot_alloc_cache: Arc<Mutex<VersionedStoreCache<SlotAllocations>>>,
 }
 
-impl<D: DatabaseTrait> LvmtStorage<D> {
+impl<D: DatabaseTrait<HistoricalTableName>> LvmtStorage<D> {
     pub fn new(backend: Arc<D>, log_path: impl AsRef<Path>) -> Result<Self> {
         let history_number_table = Arc::new(backend.view::<HistoryNumberSchema>()?);
         let (parent_of_root_commit_id, history_number_of_root) =
@@ -86,7 +86,10 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         ))
     }
 
-    pub fn commit(&mut self, write_schema: <D as DatabaseTrait>::WriteSchema) -> Result<()> {
+    pub fn commit(
+        &mut self,
+        write_schema: <D as DatabaseTrait<HistoricalTableName>>::WriteSchema,
+    ) -> Result<()> {
         let backend =
             Arc::get_mut(&mut self.backend).expect("Exclusive access to backend required");
         backend.commit(write_schema)

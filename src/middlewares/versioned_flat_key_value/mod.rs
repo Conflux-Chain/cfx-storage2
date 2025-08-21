@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 pub use pending_part::PendingError;
 
 #[cfg(test)]
-pub use tests::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test};
+pub use tests::{clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test};
 
 use self::history_indices::LATEST;
 use self::history_indices_cache::HistoryIndexCache;
@@ -29,7 +29,9 @@ use pending_part::VersionedMap;
 use super::commit_id_schema::HistoryNumberSchema;
 use super::ChangeKey;
 use super::CommitIDSchema;
-use crate::backends::{DatabaseTrait, TableRead, TableReader, WriteSchemaTrait};
+use crate::backends::{
+    DatabaseTrait, HistoricalTableName, TableRead, TableReader, WriteSchemaTrait,
+};
 use crate::errors::Result;
 use crate::middlewares::commit_id_schema::height_to_history_number;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
@@ -82,7 +84,7 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         self.pending_part
     }
 
-    pub fn new<D: DatabaseTrait>(
+    pub fn new<D: DatabaseTrait<HistoricalTableName>>(
         db: Arc<D>,
         pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
     ) -> Result<Self> {
@@ -319,7 +321,10 @@ fn iter_history<'db, T: VersionedKeyValueSchema>(
     Ok(history_map)
 }
 
-pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
+pub fn confirmed_pending_to_history<
+    D: DatabaseTrait<HistoricalTableName>,
+    T: VersionedKeyValueSchema,
+>(
     db: Arc<D>,
     pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
     new_root_commit_id: CommitID,
@@ -347,7 +352,10 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
     Ok(())
 }
 
-pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
+pub fn confirm_maps_to_history<
+    D: DatabaseTrait<HistoricalTableName>,
+    T: VersionedKeyValueSchema,
+>(
     db: Arc<D>,
     to_confirm_start_height: u64,
     to_confirm_maps: NonEmpty<HashMap<T::Key, impl Into<Option<T::Value>>>>,
@@ -385,7 +393,7 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     Ok(())
 }
 
-pub fn confirm_ids_to_history<D: DatabaseTrait>(
+pub fn confirm_ids_to_history<D: DatabaseTrait<HistoricalTableName>>(
     db: Arc<D>,
     to_confirm_start_height: u64,
     to_confirm_ids: &NonEmpty<CommitID>,

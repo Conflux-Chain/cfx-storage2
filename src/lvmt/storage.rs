@@ -10,7 +10,7 @@ use super::{
     types::{AllocatePosition, AmtNodeId},
 };
 use crate::{
-    backends::WriteSchemaTrait,
+    backends::{HistoricalTableName, WriteSchemaTrait},
     errors::Result,
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::{table_schema::KeyValueSnapshotRead, CommitID},
@@ -72,7 +72,7 @@ impl<'db> LvmtStore<'db> {
         old_commit: Option<CommitID>,
         new_commit: CommitID,
         changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
-        write_schema: &impl WriteSchemaTrait,
+        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
         pp: &AmtParams<PE>,
     ) -> Result<()> {
         let (amt_node_view, slot_alloc_view, key_value_view) = if let Some(old_commit) = old_commit

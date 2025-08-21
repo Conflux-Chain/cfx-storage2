@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use crate::{
-    backends::{InMemoryDatabase, VersionedKVName},
+    backends::{HistoricalTableName, VersionedKVName, WrappedInMemoryDb},
     errors::Result,
     middlewares::{table_schema::VersionedKeyValueSchema, VersionedStore, VersionedStoreCache},
     traits::KeyValueStoreManager,
@@ -11,14 +11,14 @@ use parking_lot::Mutex;
 use static_assertions::assert_impl_all;
 
 pub struct Storage {
-    backend: Arc<InMemoryDatabase>,
+    backend: Arc<WrappedInMemoryDb<HistoricalTableName>>,
     cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue>>>,
 }
 
 impl Storage {
     pub fn new_empty(log_path: impl AsRef<Path>) -> Result<Self> {
         Ok(Self {
-            backend: InMemoryDatabase::empty().into(),
+            backend: WrappedInMemoryDb::empty().into(),
             cache: Mutex::new(VersionedStoreCache::new(log_path, None, 0)?).into(),
         })
     }
