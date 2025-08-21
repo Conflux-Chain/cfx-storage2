@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use nonempty::NonEmpty;
+
 use crate::middlewares::versioned_flat_key_value::pending_part::pending_schema::{
     ConfirmedPathInfo, KeyValueMap, PendingKeyValueSchema, Result as PendResult,
 };
@@ -30,41 +32,77 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         Err(crate::middlewares::PendingError::InvalidAncestorHeight)
     }
 
-    pub fn change_root(&mut self, commit_id: S::CommitId) -> PendResult<ConfirmedPathInfo<S>, S> {
+    /// Changes the root of the pending tree to the given `commit_id`.
+    ///
+    /// This function communicates its outcome to the caller via its return value,
+    /// clearly distinguishing between a meaningful state change, a no-op, and an error:
+    ///
+    /// - `Ok(Some(path_info))`: The root was successfully changed. This represents a valid
+    ///   state transition that satisfies the core invariant: the new root's height is
+    ///   strictly greater than the old one's. The caller should use the returned
+    ///   `path_info` to persist these changes (e.g., writing to a database).
+    ///
+    /// - `Ok(None)`: The given `commit_id` was already the current root. This is treated as a
+    ///   successful "no-operation" (no-op). Because the height-increase invariant is not met,
+    ///   no change is performed. The caller should interpret this as a signal to safely
+    ///   skip any follow-up work.
+    ///
+    /// - `Err(...)`: An error occurred, for instance, if the `commit_id` was not found.
+    pub fn change_root(
+        &mut self,
+        commit_id: S::CommitId,
+    ) -> PendResult<Option<ConfirmedPathInfo<S>>, S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // old_root..=new_root's parent
         let to_commit = self.find_path(slab_index);
 
-        if let Some(last) = to_commit.last() {
-            for (ancester, _) in to_commit.iter() {
-                self.discard(*ancester)?;
-            }
-            self.discard(commit_id)?;
-
-            for (ancester, _) in to_commit.iter() {
-                self.detach_node(self.get_slab_index_by_commit_id(*ancester).unwrap())
-            }
-
-            // set new_root as root
-            let new_root = self.get_node_mut_by_slab_index(slab_index);
-            new_root.set_as_root();
-            self.height_of_root = new_root.get_height();
-            self.parent_of_root = Some(last.0);
-
-            self.logger
-                .log_change(&self.parent_of_root, self.height_of_root)?;
+        // IMPORTANT: Do not persist this operation before this return statement.
+        // If the path is empty, the new root is the same as the old root.
+        // This is a valid no-op scenario. Return `Ok(None)` to explicitly signal to the
+        // caller that no state has changed and no further work is necessary.
+        if to_commit.is_empty() {
+            return Ok(None);
         }
+
+        let old_root_height = self.height_of_root;
+
+        for (ancester, _) in to_commit.iter() {
+            self.discard_inner(*ancester)?;
+        }
+        self.discard_inner(commit_id)?;
+
+        for (ancester, _) in to_commit.iter() {
+            self.detach_node(self.get_slab_index_by_commit_id(*ancester).unwrap())
+        }
+
+        // set new_root as root
+        let new_root = self.get_node_mut_by_slab_index(slab_index);
+        new_root.set_as_root();
+        self.height_of_root = new_root.get_height();
+        let last = to_commit
+            .last()
+            .expect("Logic error: to_commit should be non-empty here.");
+        self.parent_of_root = Some(last.0);
+
+        // Invariant: A real root change must strictly increase the height.
+        assert!(old_root_height < self.height_of_root);
+
+        self.logger
+            .log_change(&self.parent_of_root, self.height_of_root)?;
 
         // height of old_root
         let start_height_to_commit = self.height_of_root - to_commit.len() as u64;
+        assert_eq!(start_height_to_commit, old_root_height);
         let (to_commit_ids, to_commit_maps) = to_commit.into_iter().unzip();
 
-        Ok(ConfirmedPathInfo {
+        Ok(Some(ConfirmedPathInfo {
             start_height: start_height_to_commit,
-            commit_ids: to_commit_ids,
-            key_value_maps: to_commit_maps,
-        })
+            commit_ids: NonEmpty::from_vec(to_commit_ids)
+                .expect("Logic error: to_commit_ids should be non-empty here."),
+            key_value_maps: NonEmpty::from_vec(to_commit_maps)
+                .expect("Logic error: to_commit_maps should be non-empty here."),
+        }))
     }
 
     /// This function discards the siblings of the nodes from the root (excluded) to `commit_id` (included).
@@ -79,11 +117,11 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
         if let Some(last) = to_check_children.last() {
             for (ancester, _) in to_check_children.iter() {
-                if self.discard(*ancester)? {
+                if self.discard_inner(*ancester)? {
                     has_discarded_nodes = true;
                 };
             }
-            if self.discard(commit_id)? {
+            if self.discard_inner(commit_id)? {
                 has_discarded_nodes = true;
             };
         }

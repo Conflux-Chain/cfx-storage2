@@ -1,4 +1,5 @@
 use ethereum_types::H256;
+use nonempty::NonEmpty;
 use parking_lot::Mutex;
 
 use super::{
@@ -747,12 +748,17 @@ fn gen_init<D: DatabaseTrait>(
     confirm_ids_to_history::<D>(
         db.clone(),
         0,
-        &history_cids.clone().into_vec(),
+        &NonEmpty::from_vec(history_cids.clone().into_vec()).unwrap(),
         write_schema,
     )
     .unwrap();
-    confirm_maps_to_history::<D, TestSchema>(db.clone(), 0, history_updates.clone(), write_schema)
-        .unwrap();
+    confirm_maps_to_history::<D, TestSchema>(
+        db.clone(),
+        0,
+        NonEmpty::from_vec(history_updates.clone()).unwrap(),
+        write_schema,
+    )
+    .unwrap();
 
     (history_cids, history_updates, pending_part)
 }

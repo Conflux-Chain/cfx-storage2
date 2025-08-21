@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 pub use history_indices::PushError;
 pub use manager_impl::SnapshotView;
+use nonempty::NonEmpty;
 use parking_lot::Mutex;
 pub use pending_part::PendingError;
 
@@ -325,21 +326,23 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
     let mut pending_part_guard = pending_part.lock();
-    let confirmed_path = pending_part_guard.change_root(new_root_commit_id)?;
+    let maybe_confirmed_path = pending_part_guard.change_root(new_root_commit_id)?;
 
-    confirm_ids_to_history::<D>(
-        db.clone(),
-        confirmed_path.start_height,
-        &confirmed_path.commit_ids,
-        write_schema,
-    )?;
+    if let Some(confirmed_path) = maybe_confirmed_path {
+        confirm_ids_to_history::<D>(
+            db.clone(),
+            confirmed_path.start_height,
+            &confirmed_path.commit_ids,
+            write_schema,
+        )?;
 
-    confirm_maps_to_history::<D, T>(
-        db.clone(),
-        confirmed_path.start_height,
-        confirmed_path.key_value_maps,
-        write_schema,
-    )?;
+        confirm_maps_to_history::<D, T>(
+            db.clone(),
+            confirmed_path.start_height,
+            confirmed_path.key_value_maps,
+            write_schema,
+        )?;
+    }
 
     Ok(())
 }
@@ -347,7 +350,7 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
 pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     db: Arc<D>,
     to_confirm_start_height: u64,
-    to_confirm_maps: Vec<HashMap<T::Key, impl Into<Option<T::Value>>>>,
+    to_confirm_maps: NonEmpty<HashMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
     let history_index_table = db.view::<HistoryIndicesTable<T>>()?;
@@ -385,7 +388,7 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
 pub fn confirm_ids_to_history<D: DatabaseTrait>(
     db: Arc<D>,
     to_confirm_start_height: u64,
-    to_confirm_ids: &[CommitID],
+    to_confirm_ids: &NonEmpty<CommitID>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
     let commit_id_table = db.view::<CommitIDSchema>()?;

@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fmt::Debug, hash::Hash, marker::PhantomData};
 
+use nonempty::NonEmpty;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -31,8 +32,8 @@ pub struct ApplyRecord<S: PendingKeyValueSchema> {
 /// `commit_ids` and `key_value_maps` should be ordered from the smallest height to the largest height.
 pub struct ConfirmedPathInfo<S: PendingKeyValueSchema> {
     pub start_height: u64,
-    pub commit_ids: Vec<S::CommitId>,
-    pub key_value_maps: Vec<KeyValueMap<S>>,
+    pub commit_ids: NonEmpty<S::CommitId>,
+    pub key_value_maps: NonEmpty<KeyValueMap<S>>,
 }
 
 impl<S: PendingKeyValueSchema> ConfirmedPathInfo<S> {
@@ -40,7 +41,8 @@ impl<S: PendingKeyValueSchema> ConfirmedPathInfo<S> {
     where
         S::CommitId: PartialEq<T::CommitId>,
     {
-        self.start_height == other.start_height && self.commit_ids == other.commit_ids
+        self.start_height == other.start_height
+            && self.commit_ids.iter().eq(other.commit_ids.iter())
     }
 }
 

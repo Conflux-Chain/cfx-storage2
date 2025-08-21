@@ -161,36 +161,47 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         let mut amt_node_cache = self.amt_node_cache.lock();
         let mut slot_alloc_cache = self.slot_alloc_cache.lock();
 
-        let key_value_confirmed_path = key_value_cache.change_root(new_root_commit_id)?;
-        let amt_node_confirmed_path = amt_node_cache.change_root(new_root_commit_id)?;
-        let slot_alloc_confirmed_path = slot_alloc_cache.change_root(new_root_commit_id)?;
+        let maybe_key_value_confirmed_path = key_value_cache.change_root(new_root_commit_id)?;
+        if let Some(key_value_confirmed_path) = maybe_key_value_confirmed_path {
+            let amt_node_confirmed_path = amt_node_cache
+                .change_root(new_root_commit_id)?
+                .expect("AMT node cache should have changed root if key-value cache did");
+            let slot_alloc_confirmed_path = slot_alloc_cache
+                .change_root(new_root_commit_id)?
+                .expect("Slot alloc cache should have changed root if key-value cache did");
 
-        assert!(key_value_confirmed_path.is_same_path(&amt_node_confirmed_path));
-        assert!(key_value_confirmed_path.is_same_path(&slot_alloc_confirmed_path));
+            assert!(key_value_confirmed_path.is_same_path(&amt_node_confirmed_path));
+            assert!(key_value_confirmed_path.is_same_path(&slot_alloc_confirmed_path));
 
-        let start_height = key_value_confirmed_path.start_height;
-        let commit_ids = &key_value_confirmed_path.commit_ids;
+            let start_height = key_value_confirmed_path.start_height;
+            let commit_ids = &key_value_confirmed_path.commit_ids;
 
-        confirm_ids_to_history::<D>(self.backend.clone(), start_height, commit_ids, write_schema)?;
+            confirm_ids_to_history::<D>(
+                self.backend.clone(),
+                start_height,
+                commit_ids,
+                write_schema,
+            )?;
 
-        confirm_maps_to_history::<D, FlatKeyValue>(
-            self.backend.clone(),
-            start_height,
-            key_value_confirmed_path.key_value_maps,
-            write_schema,
-        )?;
-        confirm_maps_to_history::<D, AmtNodes>(
-            self.backend.clone(),
-            start_height,
-            amt_node_confirmed_path.key_value_maps,
-            write_schema,
-        )?;
-        confirm_maps_to_history::<D, SlotAllocations>(
-            self.backend.clone(),
-            start_height,
-            slot_alloc_confirmed_path.key_value_maps,
-            write_schema,
-        )?;
+            confirm_maps_to_history::<D, FlatKeyValue>(
+                self.backend.clone(),
+                start_height,
+                key_value_confirmed_path.key_value_maps,
+                write_schema,
+            )?;
+            confirm_maps_to_history::<D, AmtNodes>(
+                self.backend.clone(),
+                start_height,
+                amt_node_confirmed_path.key_value_maps,
+                write_schema,
+            )?;
+            confirm_maps_to_history::<D, SlotAllocations>(
+                self.backend.clone(),
+                start_height,
+                slot_alloc_confirmed_path.key_value_maps,
+                write_schema,
+            )?;
+        }
 
         Ok(())
     }

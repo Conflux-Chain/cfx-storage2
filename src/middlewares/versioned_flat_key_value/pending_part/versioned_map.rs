@@ -145,10 +145,13 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             .get_ancestor_commit_at_height(ancestor_height, commit_id)
     }
 
-    pub fn change_root(&mut self, commit_id: S::CommitId) -> PendResult<ConfirmedPathInfo<S>, S> {
+    pub fn change_root(
+        &mut self,
+        commit_id: S::CommitId,
+    ) -> PendResult<Option<ConfirmedPathInfo<S>>, S> {
         let confirm_path_info = self.tree.change_root(commit_id)?;
 
-        if confirm_path_info.commit_ids.last().is_some() {
+        if confirm_path_info.is_some() {
             // clear current is necessary
             // because apply_commit_id in current.map may be removed from pending part
             self.clear_removed_current();
