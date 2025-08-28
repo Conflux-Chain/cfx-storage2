@@ -1,5 +1,5 @@
 use crate::{
-    backends::{HistoricalTableName, WriteSchemaTrait},
+    backends::{DatabaseTrait, HistoricalTableName, PendingTableName, WriteSchemaTrait},
     errors::Result,
 };
 
@@ -22,11 +22,12 @@ where
 pub type NeedNext = bool;
 pub type IsCompleted = bool;
 
-pub trait KeyValueStoreManager<K, V, C>
+pub trait KeyValueStoreManager<K, V, C, P>
 where
     K: 'static,
     V: 'static,
     C: 'static,
+    P: DatabaseTrait<PendingTableName>,
 {
     type Store: KeyValueStoreRead<K, V>;
 
@@ -44,7 +45,7 @@ where
 
     /// make commit the unique child of its parent
     /// do nothing if commit is in history or if commit is pending root
-    fn discard(&mut self, commit: C) -> Result<()>;
+    fn discard(&mut self, commit: C, pending_write_schema: &P::WriteSchema) -> Result<()>;
 
     fn get_versioned_key(&self, commit: &C, key: &K) -> Result<Option<V>>;
 }

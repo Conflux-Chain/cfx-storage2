@@ -1,20 +1,23 @@
-use std::hash::Hash;
+use std::{fmt::Debug, hash::Hash};
 
 use crate::{
-    backends::{HistoricalTableName, TableKey, TableSchema, TableValue, VersionedKVName},
+    backends::{
+        serde::{Decode, Encode},
+        HistoricalTableName, TableKey, TableSchema, TableValue, VersionedKVName,
+    },
     traits::{KeyValueStoreIterable, KeyValueStoreRead},
 };
 
 use super::{history_indices::HistoryIndices, HistoryChangeKey, HistoryIndexKey};
 
-pub trait VersionedKeyValueSchema: 'static + Copy + Send + Sync
+pub trait VersionedKeyValueSchema: 'static + Copy + Send + Sync + Debug
 where
     HistoryChangeKey<Self::Key>: TableKey,
     HistoryIndexKey<Self::Key>: TableKey,
 {
     const NAME: VersionedKVName;
     type Key: TableKey + ToOwned<Owned = Self::Key> + Clone + Hash;
-    type Value: TableValue + ToOwned<Owned = Self::Value> + Clone;
+    type Value: TableValue + ToOwned<Owned = Self::Value> + Clone + Eq + Encode + Decode;
 }
 
 #[derive(Clone, Copy)]

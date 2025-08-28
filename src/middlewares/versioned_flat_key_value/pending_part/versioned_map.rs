@@ -1,51 +1,87 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::sync::Arc;
 
+use crate::backends::{DatabaseTrait, PendingTableName};
 use crate::traits::{IsCompleted, NeedNext};
 use crate::types::ValueEntry;
 
 use super::pending_schema::{ConfirmedPathInfo, KeyValueMap};
+use super::tree_with_tracker::TreeWithTracker;
 use super::{
     current_map::CurrentMap,
     pending_schema::{PendingKeyValueSchema, RecoverRecord, Result as PendResult},
-    tree::Tree,
     PendingError,
 };
 
 use parking_lot::RwLock;
 
-pub struct VersionedMap<S: PendingKeyValueSchema> {
-    tree: Tree<S>,
+/// A versioned, in-memory key-value map with a persistent backend.
+///
+/// It represents the "pending" part, where modifications are held in memory (`tree`)
+/// and simultaneously logged to a database (`db`) for fault tolerance.
+pub struct VersionedMap<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
+    /// A handle to the database used for logging state changes for recovery.
+    ///
+    /// This database acts as a recovery log, storing snapshots and a
+    /// write-ahead log (WAL) of modification operations submitted by this map.
+    db: Arc<P>,
+
+    /// The core in-memory data structure representing the versioned state of the pending part.
+    ///
+    /// It is bundled with a `PersistenceTracker` to correctly sequence its modifications
+    /// for the recovery log. In the event of a crash, its state can be rebuilt to the last
+    /// consistent state recorded in the `db` by replaying the logged operations.
+    tree_with_tracker: TreeWithTracker<S>,
+
+    /// A cache holding the key-value map for a specific, "current" version of the tree.
+    ///
+    /// This is purely an optimization for accelerating read operations. The data it holds
+    /// is entirely derivable from the `tree_with_tracker`. Consequently, it is not involved
+    /// in the persistence logic and is ignored during state recovery.
     current: RwLock<Option<CurrentMap<S>>>,
 }
 
-impl<S: PendingKeyValueSchema> VersionedMap<S> {
-    #[cfg(test)]
-    pub fn new_empty_log(
-        parent_of_root: Option<S::CommitId>,
-        height_of_root: u64,
-        log_path: impl AsRef<Path>,
-    ) -> Self {
+impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<S, P> {
+    /// Creates a new `VersionedMap` from a database handle and a corresponding, pre-initialized in-memory state.
+    ///
+    /// This constructor assumes the caller has already prepared the storage and derived the correct
+    /// initial in-memory state. It simply assembles the `VersionedMap` instance from these components.
+    ///
+    /// The provided `initial_state` typically originates from one of the following scenarios:
+    /// 1. A state successfully recovered by replaying logs from an existing database.
+    /// 2. A fresh, clean state created after a failed recovery attempt necessitated a database reset.
+    /// 3. An empty state corresponding to a newly created database.
+    ///
+    /// **Important**: It is the caller's responsibility to ensure that the `db` and `initial_state`
+    /// are perfectly consistent. The `initial_state` must be the exact result of applying all
+    /// operations currently stored in the `db`.
+    ///
+    /// This means the database must not contain any log records that are not already accounted for
+    /// in `initial_state`. For instance, no record can exist with a sequence identifier greater than
+    /// or equal to the `next_modification_id` that `initial_state.tracker` is poised to generate
+    /// for the current snapshot. Violating this invariant will corrupt the log sequence and lead to
+    /// data inconsistency.
+    ///
+    /// # Arguments
+    ///
+    /// * `db`: The database handle for logging future modifications.
+    /// * `initial_state`: The initial in-memory tree and its corresponding persistence tracker,
+    ///   representing a consistent state.
+    pub fn from_initialized_state(db: Arc<P>, initial_state: TreeWithTracker<S>) -> Self {
         VersionedMap {
-            tree: Tree::new_empty_log(parent_of_root, height_of_root, log_path),
+            db,
+            tree_with_tracker: initial_state,
             current: RwLock::new(None),
         }
     }
 
-    pub fn new(
-        log_path: impl AsRef<Path>,
-        parent_of_root: Option<S::CommitId>,
-        height_of_root: u64,
-    ) -> PendResult<Self, S> {
-        Ok(VersionedMap {
-            tree: Tree::new(log_path, parent_of_root, height_of_root)?,
-            current: RwLock::new(None),
-        })
-    }
-
     #[cfg(test)]
     pub fn check_consistency(&self, height_of_root: u64) -> bool {
-        if self.tree.check_consistency(height_of_root) {
+        if self
+            .tree_with_tracker
+            .tree
+            .check_consistency(height_of_root)
+        {
             // todo: check current
             true
         } else {
@@ -54,29 +90,30 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
-        self.tree.get_parent_of_root()
+        self.tree_with_tracker.tree.get_parent_of_root()
     }
 
     pub fn get_height_of_root(&self) -> u64 {
-        self.tree.get_height_of_root()
+        self.tree_with_tracker.tree.get_height_of_root()
     }
 }
 
 // add_node
-impl<S: PendingKeyValueSchema> VersionedMap<S> {
+impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<S, P> {
     pub fn add_node(
         &mut self,
         updates: impl IntoIterator<Item = (S::Key, Option<S::Value>)>,
         commit_id: S::CommitId,
         parent_commit_id: Option<S::CommitId>,
-    ) -> PendResult<(), S> {
+        write_schema: &P::WriteSchema,
+    ) -> PendResult<()> {
         let updates = updates
             .into_iter()
             .map(|(key, value)| (key, ValueEntry::from_option(value)));
         if self.get_parent_of_root() == parent_commit_id {
-            self.add_root(updates, commit_id)
+            self.add_root(updates, commit_id, write_schema)
         } else if let Some(parent_commit_id) = parent_commit_id {
-            self.add_non_root_node(updates, commit_id, parent_commit_id)
+            self.add_non_root_node(updates, commit_id, parent_commit_id, write_schema)
         } else {
             Err(PendingError::NonRootNodeShouldHaveParent)
         }
@@ -86,7 +123,8 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         &mut self,
         updates: impl Iterator<Item = (S::Key, ValueEntry<S::Value>)>,
         commit_id: S::CommitId,
-    ) -> PendResult<(), S> {
+        write_schema: &P::WriteSchema,
+    ) -> PendResult<()> {
         let enact_update = |(key, value)| {
             (
                 key,
@@ -98,7 +136,8 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         };
 
         let modifications = updates.map(enact_update).collect();
-        self.tree.add_root(commit_id, modifications)?;
+        self.tree_with_tracker
+            .add_root::<P>(commit_id, modifications, write_schema)?;
 
         Ok(())
     }
@@ -108,11 +147,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         updates: impl Iterator<Item = (S::Key, ValueEntry<S::Value>)>,
         commit_id: S::CommitId,
         parent_commit_id: S::CommitId,
-    ) -> PendResult<(), S> {
+        write_schema: &P::WriteSchema,
+    ) -> PendResult<()> {
         // let parent to be self.current
         // this step is necessary for computing modifications' last_commit_id
         let mut guard = self.current.write();
-        self.tree.checkout_current(parent_commit_id, &mut guard)?;
+        self.tree_with_tracker
+            .tree
+            .checkout_current(parent_commit_id, &mut guard)?;
 
         // add node to tree
         let current = guard.as_ref().unwrap();
@@ -127,36 +169,44 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
                 },
             );
         }
-        self.tree
-            .add_non_root_node(commit_id, parent_commit_id, modifications)?;
+        self.tree_with_tracker.add_non_root_node::<P>(
+            commit_id,
+            parent_commit_id,
+            modifications,
+            write_schema,
+        )?;
 
         Ok(())
     }
 }
 
 // change_root
-impl<S: PendingKeyValueSchema> VersionedMap<S> {
+impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<S, P> {
     pub fn get_ancestor_commit_at_height(
         &self,
         ancestor_height: u64,
         commit_id: S::CommitId,
-    ) -> PendResult<S::CommitId, S> {
-        self.tree
+    ) -> PendResult<S::CommitId> {
+        self.tree_with_tracker
+            .tree
             .get_ancestor_commit_at_height(ancestor_height, commit_id)
     }
 
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> PendResult<Option<ConfirmedPathInfo<S>>, S> {
-        let confirm_path_info = self.tree.change_root(commit_id)?;
+        write_schema: &P::WriteSchema,
+    ) -> PendResult<Option<ConfirmedPathInfo<S>>> {
+        let confirm_path_info = self
+            .tree_with_tracker
+            .change_root::<P>(commit_id, write_schema)?;
 
         if confirm_path_info.is_some() {
             // clear current is necessary
             // because apply_commit_id in current.map may be removed from pending part
             self.clear_removed_current();
             if let Some(current) = self.current.get_mut() {
-                current.update_rerooted(&self.tree);
+                current.update_rerooted(&self.tree_with_tracker.tree);
             }
         }
 
@@ -165,8 +215,14 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
     /// This function discards the siblings of the nodes from the root (excluded) to `commit_id` (included).
     /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
-    pub fn make_pivot(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
-        let has_discarded_nodes = self.tree.make_pivot(commit_id)?;
+    pub fn make_pivot(
+        &mut self,
+        commit_id: S::CommitId,
+        write_schema: &P::WriteSchema,
+    ) -> PendResult<bool> {
+        let has_discarded_nodes = self
+            .tree_with_tracker
+            .make_pivot::<P>(commit_id, write_schema)?;
 
         if has_discarded_nodes {
             // clear current is necessary
@@ -180,14 +236,15 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
 
 // Helper methods in pending part to support
 // impl KeyValueStoreManager for VersionedStore
-impl<S: PendingKeyValueSchema> VersionedMap<S> {
+impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<S, P> {
     pub fn iter_historical_changes(
         &self,
         mut accept: impl FnMut(&S::CommitId, &S::Key, Option<&S::Value>) -> NeedNext,
         commit_id: &S::CommitId,
         key: &S::Key,
-    ) -> PendResult<IsCompleted, S> {
-        self.tree
+    ) -> PendResult<IsCompleted> {
+        self.tree_with_tracker
+            .tree
             .iter_historical_changes(&mut accept, commit_id, key)
     }
 
@@ -198,7 +255,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         &self,
         commit_id: &S::CommitId,
         key: &S::Key,
-    ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
+    ) -> PendResult<Option<ValueEntry<S::Value>>> {
         let guard = self.current.read();
 
         if let Some(current) = guard.as_ref() {
@@ -207,7 +264,9 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
             }
         }
 
-        self.tree.get_versioned_key(commit_id, key)
+        self.tree_with_tracker
+            .tree
+            .get_versioned_key(commit_id, key)
     }
 
     // alternative method of self.get_versioned_key(),
@@ -218,18 +277,25 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
         &self,
         commit_id: S::CommitId,
         key: &S::Key,
-    ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
+    ) -> PendResult<Option<ValueEntry<S::Value>>> {
         // let query node to be self.current
         let mut guard = self.current.write();
-        self.tree.checkout_current(commit_id, &mut guard)?;
+        self.tree_with_tracker
+            .tree
+            .checkout_current(commit_id, &mut guard)?;
 
         // Safety of unwrap: guard is set to be Some if it was None in self.tree.checkout_current.
         let current = guard.as_ref().unwrap();
         Ok(current.get(key).map(|c| c.value.clone()))
     }
 
-    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<(), S> {
-        self.tree.discard(commit_id)?;
+    pub fn discard(
+        &mut self,
+        commit_id: S::CommitId,
+        write_schema: &P::WriteSchema,
+    ) -> PendResult<()> {
+        self.tree_with_tracker
+            .discard::<P>(commit_id, write_schema)?;
 
         self.clear_removed_current();
 
@@ -239,8 +305,12 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     fn clear_removed_current(&mut self) {
         let current = self.current.get_mut();
 
-        let obsoleted_commit_id =
-            |c: &CurrentMap<S>| !self.tree.contains_commit_id(&c.get_commit_id());
+        let obsoleted_commit_id = |c: &CurrentMap<S>| {
+            !self
+                .tree_with_tracker
+                .tree
+                .contains_commit_id(&c.get_commit_id())
+        };
 
         if current.as_ref().map_or(false, obsoleted_commit_id) {
             *current = None;
@@ -248,21 +318,25 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 
     pub fn contains_commit_id(&self, commit_id: &S::CommitId) -> bool {
-        self.tree.contains_commit_id(commit_id)
+        self.tree_with_tracker.tree.contains_commit_id(commit_id)
     }
 
-    pub fn checkout_current(&self, commit_id: S::CommitId) -> PendResult<(), S> {
+    pub fn checkout_current(&self, commit_id: S::CommitId) -> PendResult<()> {
         // let query node to be self.current
         let mut guard = self.current.write();
-        self.tree.checkout_current(commit_id, &mut guard)?;
+        self.tree_with_tracker
+            .tree
+            .checkout_current(commit_id, &mut guard)?;
 
         Ok(())
     }
 
-    pub fn get_versioned_store(&self, commit_id: S::CommitId) -> PendResult<KeyValueMap<S>, S> {
+    pub fn get_versioned_store(&self, commit_id: S::CommitId) -> PendResult<KeyValueMap<S>> {
         // let query node to be self.current
         let mut guard = self.current.write();
-        self.tree.checkout_current(commit_id, &mut guard)?;
+        self.tree_with_tracker
+            .tree
+            .checkout_current(commit_id, &mut guard)?;
 
         let current = guard.as_ref().unwrap();
         Ok(current
@@ -272,7 +346,7 @@ impl<S: PendingKeyValueSchema> VersionedMap<S> {
     }
 }
 
-impl<S> VersionedMap<S>
+impl<S, P: DatabaseTrait<PendingTableName>> VersionedMap<S, P>
 where
     S: PendingKeyValueSchema,
     S::Key: AsRef<[u8]>,
@@ -281,10 +355,12 @@ where
         &self,
         commit_id: S::CommitId,
         key_prefix: &S::Key,
-    ) -> PendResult<KeyValueMap<S>, S> {
+    ) -> PendResult<KeyValueMap<S>> {
         // let query node to be self.current
         let mut guard = self.current.write();
-        self.tree.checkout_current(commit_id, &mut guard)?;
+        self.tree_with_tracker
+            .tree
+            .checkout_current(commit_id, &mut guard)?;
 
         let current = guard.as_ref().unwrap();
         let mut result = HashMap::new();
@@ -300,10 +376,12 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::{primitives_initialize_empty_schema, primitives_verify_schema_is_empty};
+
     use crate::{
-        backends::VersionedKVName,
+        backends::{DatabaseTrait, VersionedKVName, WrappedInMemoryDb},
         middlewares::versioned_flat_key_value::{
-            pending_part::pending_schema::PendingKeyValueConfig,
+            pending_part::{pending_schema::PendingKeyValueConfig, tree::Tree},
             table_schema::VersionedKeyValueSchema,
         },
     };
@@ -314,7 +392,7 @@ mod tests {
 
     pub type CommitId = u64;
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     struct TestSchema;
 
     impl VersionedKeyValueSchema for TestSchema {
@@ -339,28 +417,34 @@ mod tests {
         (key, value)
     }
 
-    fn set_log_path(log_dir: &str) -> (String, String) {
-        let tree_log_path = format!("{}/tree.wal", log_dir);
-        let map_log_path = format!("{}/map.wal", log_dir);
-
-        if std::path::Path::new(log_dir).exists() {
-            std::fs::remove_dir_all(log_dir).unwrap();
-        }
-        std::fs::create_dir_all(log_dir).unwrap();
-
-        (tree_log_path, map_log_path)
+    fn initialize_empty_pending_db() -> (
+        Arc<WrappedInMemoryDb<PendingTableName>>,
+        TreeWithTracker<TestPendingConfig>,
+    ) {
+        let pending_db = Arc::new(WrappedInMemoryDb::empty());
+        primitives_verify_schema_is_empty::<TestPendingConfig, WrappedInMemoryDb<PendingTableName>>(&pending_db).unwrap();
+        let write_schema = WrappedInMemoryDb::write_schema();
+        let tree_with_tracker = primitives_initialize_empty_schema::<
+            TestPendingConfig,
+            WrappedInMemoryDb<PendingTableName>,
+        >(&write_schema, None, 0)
+        .unwrap();
+        (pending_db, tree_with_tracker)
     }
 
     fn generate_random_tree(
         num_nodes: usize,
         rng: &mut StdRng,
-    ) -> (Tree<TestPendingConfig>, VersionedMap<TestPendingConfig>) {
-        let log_dir = "__random_tree";
-        let (tree_log_path, map_log_path) = set_log_path(log_dir);
+    ) -> (
+        Tree<TestPendingConfig>,
+        VersionedMap<TestPendingConfig, WrappedInMemoryDb<PendingTableName>>,
+    ) {
+        let (mut db, tree_with_tracker) = initialize_empty_pending_db();
 
-        let mut forward_only_tree = Tree::new_empty_log(None, 0, tree_log_path);
-        let mut versioned_map = VersionedMap::new_empty_log(None, 0, map_log_path);
+        let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
+        let mut versioned_map = VersionedMap::from_initialized_state(db, tree_with_tracker);
 
+        let write_schema = WrappedInMemoryDb::write_schema();
         for i in 1..=num_nodes as CommitId {
             let parent_commit_id = if i == 1 {
                 None
@@ -393,9 +477,12 @@ mod tests {
                 forward_only_tree.add_root(i, updates_none).unwrap();
             }
             versioned_map
-                .add_node(updates, i, parent_commit_id)
+                .add_node(updates, i, parent_commit_id, &write_schema)
                 .unwrap();
         }
+
+        db.commit(write_schema);
+
         (forward_only_tree, versioned_map)
     }
 
@@ -431,67 +518,73 @@ mod tests {
 
     #[test]
     fn test_multiple_roots_err() {
-        let log_dir = "__multiple_roots_tree";
-        let (tree_log_path, map_log_path) = set_log_path(log_dir);
+        let (mut db, tree_with_tracker) = initialize_empty_pending_db();
 
-        let mut forward_only_tree =
-            Tree::<TestPendingConfig>::new_empty_log(None, 0, tree_log_path);
-        let mut versioned_map =
-            VersionedMap::<TestPendingConfig>::new_empty_log(None, 0, map_log_path);
+        let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
+        let mut versioned_map = VersionedMap::from_initialized_state(db, tree_with_tracker);
 
         forward_only_tree.add_root(0, HashMap::new()).unwrap();
-        versioned_map.add_node(HashMap::new(), 0, None).unwrap();
 
+        let write_schema = WrappedInMemoryDb::write_schema();
+        versioned_map
+            .add_node(HashMap::new(), 0, None, &write_schema)
+            .unwrap();
+        db.commit(write_schema);
+
+        let write_schema = WrappedInMemoryDb::write_schema();
         assert_eq!(
             forward_only_tree.add_root(1, HashMap::new()),
             Err(PendingError::MultipleRootsNotAllowed)
         );
         assert_eq!(
-            versioned_map.add_node(HashMap::new(), 1, None),
+            versioned_map.add_node(HashMap::new(), 1, None, &write_schema),
             Err(PendingError::MultipleRootsNotAllowed)
         );
     }
 
     #[test]
     fn test_commit_id_not_found_err() {
-        let log_dir = "__commit_id_not_found_tree";
-        let (tree_log_path, map_log_path) = set_log_path(log_dir);
+        let (db, tree_with_tracker) = initialize_empty_pending_db();
 
-        let mut forward_only_tree =
-            Tree::<TestPendingConfig>::new_empty_log(None, 0, tree_log_path);
-        let mut versioned_map =
-            VersionedMap::<TestPendingConfig>::new_empty_log(None, 0, map_log_path);
+        let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
+        let mut versioned_map = VersionedMap::from_initialized_state(db, tree_with_tracker);
 
         assert_eq!(
             forward_only_tree.add_non_root_node(1, 0, HashMap::new()),
-            Err(PendingError::CommitIDNotFound(0))
+            Err(PendingError::CommitIDNotFound(format!("{:?}", 0)))
         );
+
+        let write_schema = WrappedInMemoryDb::write_schema();
         assert_eq!(
-            versioned_map.add_node(HashMap::new(), 1, Some(0)),
-            Err(PendingError::CommitIDNotFound(0))
+            versioned_map.add_node(HashMap::new(), 1, Some(0), &write_schema),
+            Err(PendingError::CommitIDNotFound(format!("{:?}", 0)))
         );
     }
 
     #[test]
     fn test_commit_id_already_exists_err() {
-        let log_dir = "__commit_id_already_exists_tree";
-        let (tree_log_path, map_log_path) = set_log_path(log_dir);
+        let (mut db, tree_with_tracker) = initialize_empty_pending_db();
 
-        let mut forward_only_tree =
-            Tree::<TestPendingConfig>::new_empty_log(None, 0, tree_log_path);
-        let mut versioned_map =
-            VersionedMap::<TestPendingConfig>::new_empty_log(None, 0, map_log_path);
+        let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
+        let mut versioned_map = VersionedMap::from_initialized_state(db, tree_with_tracker);
 
         forward_only_tree.add_root(0, HashMap::new()).unwrap();
-        versioned_map.add_node(HashMap::new(), 0, None).unwrap();
+
+        let write_schema = WrappedInMemoryDb::write_schema();
+        versioned_map
+            .add_node(HashMap::new(), 0, None, &write_schema)
+            .unwrap();
+        db.commit(write_schema);
 
         assert_eq!(
             forward_only_tree.add_non_root_node(0, 0, HashMap::new()),
-            Err(PendingError::CommitIdAlreadyExists(0))
+            Err(PendingError::CommitIdAlreadyExists(format!("{:?}", 0)))
         );
+
+        let write_schema = WrappedInMemoryDb::write_schema();
         assert_eq!(
-            versioned_map.add_node(HashMap::new(), 0, Some(0)),
-            Err(PendingError::CommitIdAlreadyExists(0))
+            versioned_map.add_node(HashMap::new(), 0, Some(0), &write_schema),
+            Err(PendingError::CommitIdAlreadyExists(format!("{:?}", 0)))
         );
     }
 }

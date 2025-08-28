@@ -17,7 +17,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         mut accept: impl FnMut(&S::CommitId, &S::Key, Option<&S::Value>) -> NeedNext,
         commit_id: &S::CommitId,
         key: &S::Key,
-    ) -> PendResult<IsCompleted, S> {
+    ) -> PendResult<IsCompleted> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
         let mut old_commit_id = None;
         while let Some(node) = node_option {
@@ -59,7 +59,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         commit_id: &S::CommitId,
         key: &S::Key,
-    ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
+    ) -> PendResult<Option<ValueEntry<S::Value>>> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
         while let Some(node) = node_option {
             if let Some(value) = node.get_modified_value(key) {
@@ -72,7 +72,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
     /// This function discards the siblings of the node at `commit_id`.
     /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
-    pub(super) fn discard_inner(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
+    pub(super) fn discard_inner(&mut self, commit_id: S::CommitId) -> PendResult<bool> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
         if let Some(parent_of_discard) = self.get_node_by_slab_index(slab_index).get_parent() {
             let parent_node = self.get_node_by_slab_index(parent_of_discard);
@@ -97,7 +97,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         Ok(true)
     }
 
-    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
+    pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<bool> {
         self.discard_inner(commit_id)
     }
 }

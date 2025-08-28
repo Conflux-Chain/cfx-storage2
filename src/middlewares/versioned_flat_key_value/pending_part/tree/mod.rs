@@ -3,22 +3,16 @@ mod change_root;
 mod checkout;
 mod commands;
 mod node;
-mod persistence;
 
 pub type SlabIndex = usize;
 
-use std::collections::HashMap;
-use std::io;
-use std::path::Path;
-
 use slab::Slab;
+use std::collections::HashMap;
 
 use self::node::TreeNode;
-use self::persistence::TreeLogger;
 
 use super::pending_schema::{PendingKeyValueSchema, Result as PendResult};
 use super::PendingError;
-use crate::middlewares::versioned_flat_key_value::pending_part::tree::persistence::LogRecord;
 use crate::types::ValueEntry;
 
 pub struct Tree<S: PendingKeyValueSchema> {
@@ -26,87 +20,16 @@ pub struct Tree<S: PendingKeyValueSchema> {
     height_of_root: u64,
     nodes: Slab<TreeNode<S>>,
     index_map: HashMap<S::CommitId, SlabIndex>,
-
-    logger: TreeLogger,
 }
 
 // basic methods
 impl<S: PendingKeyValueSchema> Tree<S> {
-    #[cfg(test)]
-    pub fn new_empty_log(
-        parent_of_root: Option<S::CommitId>,
-        height_of_root: u64,
-        log_path: impl AsRef<Path>,
-    ) -> Self {
-        let logger = TreeLogger::new(log_path);
-
+    pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: u64) -> Self {
         Tree {
             parent_of_root,
             height_of_root,
             nodes: Slab::new(),
             index_map: HashMap::new(),
-
-            logger,
-        }
-    }
-
-    pub fn new(
-        log_path: impl AsRef<Path>,
-        parent_of_root: Option<S::CommitId>,
-        height_of_root: u64,
-    ) -> PendResult<Self, S> {
-        let logger = TreeLogger::new(log_path);
-
-        match logger.read_rev::<S::CommitId>() {
-            Ok(rev_iterator) => {
-                // 文件存在，成功获取迭代器
-                // 倒序遍历日志
-                for record_result in rev_iterator {
-                    let record = record_result?;
-                    // 在这里，你可以加入你的逻辑：
-                    // "检查 `record` 中的状态是否与 DB 一致"
-                    // 如果一致，则恢复并停止，否则就接着遍历
-                    if record.check_consistency_with_db(parent_of_root, height_of_root) {
-                        println!("Found valid record in log: {:?}", record);
-                        return Ok(Tree {
-                            parent_of_root: record.parent_of_root,
-                            height_of_root: record.height_of_root,
-                            nodes: Slab::new(),
-                            index_map: HashMap::new(),
-
-                            logger,
-                        });
-                    }
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                // 文件不存在，这是一种预期的“空状态”，可以安全地处理
-                println!("Log file not found, assuming no history.");
-                // 就相当于一种特殊的遍历日志已经结束
-            }
-            Err(e) => {
-                // 发生其他 I/O 错误，例如权限不足等
-                return Err(e.into());
-            }
-        }
-
-        // 如果循环结束（日志都不符合 db，或者压根没有日志），则判断没有历史的情况是否符合 db
-        let empty_record = LogRecord {
-            parent_of_root: None,
-            height_of_root: 0,
-        };
-        // 检查 empty_record 中的状态是否与 DB 一致
-        if empty_record.check_consistency_with_db(parent_of_root, height_of_root) {
-            Ok(Tree {
-                parent_of_root: empty_record.parent_of_root,
-                height_of_root: empty_record.height_of_root,
-                nodes: Slab::new(),
-                index_map: HashMap::new(),
-
-                logger,
-            })
-        } else {
-            Err(PendingError::RecoveryInconsistentError)
         }
     }
 
@@ -167,11 +90,11 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         self.index_map.contains_key(commit_id)
     }
 
-    fn get_slab_index_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<SlabIndex, S> {
+    fn get_slab_index_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<SlabIndex> {
         let slab_index = *self
             .index_map
             .get(&commit_id)
-            .ok_or(PendingError::CommitIDNotFound(commit_id))?;
+            .ok_or(PendingError::CommitIDNotFound(format!("{:?}", commit_id)))?;
         Ok(slab_index)
     }
 
@@ -183,7 +106,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &mut self.nodes[slab_index]
     }
 
-    fn get_node_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<&TreeNode<S>, S> {
+    fn get_node_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<&TreeNode<S>> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
         Ok(self.get_node_by_slab_index(slab_index))
     }
@@ -201,7 +124,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         commit_id: S::CommitId,
         key: &S::Key,
-    ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
+    ) -> PendResult<Option<ValueEntry<S::Value>>> {
         let node = self.get_node_by_commit_id(commit_id)?;
         Ok(node.get_modified_value(key))
     }

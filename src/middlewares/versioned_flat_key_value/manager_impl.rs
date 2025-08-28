@@ -3,7 +3,7 @@ use std::{borrow::Borrow, sync::Arc};
 use parking_lot::Mutex;
 
 use crate::{
-    backends::TableReader,
+    backends::{DatabaseTrait, PendingTableName, TableReader},
     errors::Result,
     middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks},
     traits::{
@@ -26,22 +26,22 @@ use crate::types::ValueEntry;
 use std::collections::BTreeMap;
 
 /// Enum explicitly distinguishing between view types
-pub enum SnapshotView<'db, T: VersionedKeyValueSchema> {
+pub enum SnapshotView<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
     /// Pending view can be any pending version
-    Pending(PendingSnapshot<'db, T>),
+    Pending(PendingSnapshot<'db, T, P>),
     /// Historical view can be any historical version
     Historical(HistoricalSnapshot<'db, T>),
 }
 
 /// Pending view contains unconfirmed updates combined with the latest historical snapshot (if the latest historical snapshot exists)
-pub struct PendingSnapshot<'db, T: VersionedKeyValueSchema> {
-    pending: PendingUpdates<T>,
+pub struct PendingSnapshot<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
+    pending: PendingUpdates<T, P>,
     latest: Option<LatestHistoricalSnapshot<'db, T>>,
 }
 
-struct PendingUpdates<T: VersionedKeyValueSchema> {
+struct PendingUpdates<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
     commit_id: CommitID,
-    inner: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
+    inner: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>, P>>>,
 }
 
 /// Explicitly distinguishes historical snapshot types (Latest/Previous) with different algorithms
@@ -63,8 +63,8 @@ pub struct PreviousHistoricalSnapshot<'db, T: VersionedKeyValueSchema> {
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreIterable<T::Key, T::Value>
-    for SnapshotView<'db, T>
+impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreIterable<T::Key, T::Value> for SnapshotView<'db, T, P>
 {
     fn iter(&self) -> Result<impl Iterator<Item = (T::Key, T::Value)>> {
         let map = match self {
@@ -111,7 +111,7 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreIterable<T::Key, T::Value>
     }
 }
 
-impl<'db, T> SnapshotView<'db, T>
+impl<'db, T, P: DatabaseTrait<PendingTableName>> SnapshotView<'db, T, P>
 where
     T: VersionedKeyValueSchema,
     T::Key: AsRef<[u8]>,
@@ -204,8 +204,8 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
     }
 }
 
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for PendingSnapshot<'db, T>
+impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreRead<T::Key, T::Value> for PendingSnapshot<'db, T, P>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         let pending_optv = self
@@ -224,7 +224,9 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
     }
 }
 
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value> for SnapshotView<'db, T> {
+impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreRead<T::Key, T::Value> for SnapshotView<'db, T, P>
+{
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         match self {
             SnapshotView::Pending(pending_snapshot) => pending_snapshot.get(key),
@@ -233,8 +235,8 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value> for Sn
     }
 }
 
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for Option<SnapshotView<'db, T>>
+impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreRead<T::Key, T::Value> for Option<SnapshotView<'db, T, P>>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         if let Some(view) = self {
@@ -245,10 +247,10 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
     }
 }
 
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
-    for VersionedStore<'db, T>
+impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreManager<T::Key, T::Value, CommitID, P> for VersionedStore<'db, T, P>
 {
-    type Store = SnapshotView<'db, T>;
+    type Store = SnapshotView<'db, T, P>;
     fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
         if self.pending_part.lock().contains_commit_id(commit) {
             let latest_history: Option<LatestHistoricalSnapshot<'_, T>> =
@@ -314,20 +316,20 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, Com
                 }
             }
             Err(PendingError::CommitIDNotFound(target_commit)) => {
-                assert_eq!(target_commit, *commit_id);
-                self.iter_historical_changes_history_part(&mut accept, &target_commit, key)
+                assert_eq!(target_commit, format!("{:?}", commit_id));
+                self.iter_historical_changes_history_part(&mut accept, commit_id, key)
             }
             Err(other_err) => Err(StorageError::PendingError(other_err)),
         }
     }
 
-    fn discard(&mut self, commit: CommitID) -> Result<()> {
+    fn discard(&mut self, commit: CommitID, write_schema: &P::WriteSchema) -> Result<()> {
         if self.commit_id_table.get(&commit)?.is_some() {
             return Ok(());
         }
 
         let pending_part = Arc::get_mut(&mut self.pending_part).unwrap();
-        Ok(pending_part.lock().discard(commit)?)
+        Ok(pending_part.lock().discard(commit, write_schema)?)
     }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
@@ -344,8 +346,8 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, Com
                 }
             }
             Err(PendingError::CommitIDNotFound(target_commit)) => {
-                assert_eq!(target_commit, *commit);
-                target_commit
+                assert_eq!(target_commit, format!("{:?}", commit));
+                *commit
             }
             Err(other_err) => {
                 return Err(StorageError::PendingError(other_err));
@@ -360,7 +362,9 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, Com
 }
 
 // Helper methods used in trait implementations
-impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStore<'db, T, P>
+{
     fn iter_historical_changes_one_range(
         &self,
         mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,

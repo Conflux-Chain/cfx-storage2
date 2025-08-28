@@ -7,8 +7,8 @@ mod write_schema;
 use std::sync::Arc;
 
 pub use impls::in_memory_db::WrappedInMemoryDb;
-pub use table::{TableIter, TableKey, TableRead, TableReader, TableSchema, TableValue};
-pub use table_name::{HistoricalTableName, VersionedKVName};
+pub use table::{SeekKey, TableIter, TableKey, TableRead, TableReader, TableSchema, TableValue};
+pub use table_name::{HistoricalTableName, PendingTableName, VersionedKVName};
 pub use write_schema::WriteSchemaTrait;
 
 use crate::errors::Result;

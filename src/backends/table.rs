@@ -37,6 +37,19 @@ pub trait TableSchema: 'static + Copy + Send + Sync {
     type Value: TableValue + ?Sized;
 }
 
+/// A type-safe wrapper for a key that is intended to be used as the
+/// inclusive starting point for a database scan.
+///
+/// By wrapping the key, we make the intent clear: this is not just any key,
+/// but one specifically constructed to start an iteration. This prevents accidental
+/// misuse and makes function signatures more expressive.
+///
+/// The generic parameter `K` represents the `TableSchema::Key` type.
+#[derive(Debug)]
+pub struct SeekKey<K> {
+    pub key: K,
+}
+
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;

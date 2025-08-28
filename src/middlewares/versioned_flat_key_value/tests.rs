@@ -8,11 +8,12 @@ use super::{
 };
 use crate::{
     backends::{
-        impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, VersionedKVName,
-        WrappedInMemoryDb,
+        impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, PendingTableName,
+        VersionedKVName, WrappedInMemoryDb,
     },
     errors::Result,
     middlewares::{
+        primitives_initialize_empty_schema, primitives_verify_schema_is_empty,
         versioned_flat_key_value::{
             confirm_ids_to_history, confirm_maps_to_history, confirmed_pending_to_history,
             pending_part::VersionedMap,
@@ -24,7 +25,7 @@ use crate::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
-    path::Path,
+    marker::PhantomData,
     sync::Arc,
 };
 
@@ -33,7 +34,9 @@ use rand_chacha::{
     ChaChaRng,
 };
 
-impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStore<'db, T, P>
+{
     #[cfg(test)]
     pub fn check_consistency(&self) -> Result<()> {
         if self.check_consistency_inner().is_err() {
@@ -152,9 +155,10 @@ impl<K: 'static + Ord, V: 'static + Clone> KeyValueStoreRead<K, V> for MockOneSt
 }
 
 #[derive(Debug)]
-struct MockVersionedStore<T: VersionedKeyValueSchema> {
+struct MockVersionedStore<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
     pending: MockTree<T>,
     history: HashMap<CommitID, (Option<CommitID>, MockStore<T>)>,
+    _phantom: PhantomData<P>,
 }
 
 #[derive(Debug)]
@@ -171,8 +175,8 @@ struct MockNode<T: VersionedKeyValueSchema> {
     store: MockStore<T>,
 }
 
-impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
-    for MockVersionedStore<T>
+impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreManager<T::Key, T::Value, CommitID, P> for MockVersionedStore<T, P>
 {
     type Store = MockOneStore<T::Key, T::Value>;
 
@@ -231,7 +235,17 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
         Ok(true)
     }
 
-    fn discard(&mut self, commit: CommitID) -> Result<()> {
+    fn discard(&mut self, commit: CommitID, _pending_write_schema: &P::WriteSchema) -> Result<()> {
+        self.discard_inner(commit)
+    }
+
+    fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
+        self.get_versioned_store(commit)?.get(key)
+    }
+}
+
+impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersionedStore<T, P> {
+    fn discard_inner(&mut self, commit: CommitID) -> Result<()> {
         if self.history.contains_key(&commit) {
             return Ok(());
         }
@@ -267,13 +281,9 @@ impl<T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID
             Ok(())
         } else {
             Err(StorageError::PendingError(PendingError::CommitIDNotFound(
-                commit,
+                format!("{:?}", commit),
             )))
         }
-    }
-
-    fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        self.get_versioned_store(commit)?.get(key)
     }
 }
 
@@ -331,7 +341,7 @@ impl<T: Eq + std::hash::Hash + Clone> UniqueVec<T> {
     }
 }
 
-impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
+impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersionedStore<T, P> {
     pub fn build(
         history_cids: UniqueVec<CommitID>,
         history_updates: Vec<HashMap<T::Key, Option<T::Value>>>,
@@ -346,7 +356,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
             last_store = store;
             last_commit_id = Some(*commit_id);
         }
-        MockVersionedStore::<T>::new_unchecked(last_commit_id, history)
+        MockVersionedStore::<T, P>::new_unchecked(last_commit_id, history)
     }
 
     pub fn check_consistency(&self) {
@@ -384,6 +394,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
                 parent_of_root: parent_of_pending,
             },
             history,
+            _phantom: PhantomData,
         };
         mock_versioned_store.check_consistency();
         mock_versioned_store
@@ -506,12 +517,12 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
         } else if let Some(parent_commit_id) = parent_commit {
             if !self.pending.tree.contains_key(&parent_commit_id) {
                 return Err(StorageError::PendingError(PendingError::CommitIDNotFound(
-                    parent_commit_id,
+                    format!("{:?}", parent_commit_id),
                 )));
             }
             if self.pending.tree.contains_key(&commit) {
                 return Err(StorageError::PendingError(
-                    PendingError::CommitIdAlreadyExists(commit),
+                    PendingError::CommitIdAlreadyExists(format!("{:?}", commit)),
                 ));
             }
 
@@ -543,7 +554,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
     pub fn confirmed_pending_to_history(&mut self, new_root_commit_id: CommitID) -> Result<()> {
         if !self.pending.tree.contains_key(&new_root_commit_id) {
             return Err(StorageError::PendingError(PendingError::CommitIDNotFound(
-                new_root_commit_id,
+                format!("{:?}", new_root_commit_id),
             )));
         }
 
@@ -556,7 +567,7 @@ impl<T: VersionedKeyValueSchema> MockVersionedStore<T> {
             .parent;
         let mut commit_id = new_root_commit_id;
         while let Some(parent_commit_id) = parent_cid {
-            self.discard(commit_id).unwrap();
+            self.discard_inner(commit_id).unwrap();
 
             let parent_node = self.pending.tree.remove(&parent_commit_id).unwrap();
 
@@ -697,17 +708,18 @@ pub struct TestParams {
 }
 
 #[allow(clippy::type_complexity)]
-fn gen_init<D: DatabaseTrait<HistoricalTableName>>(
-    db: Arc<D>,
+fn gen_init<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>>(
+    historical_db: Arc<D>,
+    pending_db: Arc<P>,
     test_params: TestParams,
     rng: &mut ChaChaRng,
     all_keys: &mut BTreeSet<u64>,
-    write_schema: &D::WriteSchema,
-    pending_log_path: impl AsRef<Path>,
+    historical_write_schema: &D::WriteSchema,
+    pending_write_schema: &P::WriteSchema,
 ) -> (
     UniqueVec<CommitID>,
     Vec<HashMap<u64, Option<u64>>>,
-    VersionedMap<PendingKeyValueConfig<TestSchema, CommitID>>,
+    VersionedMap<PendingKeyValueConfig<TestSchema, CommitID>, P>,
 ) {
     let TestParams {
         num_history,
@@ -740,24 +752,31 @@ fn gen_init<D: DatabaseTrait<HistoricalTableName>>(
         ));
     }
 
-    let pending_part = VersionedMap::new_empty_log(
-        history_cids.items().last().copied(),
-        history_cids.len() as u64,
-        pending_log_path,
-    );
+    primitives_verify_schema_is_empty::<PendingKeyValueConfig<TestSchema, CommitID>, P>(
+        &pending_db,
+    )
+    .unwrap();
+    let tree_with_tracker =
+        primitives_initialize_empty_schema::<PendingKeyValueConfig<TestSchema, CommitID>, P>(
+            pending_write_schema,
+            history_cids.items().last().copied(),
+            history_cids.len() as u64,
+        )
+        .unwrap();
+    let pending_part = VersionedMap::from_initialized_state(pending_db, tree_with_tracker);
 
     confirm_ids_to_history::<D>(
-        db.clone(),
+        historical_db.clone(),
         0,
         &NonEmpty::from_vec(history_cids.clone().into_vec()).unwrap(),
-        write_schema,
+        historical_write_schema,
     )
     .unwrap();
     confirm_maps_to_history::<D, TestSchema>(
-        db.clone(),
+        historical_db.clone(),
         0,
         NonEmpty::from_vec(history_updates.clone()).unwrap(),
-        write_schema,
+        historical_write_schema,
     )
     .unwrap();
 
@@ -799,20 +818,33 @@ fn gen_key(rng: &mut ChaChaRng, existing_keys: Vec<u64>) -> (KeyType, u64) {
     }
 }
 
-struct VersionedStoreProxy<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema> {
-    mock_store: &'a mut MockVersionedStore<T>,
-    real_store: &'b mut VersionedStore<'db, T>,
+struct VersionedStoreProxy<
+    'a,
+    'b,
+    'c,
+    'db,
+    T: VersionedKeyValueSchema,
+    P: DatabaseTrait<PendingTableName>,
+> {
+    mock_store: &'a mut MockVersionedStore<T, P>,
+    real_store: &'b mut VersionedStore<'db, T, P>,
     all_keys: &'c mut BTreeSet<T::Key>,
 }
 
-impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
-    VersionedStoreProxy<'a, 'b, 'c, 'db, T>
+impl<
+        'a,
+        'b,
+        'c,
+        'db,
+        T: VersionedKeyValueSchema<Key = u64, Value = u64>,
+        P: DatabaseTrait<PendingTableName>,
+    > VersionedStoreProxy<'a, 'b, 'c, 'db, T, P>
 where
     T::Value: PartialEq,
 {
     fn new(
-        mock_store: &'a mut MockVersionedStore<T>,
-        real_store: &'b mut VersionedStore<'db, T>,
+        mock_store: &'a mut MockVersionedStore<T, P>,
+        real_store: &'b mut VersionedStore<'db, T, P>,
         all_keys: &'c mut BTreeSet<T::Key>,
     ) -> Self {
         Self {
@@ -912,6 +944,7 @@ where
         rng: &mut ChaChaRng,
         num_gen_new_keys: usize,
         num_gen_previous_keys: usize,
+        pending_write_schema: &P::WriteSchema,
     ) {
         if num_pending > 0 {
             // gen root
@@ -931,7 +964,7 @@ where
                 .add_to_pending_part(parent_of_root, pending_root, updates.clone())
                 .unwrap();
             self.real_store
-                .add_to_pending_part(parent_of_root, pending_root, updates)
+                .add_to_pending_part(parent_of_root, pending_root, updates, pending_write_schema)
                 .unwrap();
 
             // add non_root nodes
@@ -953,7 +986,7 @@ where
                     .add_to_pending_part(parent_commit, commit_id, updates.clone())
                     .unwrap();
                 self.real_store
-                    .add_to_pending_part(parent_commit, commit_id, updates)
+                    .add_to_pending_part(parent_commit, commit_id, updates, pending_write_schema)
                     .unwrap();
             }
         }
@@ -963,8 +996,14 @@ where
     }
 }
 
-impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
-    VersionedStoreProxy<'a, 'b, 'c, 'db, T>
+impl<
+        'a,
+        'b,
+        'c,
+        'db,
+        T: VersionedKeyValueSchema<Key = u64, Value = u64>,
+        P: DatabaseTrait<PendingTableName>,
+    > VersionedStoreProxy<'a, 'b, 'c, 'db, T, P>
 {
     fn get_versioned_store(
         &self,
@@ -1085,9 +1124,14 @@ impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
         real_res.is_ok()
     }
 
-    fn discard(&mut self, commit_id_type: CommitIDType, commit: CommitID) -> bool {
-        let mock_res = self.mock_store.discard(commit);
-        let real_res = self.real_store.discard(commit);
+    fn discard(
+        &mut self,
+        commit_id_type: CommitIDType,
+        commit: CommitID,
+        pending_write_schema: &P::WriteSchema,
+    ) -> bool {
+        let mock_res = self.mock_store.discard_inner(commit);
+        let real_res = self.real_store.discard(commit, pending_write_schema);
 
         assert_eq!(mock_res, real_res);
 
@@ -1095,7 +1139,7 @@ impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
             CommitIDType::Novel => assert_eq!(
                 mock_res,
                 Err(StorageError::PendingError(PendingError::CommitIDNotFound(
-                    commit
+                    format!("{:?}", commit)
                 )))
             ),
             _ => assert!(mock_res.is_ok()),
@@ -1114,6 +1158,7 @@ impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
         commit: CommitID,
         num_gen_new_keys: usize,
         num_gen_previous_keys: usize,
+        pending_write_schema: &P::WriteSchema,
     ) -> bool {
         let has_root_before_add = !self.mock_store.pending.tree.is_empty();
         let (parent_commit_type, parent_commit) = self.gen_parent_commit(rng, false);
@@ -1129,9 +1174,12 @@ impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
         let mock_res = self
             .mock_store
             .add_to_pending_part(parent_commit, commit, updates.clone());
-        let real_res = self
-            .real_store
-            .add_to_pending_part(parent_commit, commit, updates);
+        let real_res = self.real_store.add_to_pending_part(
+            parent_commit,
+            commit,
+            updates,
+            pending_write_schema,
+        );
 
         assert_eq!(mock_res, real_res);
 
@@ -1158,15 +1206,19 @@ impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
             (ParentCommitType::HistoryButInvalid, _) | (ParentCommitType::Novel, _) => {
                 assert_eq!(
                     mock_res.unwrap_err(),
-                    StorageError::PendingError(PendingError::CommitIDNotFound(
+                    StorageError::PendingError(PendingError::CommitIDNotFound(format!(
+                        "{:?}",
                         parent_commit.unwrap()
-                    ))
+                    )))
                 )
             }
             (ParentCommitType::Pending, CommitIDType::PendingRoot)
             | (ParentCommitType::Pending, CommitIDType::PendingNonRoot) => assert_eq!(
                 mock_res.unwrap_err(),
-                StorageError::PendingError(PendingError::CommitIdAlreadyExists(commit))
+                StorageError::PendingError(PendingError::CommitIdAlreadyExists(format!(
+                    "{:?}",
+                    commit
+                )))
             ),
             (ParentCommitType::Pending, CommitIDType::Novel) => assert!(mock_res.is_ok()),
         };
@@ -1175,12 +1227,15 @@ impl<'a, 'b, 'c, 'db, T: VersionedKeyValueSchema<Key = u64, Value = u64>>
     }
 }
 
-fn test_versioned_store<D: DatabaseTrait<HistoricalTableName>>(
-    db: D,
+fn test_versioned_store<
+    D: DatabaseTrait<HistoricalTableName>,
+    P: DatabaseTrait<PendingTableName>,
+>(
+    historical_db: D,
+    pending_db: P,
     num_history: usize,
     num_pending: usize,
     num_operations: usize,
-    pending_log_path: impl AsRef<Path>,
 ) {
     let mut rng = get_rng_for_test();
     let num_gen_new_keys = 10;
@@ -1189,10 +1244,12 @@ fn test_versioned_store<D: DatabaseTrait<HistoricalTableName>>(
     let mut all_keys = BTreeSet::new();
 
     // init history part
-    let write_schema = D::write_schema();
-    let mut db_arc = Arc::new(db);
+    let historical_write_schema = D::write_schema();
+    let pending_write_schema = P::write_schema();
+    let mut historical_db_arc = Arc::new(historical_db);
     let (history_cids, history_updates, pending_part) = gen_init(
-        db_arc.clone(),
+        historical_db_arc.clone(),
+        Arc::new(pending_db),
         TestParams {
             num_history,
             max_num_new_keys: num_gen_new_keys,
@@ -1200,21 +1257,24 @@ fn test_versioned_store<D: DatabaseTrait<HistoricalTableName>>(
         },
         &mut rng,
         &mut all_keys,
-        &write_schema,
-        pending_log_path,
+        &historical_write_schema,
+        &pending_write_schema,
     );
 
-    Arc::get_mut(&mut db_arc)
+    Arc::get_mut(&mut historical_db_arc)
         .unwrap()
-        .commit(write_schema)
+        .commit(historical_write_schema)
         .unwrap();
 
     // build proxy
     let mut mock_versioned_store =
         MockVersionedStore::build(history_cids.clone(), history_updates.clone());
 
-    let mut real_versioned_store =
-        VersionedStore::new(db_arc.clone(), Arc::new(Mutex::new(pending_part))).unwrap();
+    let mut real_versioned_store: VersionedStore<'_, TestSchema, P> = VersionedStore::new(
+        historical_db_arc.clone(),
+        Arc::new(Mutex::new(pending_part)),
+    )
+    .unwrap();
     real_versioned_store.check_consistency().unwrap();
 
     let mut versioned_store_proxy = VersionedStoreProxy::new(
@@ -1224,11 +1284,13 @@ fn test_versioned_store<D: DatabaseTrait<HistoricalTableName>>(
     );
 
     // init pending part
+    let pending_write_schema = P::write_schema();
     versioned_store_proxy.init_pending_part(
         num_pending,
         &mut rng,
         num_gen_new_keys,
         num_gen_previous_keys,
+        &pending_write_schema,
     );
 
     let operations = vec![
@@ -1260,13 +1322,16 @@ fn test_versioned_store<D: DatabaseTrait<HistoricalTableName>>(
             Operation::IterHisoricalChanges => {
                 versioned_store_proxy.iter_historical_changes(&mut rng, commit_id_type, &commit_id)
             }
-            Operation::Discard => versioned_store_proxy.discard(commit_id_type, commit_id),
+            Operation::Discard => {
+                versioned_store_proxy.discard(commit_id_type, commit_id, &pending_write_schema)
+            }
             Operation::AddToPendingPart => versioned_store_proxy.add_to_pending_part(
                 &mut rng,
                 commit_id_type,
                 commit_id,
                 num_gen_new_keys,
                 num_gen_previous_keys,
+                &pending_write_schema,
             ),
             Operation::ConfirmedPendingToHistory => {
                 let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
@@ -1275,19 +1340,20 @@ fn test_versioned_store<D: DatabaseTrait<HistoricalTableName>>(
 
                 let write_schema = D::write_schema();
                 let real_res = confirmed_pending_to_history(
-                    db_arc.clone(),
+                    historical_db_arc.clone(),
                     pending_part_mut.clone(),
                     commit_id,
                     &write_schema,
+                    &pending_write_schema,
                 );
 
-                Arc::get_mut(&mut db_arc)
+                Arc::get_mut(&mut historical_db_arc)
                     .unwrap()
                     .commit(write_schema)
                     .unwrap();
 
                 real_versioned_store =
-                    VersionedStore::new(db_arc.clone(), pending_part_mut).unwrap();
+                    VersionedStore::new(historical_db_arc.clone(), pending_part_mut).unwrap();
                 real_versioned_store.check_consistency().unwrap();
 
                 versioned_store_proxy = VersionedStoreProxy::new(
@@ -1304,7 +1370,10 @@ fn test_versioned_store<D: DatabaseTrait<HistoricalTableName>>(
                     }
                     _ => assert_eq!(
                         mock_res.unwrap_err(),
-                        StorageError::PendingError(PendingError::CommitIDNotFound(commit_id))
+                        StorageError::PendingError(PendingError::CommitIDNotFound(format!(
+                            "{:?}",
+                            commit_id
+                        )))
                     ),
                 };
 
@@ -1360,29 +1429,35 @@ pub fn clear_dir_then_create(dir_path: &str) {
 
 #[test]
 fn tests_versioned_store_inmemory() {
-    let db = WrappedInMemoryDb::empty();
+    let historical_db = WrappedInMemoryDb::empty();
+    let pending_db = WrappedInMemoryDb::empty();
 
-    let log_dir = "__test_inmemory_flat_store";
-    let pending_log_path = format!("{}/pending.wal", log_dir);
-    clear_dir_then_create(log_dir);
-
-    test_versioned_store(db, 2, 10, 1000, pending_log_path);
-
-    if std::path::Path::new(log_dir).exists() {
-        std::fs::remove_dir_all(log_dir).unwrap();
-    }
+    test_versioned_store::<_, WrappedInMemoryDb<PendingTableName>>(
+        historical_db,
+        pending_db,
+        2,
+        10,
+        1000,
+    );
 }
 
 #[test]
 fn tests_versioned_store_rocksdb() {
-    let db_and_log_path = "__test_flat_store";
-    let pending_log_path = format!("{}/pending.wal", db_and_log_path);
+    let historical_path = "__test_flat_store_historical";
+    let pending_path = "__test_flat_store_pending";
 
-    clear_dir_then_create(db_and_log_path);
-    let db = WrappedRocksDb::open(db_and_log_path).unwrap();
-    test_versioned_store(db, 2, 10, 1000, pending_log_path);
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
 
-    if std::path::Path::new(db_and_log_path).exists() {
-        std::fs::remove_dir_all(db_and_log_path).unwrap();
+    let historical_db = WrappedRocksDb::open(historical_path).unwrap();
+    let pending_db = WrappedRocksDb::open(pending_path).unwrap();
+
+    test_versioned_store(historical_db, pending_db, 2, 10, 1000);
+
+    if std::path::Path::new(historical_path).exists() {
+        std::fs::remove_dir_all(historical_path).unwrap();
+    }
+    if std::path::Path::new(pending_path).exists() {
+        std::fs::remove_dir_all(pending_path).unwrap();
     }
 }

@@ -1,4 +1,5 @@
 use crate::{
+    backends::{DatabaseTrait, PendingTableName},
     errors::Result,
     middlewares::{table_schema::VersionedKeyValueSchema, CommitID, SnapshotView},
     traits::{KeyValueStoreManager, KeyValueStoreRead},
@@ -6,19 +7,19 @@ use crate::{
 
 use super::{storage::LvmtStore, table_schema::FlatKeyValue};
 
-pub struct LvmtSnapshot<'db> {
-    key_value_view: SnapshotView<'db, FlatKeyValue>,
+pub struct LvmtSnapshot<'db, P: DatabaseTrait<PendingTableName>> {
+    key_value_view: SnapshotView<'db, FlatKeyValue, P>,
 }
 
-impl<'db> LvmtStore<'db> {
-    pub fn get_state(&self, commit: CommitID) -> Result<LvmtSnapshot> {
+impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
+    pub fn get_state(&self, commit: CommitID) -> Result<LvmtSnapshot<P>> {
         let key_value_view = self.get_key_value_store().get_versioned_store(&commit)?;
 
         Ok(LvmtSnapshot { key_value_view })
     }
 }
 
-impl<'db> LvmtSnapshot<'db> {
+impl<'db, P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'db, P> {
     pub fn get(
         &self,
         key: &<FlatKeyValue as VersionedKeyValueSchema>::Key,

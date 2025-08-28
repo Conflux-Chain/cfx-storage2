@@ -14,7 +14,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         ancestor_height: u64,
         commit_id: S::CommitId,
-    ) -> PendResult<S::CommitId, S> {
+    ) -> PendResult<S::CommitId> {
         let node = self.get_node_by_commit_id(commit_id)?;
         let height = node.get_height();
         if (ancestor_height < self.height_of_root) || (ancestor_height > height) {
@@ -51,7 +51,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn change_root(
         &mut self,
         commit_id: S::CommitId,
-    ) -> PendResult<Option<ConfirmedPathInfo<S>>, S> {
+    ) -> PendResult<Option<ConfirmedPathInfo<S>>> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // old_root..=new_root's parent
@@ -88,8 +88,8 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         // Invariant: A real root change must strictly increase the height.
         assert!(old_root_height < self.height_of_root);
 
-        self.logger
-            .log_change(&self.parent_of_root, self.height_of_root)?;
+        // self.logger
+        //     .log_change(&self.parent_of_root, self.height_of_root)?;
 
         // height of old_root
         let start_height_to_commit = self.height_of_root - to_commit.len() as u64;
@@ -107,7 +107,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
     /// This function discards the siblings of the nodes from the root (excluded) to `commit_id` (included).
     /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
-    pub fn make_pivot(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
+    pub fn make_pivot(&mut self, commit_id: S::CommitId) -> PendResult<bool> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // old_root..=new_root's parent

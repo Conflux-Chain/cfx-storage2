@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    path::Path,
     sync::Arc,
 };
 
@@ -11,7 +10,8 @@ use amt::{AmtParams, CreateMode};
 
 use crate::{
     backends::{
-        impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, WrappedInMemoryDb,
+        impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, PendingTableName,
+        WrappedInMemoryDb,
     },
     errors::Result,
     lvmt::types::{LvmtValue, KEY_SLOT_SIZE},
@@ -59,10 +59,10 @@ fn gen_novel_commit_id(rng: &mut ChaChaRng, previous: &mut HashSet<CommitID>) ->
 }
 
 // num_keys = 8 * 10^6 has been tested, but still contain no amt_node_id whose depth > 1
-fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>>(
-    backend: D,
+fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>>(
+    historical_db: D,
+    pending_db: P,
     num_keys: usize,
-    pending_log_path: impl AsRef<Path>,
 ) {
     let mut rng = get_rng_for_test();
 
@@ -99,7 +99,8 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>>(
     let changes_3 = get_changes_from_updates(updates_3);
 
     // Initialize db
-    let mut db = LvmtStorage::<D>::new(Arc::new(backend).clone(), pending_log_path).unwrap();
+    let mut db =
+        LvmtStorage::<D, P>::new(Arc::new(historical_db).clone(), Arc::new(pending_db)).unwrap();
 
     // Get a manager for db
     let mut lvmt = db.as_manager().unwrap();
@@ -147,37 +148,42 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>>(
 
 #[test]
 fn test_lvmt_store_rocksdb() {
-    let db_and_log_path = "__test_lvmt_store";
-    let pending_log_path = format!("{}/pending.wal", db_and_log_path);
+    let historical_path = "__test_lvmt_store_historical";
+    let pending_path = "__test_lvmt_store_pending";
 
-    clear_dir_then_create(db_and_log_path);
-    let backend = WrappedRocksDb::open(db_and_log_path).unwrap();
-    test_lvmt_store::<WrappedRocksDb<HistoricalTableName>>(backend, 100000, pending_log_path);
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
 
-    if std::path::Path::new(db_and_log_path).exists() {
-        std::fs::remove_dir_all(db_and_log_path).unwrap();
+    let historical_db = WrappedRocksDb::open(historical_path).unwrap();
+    let pending_db = WrappedRocksDb::open(historical_path).unwrap();
+
+    test_lvmt_store::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>(
+        historical_db,
+        pending_db,
+        100000,
+    );
+
+    if std::path::Path::new(historical_path).exists() {
+        std::fs::remove_dir_all(historical_path).unwrap();
+    }
+    if std::path::Path::new(pending_path).exists() {
+        std::fs::remove_dir_all(pending_path).unwrap();
     }
 }
 
 #[test]
 fn test_lvmt_store_inmemory() {
-    let backend = WrappedInMemoryDb::empty();
+    let historical_db = WrappedInMemoryDb::empty();
+    let pending_db = WrappedInMemoryDb::empty();
 
-    let log_dir = "__test_inmemory_store";
-    let pending_log_path = format!("{}/pending.wal", log_dir);
-    if std::path::Path::new(log_dir).exists() {
-        std::fs::remove_dir_all(log_dir).unwrap();
-    }
-    std::fs::create_dir_all(log_dir).unwrap();
-
-    test_lvmt_store::<WrappedInMemoryDb<HistoricalTableName>>(backend, 100000, pending_log_path);
-
-    if std::path::Path::new(log_dir).exists() {
-        std::fs::remove_dir_all(log_dir).unwrap();
-    }
+    test_lvmt_store::<WrappedInMemoryDb<HistoricalTableName>, WrappedInMemoryDb<PendingTableName>>(
+        historical_db,
+        pending_db,
+        100000,
+    );
 }
 
-impl<'db> LvmtStore<'db> {
+impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
     pub fn check_consistency(&mut self, commit: CommitID, pp: &AmtParams<PE>) -> Result<()> {
         use std::collections::BTreeSet;
 

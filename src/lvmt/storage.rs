@@ -10,7 +10,7 @@ use super::{
     types::{AllocatePosition, AmtNodeId},
 };
 use crate::{
-    backends::{HistoricalTableName, WriteSchemaTrait},
+    backends::{DatabaseTrait, HistoricalTableName, PendingTableName, WriteSchemaTrait},
     errors::Result,
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::{table_schema::KeyValueSnapshotRead, CommitID},
@@ -23,17 +23,23 @@ use crate::{
     utils::hash::blake2s,
 };
 
-pub struct LvmtStore<'db> {
-    key_value_store: VersionedStore<'db, FlatKeyValue>,
-    amt_node_store: VersionedStore<'db, AmtNodes>,
-    slot_alloc_store: VersionedStore<'db, SlotAllocations>,
+pub struct LvmtStore<'db, P: DatabaseTrait<PendingTableName>> {
+    key_value_store: VersionedStore<'db, FlatKeyValue, P>,
+    amt_node_store: VersionedStore<'db, AmtNodes, P>,
+    slot_alloc_store: VersionedStore<'db, SlotAllocations, P>,
     auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
 }
 
 const ALLOC_START_VERSION: u64 = 1;
 type KeyValueVec = Vec<(Box<[u8]>, LvmtValue)>;
 
-impl<'db> LvmtStore<'db> {
+impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
+    fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
+        unimplemented!()
+    }
+}
+
+impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
     pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
         self.get_state(commit)?.get(&key)
     }
@@ -46,9 +52,9 @@ impl<'db> LvmtStore<'db> {
     }
 
     pub fn new(
-        key_value_store: VersionedStore<'db, FlatKeyValue>,
-        amt_node_store: VersionedStore<'db, AmtNodes>,
-        slot_alloc_store: VersionedStore<'db, SlotAllocations>,
+        key_value_store: VersionedStore<'db, FlatKeyValue, P>,
+        amt_node_store: VersionedStore<'db, AmtNodes, P>,
+        slot_alloc_store: VersionedStore<'db, SlotAllocations, P>,
         auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
     ) -> Self {
         Self {
@@ -72,7 +78,7 @@ impl<'db> LvmtStore<'db> {
         old_commit: Option<CommitID>,
         new_commit: CommitID,
         changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
-        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
+        historical_write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
         pp: &AmtParams<PE>,
     ) -> Result<()> {
         let (amt_node_view, slot_alloc_view, key_value_view) = if let Some(old_commit) = old_commit
@@ -138,29 +144,45 @@ impl<'db> LvmtStore<'db> {
         // TODO: Write to the history part is beyond the range of LvmtStore.
         // TODO: LvmtStore.auth_changes includes all commits, even if they are removed but not confirmed,
         //       so consider gc_commit elsewhere.
+        let pending_write_schema = P::write_schema();
+
         let amt_node_updates: HashMap<_, _> =
             amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
-        self.amt_node_store
-            .add_to_pending_part(old_commit, new_commit, amt_node_updates)?;
+        self.amt_node_store.add_to_pending_part(
+            old_commit,
+            new_commit,
+            amt_node_updates,
+            &pending_write_schema,
+        )?;
 
         let key_value_updates: HashMap<_, _> = key_value_changes
             .into_iter()
             .map(|(k, v)| (k, Some(v)))
             .collect();
-        self.key_value_store
-            .add_to_pending_part(old_commit, new_commit, key_value_updates)?;
+        self.key_value_store.add_to_pending_part(
+            old_commit,
+            new_commit,
+            key_value_updates,
+            &pending_write_schema,
+        )?;
 
         let slot_alloc_updates: HashMap<_, _> = allocations
             .into_changes()
             .into_iter()
             .map(|(k, v)| (k, Some(v)))
             .collect();
-        self.slot_alloc_store
-            .add_to_pending_part(old_commit, new_commit, slot_alloc_updates)?;
+        self.slot_alloc_store.add_to_pending_part(
+            old_commit,
+            new_commit,
+            slot_alloc_updates,
+            &pending_write_schema,
+        )?;
+
+        self.commit_to_pending_db(pending_write_schema)?;
 
         let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
         self.auth_changes
-            .commit(new_commit, auth_change_bulk, write_schema)?;
+            .commit(new_commit, auth_change_bulk, historical_write_schema)?;
 
         Ok(())
     }
@@ -223,18 +245,18 @@ fn allocate_version_slot(
     }
 }
 
-impl<'db> LvmtStore<'db> {
-    pub fn get_key_value_store(&self) -> &VersionedStore<'db, FlatKeyValue> {
+impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
+    pub fn get_key_value_store(&self) -> &VersionedStore<'db, FlatKeyValue, P> {
         &self.key_value_store
     }
 
     #[cfg(test)]
-    pub fn get_amt_node_store(&self) -> &VersionedStore<'db, AmtNodes> {
+    pub fn get_amt_node_store(&self) -> &VersionedStore<'db, AmtNodes, P> {
         &self.amt_node_store
     }
 
     #[cfg(test)]
-    pub fn get_slot_alloc_store(&self) -> &VersionedStore<'db, SlotAllocations> {
+    pub fn get_slot_alloc_store(&self) -> &VersionedStore<'db, SlotAllocations, P> {
         &self.slot_alloc_store
     }
 }
