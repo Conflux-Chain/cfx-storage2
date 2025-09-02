@@ -55,5 +55,5 @@ pub trait DatabaseTrait<TN: TableNameTrait>: Sized + Send + Sync {
     /// # Returns
     ///
     /// A `Result` indicating success or failure of the commit operation.
-    fn commit(&mut self, changes: Self::WriteSchema) -> Result<()>;
+    fn commit(&self, changes: Self::WriteSchema) -> Result<()>;
 }

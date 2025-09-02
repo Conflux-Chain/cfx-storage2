@@ -117,7 +117,7 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
         Self::WriteSchema::new()
     }
 
-    fn commit(&mut self, changes: Self::WriteSchema) -> Result<()> {
+    fn commit(&self, changes: Self::WriteSchema) -> Result<()> {
         let mut tx = kvdb::DBTransaction::new();
         for (col, key, value) in changes.drain() {
             if let Some(v) = value {

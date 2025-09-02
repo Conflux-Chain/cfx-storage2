@@ -1,3 +1,5 @@
+use parking_lot::Mutex;
+
 use super::super::{
     serde::{Decode, Encode},
     table::TableSchema,
@@ -7,23 +9,25 @@ use super::super::{
 use crate::{backends::table_name::TableNameTrait, errors::Result};
 use std::{borrow::Cow, collections::BTreeMap, marker::PhantomData, sync::Arc};
 
-struct InnerInMemoryDatabase(BTreeMap<(u32, Vec<u8>), Vec<u8>>);
+struct InnerInMemoryDatabase(Mutex<BTreeMap<(u32, Vec<u8>), Vec<u8>>>);
 
 impl InnerInMemoryDatabase {
     pub fn empty() -> Self {
         Self(Default::default())
     }
 
-    pub fn commit<I>(&mut self, changes: I) -> Result<()>
+    pub fn commit<I>(&self, changes: I) -> Result<()>
     where
         I: Iterator<Item = (u32, Vec<u8>, Option<Vec<u8>>)>,
     {
+        let mut inner_guard = self.0.lock();
+
         for (col, key, value) in changes {
             let k = (col, key);
             if let Some(v) = value {
-                self.0.insert(k, v);
+                inner_guard.insert(k, v);
             } else {
-                self.0.remove(&k);
+                inner_guard.remove(&k);
             }
         }
         Ok(())
@@ -38,43 +42,88 @@ pub struct InMemoryTable {
 impl<T: TableSchema> TableRead<T> for InMemoryTable {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
         let key = (self.col, key.encode().into_owned());
-        if let Some(v) = self.inner.0.get(&key) {
-            Ok(Some(<T::Value>::decode(v)?))
+
+        let maybe_v = {
+            let guard = self.inner.0.lock();
+            guard.get(&key).cloned()
+        };
+
+        if let Some(v) = maybe_v {
+            Ok(Some(Cow::Owned(<T::Value>::decode_owned(v)?)))
         } else {
             Ok(None)
         }
     }
 
     fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
-        let range = self.inner.0.range((self.col, key.encode().into_owned())..);
-        let iter = range
-            //.filter(|((col, _), _)| *col == self.col)
-            .take_while(move |((col, _), _)| *col == self.col)
-            .map(|((_, k), v)| Ok((<T::Key>::decode(k)?, <T::Value>::decode(v)?)));
+        let start = (self.col, key.encode().into_owned());
+
+        let items: Vec<(Vec<u8>, Vec<u8>)> = {
+            let guard = self.inner.0.lock();
+            guard
+                .range(start..)
+                .take_while(|((col, _), _)| *col == self.col)
+                .map(|((_, k), v)| (k.clone(), v.clone()))
+                .collect()
+        };
+
+        let iter = items.into_iter().map(|(kb, vb)| {
+            let k = <T::Key as Decode>::decode_owned(kb)?;
+            let v = <T::Value as Decode>::decode_owned(vb)?;
+            Ok((Cow::Owned(k), Cow::Owned(v)))
+        });
+
         Ok(Box::new(iter))
     }
 
     fn iter_from_start(&self) -> Result<TableIter<T>> {
-        let range = self.inner.0.range((self.col, Vec::new())..);
-        let iter = range
-            //.filter(|((col, _), _)| *col == self.col)
-            .take_while(move |((col, _), _)| *col == self.col)
-            .map(|((_, k), v)| Ok((<T::Key>::decode(k)?, <T::Value>::decode(v)?)));
+        let start = (self.col, Vec::new());
+
+        let items: Vec<(Vec<u8>, Vec<u8>)> = {
+            let guard = self.inner.0.lock();
+            guard
+                .range(start..)
+                .take_while(|((col, _), _)| *col == self.col)
+                .map(|((_, k), v)| (k.clone(), v.clone()))
+                .collect()
+        };
+
+        let iter = items.into_iter().map(|(kb, vb)| {
+            let k = <T::Key as Decode>::decode_owned(kb)?;
+            let v = <T::Value as Decode>::decode_owned(vb)?;
+            Ok((Cow::Owned(k), Cow::Owned(v)))
+        });
+
         Ok(Box::new(iter))
     }
 
     fn iter_rev_from_end(&self) -> Result<TableIter<T>> {
-        type TmpItem<'a> = (&'a (u32, Vec<u8>), &'a Vec<u8>);
-        let range: Box<dyn DoubleEndedIterator<Item = TmpItem>> = if self.col == u32::MAX {
-            Box::new(self.inner.0.iter().rev())
-        } else {
-            let end_bound = (self.col + 1, Vec::new());
-            Box::new(self.inner.0.range(..end_bound).rev())
+        let items: Vec<(Vec<u8>, Vec<u8>)> = {
+            let guard = self.inner.0.lock();
+            if self.col == u32::MAX {
+                guard
+                    .iter()
+                    .rev()
+                    .take_while(|((col, _), _)| *col == self.col)
+                    .map(|((_, k), v)| (k.clone(), v.clone()))
+                    .collect()
+            } else {
+                let end_bound = (self.col + 1, Vec::new());
+                guard
+                    .range(..end_bound)
+                    .rev()
+                    .take_while(|((col, _), _)| *col == self.col)
+                    .map(|((_, k), v)| (k.clone(), v.clone()))
+                    .collect()
+            }
         };
-        let iter = range
-            //.filter(|((col, _), _)| *col == self.col)
-            .take_while(move |((col, _), _)| *col == self.col)
-            .map(|((_, k), v)| Ok((<T::Key>::decode(k)?, <T::Value>::decode(v)?)));
+
+        let iter = items.into_iter().map(|(kb, vb)| {
+            let k = <T::Key as Decode>::decode_owned(kb)?;
+            let v = <T::Value as Decode>::decode_owned(vb)?;
+            Ok((Cow::Owned(k), Cow::Owned(v)))
+        });
+
         Ok(Box::new(iter))
     }
 }
@@ -111,16 +160,12 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedInMemoryDb<TN> {
         Self::WriteSchema::new()
     }
 
-    fn commit(&mut self, changes: Self::WriteSchema) -> Result<()> {
-        let inner_mut = Arc::get_mut(&mut self.inner).expect(
-            "Cannot get mutable access to InMemoryDatabase for commit. It is shared elsewhere.",
-        );
-
+    fn commit(&self, changes: Self::WriteSchema) -> Result<()> {
         let raw_changes = changes
             .drain()
             .into_iter()
             .map(|(col, key, val)| (col.into(), key, val));
 
-        inner_mut.commit(raw_changes)
+        self.inner.commit(raw_changes)
     }
 }
