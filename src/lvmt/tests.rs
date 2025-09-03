@@ -99,14 +99,14 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     let changes_3 = get_changes_from_updates(updates_3);
 
     // Initialize db
-    let mut db = LvmtStorage::<D, P>::new_from_empty_pending(
+    let db = LvmtStorage::<D, P>::new_from_empty_pending(
         Arc::new(historical_db).clone(),
         Arc::new(pending_db),
     )
     .unwrap();
 
     // Get a manager for db
-    let mut lvmt = db.as_manager().unwrap();
+    let lvmt = db.as_manager().unwrap();
     let write_schema = D::write_schema();
 
     // Perform non-forking commits
@@ -127,21 +127,17 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     lvmt.check_consistency(commit_1, &AMT).unwrap();
 
     // Persist confirmed commits from caches to the backend.
-    // Must drop the manager first because it holds a read reference to the backend.
-    drop(lvmt);
     db.confirmed_pending_to_history_with_commit_id(commit_2, &write_schema)
         .unwrap();
 
     db.commit(write_schema).unwrap();
 
     // Reinitialize the manager
-    lvmt = db.as_manager().unwrap();
     let write_schema = D::write_schema();
 
     // Commit again to verify success after persisting changes to the backend
     lvmt.commit(Some(commit_2), commit_3, changes_3, &write_schema, &AMT)
         .unwrap();
-    // TODO?
     lvmt.check_consistency(commit_3, &AMT).unwrap();
 
     // Check previous commits again after they are confirmed or removed
@@ -188,7 +184,7 @@ fn test_lvmt_store_inmemory() {
 }
 
 impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
-    pub fn check_consistency(&mut self, commit: CommitID, pp: &AmtParams<PE>) -> Result<()> {
+    pub fn check_consistency(&self, commit: CommitID, pp: &AmtParams<PE>) -> Result<()> {
         use std::collections::BTreeSet;
 
         use ark_ec::CurveGroup;

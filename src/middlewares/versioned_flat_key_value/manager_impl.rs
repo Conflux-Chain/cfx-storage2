@@ -328,8 +328,8 @@ impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
             return Ok(());
         }
 
-        let pending_part = Arc::get_mut(&mut self.pending_part).unwrap();
-        Ok(pending_part.lock().discard(commit, write_schema)?)
+        let mut pending_part_guard = self.pending_part.lock();
+        Ok(pending_part_guard.discard(commit, write_schema)?)
     }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {

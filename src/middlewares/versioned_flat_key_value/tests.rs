@@ -1246,7 +1246,7 @@ fn test_versioned_store<
     // init history part
     let historical_write_schema = D::write_schema();
     let pending_write_schema = P::write_schema();
-    let mut historical_db_arc = Arc::new(historical_db);
+    let historical_db_arc = Arc::new(historical_db);
     let (history_cids, history_updates, pending_part) = gen_init(
         historical_db_arc.clone(),
         Arc::new(pending_db),
@@ -1261,10 +1261,7 @@ fn test_versioned_store<
         &pending_write_schema,
     );
 
-    Arc::get_mut(&mut historical_db_arc)
-        .unwrap()
-        .commit(historical_write_schema)
-        .unwrap();
+    historical_db_arc.commit(historical_write_schema).unwrap();
 
     // build proxy
     let mut mock_versioned_store =
@@ -1347,10 +1344,7 @@ fn test_versioned_store<
                     &pending_write_schema,
                 );
 
-                Arc::get_mut(&mut historical_db_arc)
-                    .unwrap()
-                    .commit(write_schema)
-                    .unwrap();
+                historical_db_arc.commit(write_schema).unwrap();
 
                 real_versioned_store =
                     VersionedStore::new(historical_db_arc.clone(), pending_part_mut).unwrap();

@@ -206,12 +206,10 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     }
 
     pub fn commit(
-        &mut self,
+        &self,
         write_schema: <D as DatabaseTrait<HistoricalTableName>>::WriteSchema,
     ) -> Result<()> {
-        let backend =
-            Arc::get_mut(&mut self.historical_db).expect("Exclusive access to backend required");
-        backend.commit(write_schema)
+        self.historical_db.commit(write_schema)
     }
 
     fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {

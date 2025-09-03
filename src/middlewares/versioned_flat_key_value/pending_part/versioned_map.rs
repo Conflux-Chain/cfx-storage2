@@ -211,8 +211,11 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
         if confirm_path_info.is_some() {
             // clear current is necessary
             // because apply_commit_id in current.map may be removed from pending part
-            self.clear_removed_current();
-            if let Some(current) = self.current.get_mut() {
+
+            // Take a single write lock and do both operations under it
+            let mut guard = self.current.write();
+            self.clear_removed_current_with_guard(&mut guard);
+            if let Some(current) = guard.as_mut() {
                 current.update_rerooted(&self.tree_with_tracker.tree);
             }
         }
@@ -234,7 +237,8 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
         if has_discarded_nodes {
             // clear current is necessary
             // because apply_commit_id in current.map may be removed from pending part
-            self.clear_removed_current();
+            let mut guard = self.current.write();
+            self.clear_removed_current_with_guard(&mut guard);
         }
 
         Ok(has_discarded_nodes)
@@ -301,17 +305,22 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
         commit_id: S::CommitId,
         write_schema: &P::WriteSchema,
     ) -> PendResult<()> {
-        self.tree_with_tracker
+        let has_discarded_nodes = self
+            .tree_with_tracker
             .discard::<P>(commit_id, write_schema)?;
 
-        self.clear_removed_current();
+        if has_discarded_nodes {
+            let mut guard = self.current.write();
+            self.clear_removed_current_with_guard(&mut guard);
+        }
 
         Ok(())
     }
 
-    fn clear_removed_current(&mut self) {
-        let current = self.current.get_mut();
-
+    fn clear_removed_current_with_guard<'a>(
+        &'a self,
+        guard: &mut parking_lot::RwLockWriteGuard<'a, Option<CurrentMap<S>>>,
+    ) {
         let obsoleted_commit_id = |c: &CurrentMap<S>| {
             !self
                 .tree_with_tracker
@@ -319,8 +328,8 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
                 .contains_commit_id(&c.get_commit_id())
         };
 
-        if current.as_ref().map_or(false, obsoleted_commit_id) {
-            *current = None;
+        if guard.as_ref().map_or(false, obsoleted_commit_id) {
+            **guard = None;
         }
     }
 
