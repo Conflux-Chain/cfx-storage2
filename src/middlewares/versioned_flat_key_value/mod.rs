@@ -16,9 +16,9 @@ pub use manager_impl::SnapshotView;
 use nonempty::NonEmpty;
 use parking_lot::Mutex;
 pub use pending_part::{
-    pending_schema::PendingKeyValueConfig, primitives_clear_pending_schema,
-    primitives_initialize_empty_schema, primitives_recover_schema,
-    primitives_verify_schema_is_empty, BootstrapError, PendingError, RecoveryError,
+    pending_schema::PendingKeyValueConfig, primitives_initialize_empty_schema,
+    primitives_recover_schema, primitives_verify_schema_is_empty, BootstrapError, PendingError,
+    RecoveryError,
 };
 
 #[cfg(test)]
@@ -69,6 +69,12 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<Pend
 impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     VersionedStore<'db, T, P>
 {
+    pub fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
+        self.pending_part
+            .lock()
+            .commit_to_pending_db(pending_write_schema)
+    }
+
     pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
         if self.pending_part.lock().contains_commit_id(commit) {
             return Ok(true);

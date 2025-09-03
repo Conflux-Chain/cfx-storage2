@@ -59,12 +59,12 @@ pub mod primitives {
     ) -> Result<()> {
         let snapshots_view = Arc::new(db.view::<SnapshotsTable<S>>()?);
         if snapshots_view.iter_from_start()?.next().is_some() {
-            return Err(BootstrapError::DatabaseNotEmpty)?;
+            Err(BootstrapError::DatabaseNotEmpty)?
         }
 
         let wal_view = Arc::new(db.view::<WalTable<S>>()?);
         if wal_view.iter_from_start()?.next().is_some() {
-            return Err(BootstrapError::DatabaseNotEmpty)?;
+            Err(BootstrapError::DatabaseNotEmpty)?
         }
 
         Ok(())
@@ -76,7 +76,7 @@ pub mod primitives {
     /// that the underlying tables for this schema are empty before calling.
     ///
     /// This is a low-level primitive. See the [module-level documentation](self) for usage guidelines.
-    pub fn initialize_empty_schema<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>>(
+    pub fn initialize_empty_schema<S: PendingKeyValueSchema>(
         write_schema: &impl WriteSchemaTrait<PendingTableName>,
         parent_of_root: Option<S::CommitId>,
         height_of_root: u64,

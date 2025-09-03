@@ -35,7 +35,8 @@ type KeyValueVec = Vec<(Box<[u8]>, LvmtValue)>;
 
 impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
     fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
-        unimplemented!()
+        self.key_value_store
+            .commit_to_pending_db(pending_write_schema)
     }
 }
 

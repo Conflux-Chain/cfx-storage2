@@ -54,9 +54,7 @@ pub mod primitives {
         let seek_key = SnapshotKey::seek_key_for_height(height_of_root);
         let mut iter = snapshots_view.iter(&seek_key.key)?;
         match iter.next() {
-            None => {
-                return Err(RecoveryError::NoValidSnapshotFound)?;
-            }
+            None => Err(RecoveryError::NoValidSnapshotFound)?,
             Some(item) => {
                 let (snap_key_cow, snap_value_cow) = item?;
                 let snap_height = snap_key_cow.into_owned().0;
@@ -117,9 +115,9 @@ pub mod primitives {
                         next_modification_id: ModificationId(mod_id),
                     };
 
-                    return Ok(TreeWithTracker { tree, tracker });
+                    Ok(TreeWithTracker { tree, tracker })
                 } else {
-                    return Err(RecoveryError::InconsistentSnapshotState)?;
+                    Err(RecoveryError::InconsistentSnapshotState)?
                 }
             }
         }

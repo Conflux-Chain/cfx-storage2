@@ -20,7 +20,7 @@ pub fn encode_option<T: Encode>(opt: &Option<T>) -> Cow<[u8]> {
 /// - `[0x00]` -> `Ok(None)`
 /// - `[0x01, ...encoded T...]` -> `Ok(Some(T))`
 /// - otherwise -> `Err`
-pub fn decode_option<'a, T: Clone + Decode>(input: &'a [u8]) -> DecResult<Option<Cow<'a, T>>> {
+pub fn decode_option<T: Clone + Decode>(input: &[u8]) -> DecResult<Option<Cow<T>>> {
     if input.is_empty() {
         return Err(DecodeError::IncorrectLength);
     }

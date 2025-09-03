@@ -95,7 +95,7 @@ mod tests {
     /// This version writes to three separate tables but only reads from one
     /// to ensure that iterators and getters are properly isolated to the
     /// specified table (Column Family).
-    fn test_table_read_behavior<DB: DatabaseTrait<MockTableName>>(mut db: DB) -> Result<()> {
+    fn test_table_read_behavior<DB: DatabaseTrait<MockTableName>>(db: DB) -> Result<()> {
         let test_data1: Vec<(Vec<u8>, Vec<u8>)> = vec![
             (b"key1:10".to_vec(), b"value1:ten".to_vec()),
             (b"key1:20".to_vec(), b"value1:twenty".to_vec()),

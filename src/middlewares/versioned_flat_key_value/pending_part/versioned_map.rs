@@ -75,6 +75,13 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
         }
     }
 
+    pub fn commit_to_pending_db(
+        &self,
+        pending_write_schema: P::WriteSchema,
+    ) -> crate::errors::Result<()> {
+        self.db.commit(pending_write_schema)
+    }
+
     #[cfg(test)]
     pub fn check_consistency(&self, height_of_root: u64) -> bool {
         if self
@@ -424,11 +431,9 @@ mod tests {
         let pending_db = Arc::new(WrappedInMemoryDb::empty());
         primitives_verify_schema_is_empty::<TestPendingConfig, WrappedInMemoryDb<PendingTableName>>(&pending_db).unwrap();
         let write_schema = WrappedInMemoryDb::write_schema();
-        let tree_with_tracker = primitives_initialize_empty_schema::<
-            TestPendingConfig,
-            WrappedInMemoryDb<PendingTableName>,
-        >(&write_schema, None, 0)
-        .unwrap();
+        let tree_with_tracker =
+            primitives_initialize_empty_schema::<TestPendingConfig>(&write_schema, None, 0)
+                .unwrap();
         (pending_db, tree_with_tracker)
     }
 
@@ -439,10 +444,10 @@ mod tests {
         Tree<TestPendingConfig>,
         VersionedMap<TestPendingConfig, WrappedInMemoryDb<PendingTableName>>,
     ) {
-        let (mut db, tree_with_tracker) = initialize_empty_pending_db();
+        let (db, tree_with_tracker) = initialize_empty_pending_db();
 
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
-        let mut versioned_map = VersionedMap::from_initialized_state(db, tree_with_tracker);
+        let mut versioned_map = VersionedMap::from_initialized_state(db.clone(), tree_with_tracker);
 
         let write_schema = WrappedInMemoryDb::write_schema();
         for i in 1..=num_nodes as CommitId {
@@ -481,7 +486,7 @@ mod tests {
                 .unwrap();
         }
 
-        db.commit(write_schema);
+        db.commit(write_schema).unwrap();
 
         (forward_only_tree, versioned_map)
     }
@@ -518,10 +523,10 @@ mod tests {
 
     #[test]
     fn test_multiple_roots_err() {
-        let (mut db, tree_with_tracker) = initialize_empty_pending_db();
+        let (db, tree_with_tracker) = initialize_empty_pending_db();
 
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
-        let mut versioned_map = VersionedMap::from_initialized_state(db, tree_with_tracker);
+        let mut versioned_map = VersionedMap::from_initialized_state(db.clone(), tree_with_tracker);
 
         forward_only_tree.add_root(0, HashMap::new()).unwrap();
 
@@ -529,7 +534,7 @@ mod tests {
         versioned_map
             .add_node(HashMap::new(), 0, None, &write_schema)
             .unwrap();
-        db.commit(write_schema);
+        db.commit(write_schema).unwrap();
 
         let write_schema = WrappedInMemoryDb::write_schema();
         assert_eq!(
@@ -563,10 +568,10 @@ mod tests {
 
     #[test]
     fn test_commit_id_already_exists_err() {
-        let (mut db, tree_with_tracker) = initialize_empty_pending_db();
+        let (db, tree_with_tracker) = initialize_empty_pending_db();
 
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
-        let mut versioned_map = VersionedMap::from_initialized_state(db, tree_with_tracker);
+        let mut versioned_map = VersionedMap::from_initialized_state(db.clone(), tree_with_tracker);
 
         forward_only_tree.add_root(0, HashMap::new()).unwrap();
 
@@ -574,7 +579,7 @@ mod tests {
         versioned_map
             .add_node(HashMap::new(), 0, None, &write_schema)
             .unwrap();
-        db.commit(write_schema);
+        db.commit(write_schema).unwrap();
 
         assert_eq!(
             forward_only_tree.add_non_root_node(0, 0, HashMap::new()),

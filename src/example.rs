@@ -32,7 +32,6 @@ impl Storage {
         let write_schema = WrappedInMemoryDb::write_schema();
         let tree_with_tracker = primitives_initialize_empty_schema::<
             PendingKeyValueConfig<FlatKeyValue, CommitID>,
-            WrappedInMemoryDb<PendingTableName>,
         >(&write_schema, None, 0)
         .unwrap();
 

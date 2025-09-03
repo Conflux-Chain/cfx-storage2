@@ -7,7 +7,8 @@ use crate::{
     errors::Result,
     middlewares::{
         confirm_ids_to_history, confirm_maps_to_history, history_number_to_height,
-        primitives_recover_schema, CommitID, CommitIDSchema, HistoryNumberSchema,
+        primitives_initialize_empty_schema, primitives_recover_schema,
+        primitives_verify_schema_is_empty, CommitID, CommitIDSchema, HistoryNumberSchema,
         KeyValueStoreBulks, PendingKeyValueConfig, VersionedStore, VersionedStoreCache,
     },
 };
@@ -53,7 +54,7 @@ fn todo_fn() {
 
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
     /// Creates a new LvmtStorage instance, opening databases and running the recovery process.
-    pub fn new(historical_db: Arc<D>, mut pending_db: Arc<P>) -> Result<Self> {
+    pub fn new_from_recovery(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
         let (expected_parent_of_root, expected_height_of_root) =
             get_latest_from_history(&historical_db)?;
 
@@ -85,12 +86,79 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             )?;
 
         // Atomically commit all changes (cleanups, initial snapshots) to the pending DB.
-        // FIXME: remove &mut in DatabaseTrait::commit, then remove get_mut() here, and remove mut for pending_db.
-        let pending_db_mut = Arc::get_mut(&mut pending_db).unwrap();
-        pending_db_mut.commit(pending_write_schema)?;
+        pending_db.commit(pending_write_schema)?;
 
         // TODO: verify consistency of three tree_with_tracker and the pending_db
         todo_fn();
+
+        // Initialization is complete. Now, create the in-memory VersionedMap instances.
+        let key_value_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
+            pending_db.clone(),
+            kv_tree_with_tracker,
+        )));
+        let amt_node_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
+            pending_db.clone(),
+            amt_tree_with_tracker,
+        )));
+        let slot_alloc_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
+            pending_db.clone(),
+            slot_tree_with_tracker,
+        )));
+
+        Ok(Self {
+            historical_db,
+            pending_db,
+            key_value_cache,
+            amt_node_cache,
+            slot_alloc_cache,
+        })
+    }
+
+    /// Creates a new LvmtStorage instance. It is the caller's responsibility to ensure that the `pending_db` is empty.
+    pub fn new_from_empty_pending(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+        let (expected_parent_of_root, expected_height_of_root) =
+            get_latest_from_history(&historical_db)?;
+
+        // Verify the `pending_db` is empty for each schema type.
+        primitives_verify_schema_is_empty::<PendingKeyValueConfig<FlatKeyValue, CommitID>, P>(
+            &pending_db,
+        )?;
+        primitives_verify_schema_is_empty::<PendingKeyValueConfig<AmtNodes, CommitID>, P>(
+            &pending_db,
+        )?;
+        primitives_verify_schema_is_empty::<PendingKeyValueConfig<SlotAllocations, CommitID>, P>(
+            &pending_db,
+        )?;
+
+        // Create a single WriteSchema for the entire atomic bootstrap operation.
+        let pending_write_schema = P::write_schema();
+
+        // Run the boostrap process for each schema type.
+        // All database modifications will be collected in the *same* write_schema.
+        let kv_tree_with_tracker =
+            primitives_initialize_empty_schema::<PendingKeyValueConfig<FlatKeyValue, CommitID>>(
+                &pending_write_schema,
+                expected_parent_of_root,
+                expected_height_of_root,
+            )?;
+        let amt_tree_with_tracker =
+            primitives_initialize_empty_schema::<PendingKeyValueConfig<AmtNodes, CommitID>>(
+                &pending_write_schema,
+                expected_parent_of_root,
+                expected_height_of_root,
+            )?;
+        let slot_tree_with_tracker =
+            primitives_initialize_empty_schema::<PendingKeyValueConfig<SlotAllocations, CommitID>>(
+                &pending_write_schema,
+                expected_parent_of_root,
+                expected_height_of_root,
+            )?;
+
+        // Atomically commit all changes (initial snapshots) to the pending DB.
+        pending_db.commit(pending_write_schema)?;
+
+        // TODO: verify consistency of three tree_with_tracker and the pending_db
+        // todo_fn();
 
         // Initialization is complete. Now, create the in-memory VersionedMap instances.
         let key_value_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
@@ -147,7 +215,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     }
 
     fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
-        unimplemented!()
+        self.pending_db.commit(pending_write_schema)
     }
 
     // check whether `commit_id` is already in historical part

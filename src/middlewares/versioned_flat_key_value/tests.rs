@@ -757,7 +757,7 @@ fn gen_init<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTable
     )
     .unwrap();
     let tree_with_tracker =
-        primitives_initialize_empty_schema::<PendingKeyValueConfig<TestSchema, CommitID>, P>(
+        primitives_initialize_empty_schema::<PendingKeyValueConfig<TestSchema, CommitID>>(
             pending_write_schema,
             history_cids.items().last().copied(),
             history_cids.len() as u64,

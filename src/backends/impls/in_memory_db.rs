@@ -9,7 +9,8 @@ use super::super::{
 use crate::{backends::table_name::TableNameTrait, errors::Result};
 use std::{borrow::Cow, collections::BTreeMap, marker::PhantomData, sync::Arc};
 
-struct InnerInMemoryDatabase(Mutex<BTreeMap<(u32, Vec<u8>), Vec<u8>>>);
+type InMemoryKVMap = BTreeMap<(u32, Vec<u8>), Vec<u8>>;
+struct InnerInMemoryDatabase(Mutex<InMemoryKVMap>);
 
 impl InnerInMemoryDatabase {
     pub fn empty() -> Self {

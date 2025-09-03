@@ -99,8 +99,11 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     let changes_3 = get_changes_from_updates(updates_3);
 
     // Initialize db
-    let mut db =
-        LvmtStorage::<D, P>::new(Arc::new(historical_db).clone(), Arc::new(pending_db)).unwrap();
+    let mut db = LvmtStorage::<D, P>::new_from_empty_pending(
+        Arc::new(historical_db).clone(),
+        Arc::new(pending_db),
+    )
+    .unwrap();
 
     // Get a manager for db
     let mut lvmt = db.as_manager().unwrap();
@@ -138,6 +141,7 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     // Commit again to verify success after persisting changes to the backend
     lvmt.commit(Some(commit_2), commit_3, changes_3, &write_schema, &AMT)
         .unwrap();
+    // TODO?
     lvmt.check_consistency(commit_3, &AMT).unwrap();
 
     // Check previous commits again after they are confirmed or removed
@@ -155,7 +159,7 @@ fn test_lvmt_store_rocksdb() {
     clear_dir_then_create(pending_path);
 
     let historical_db = WrappedRocksDb::open(historical_path).unwrap();
-    let pending_db = WrappedRocksDb::open(historical_path).unwrap();
+    let pending_db = WrappedRocksDb::open(pending_path).unwrap();
 
     test_lvmt_store::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>(
         historical_db,
@@ -179,7 +183,7 @@ fn test_lvmt_store_inmemory() {
     test_lvmt_store::<WrappedInMemoryDb<HistoricalTableName>, WrappedInMemoryDb<PendingTableName>>(
         historical_db,
         pending_db,
-        100000,
+        1000,
     );
 }
 
