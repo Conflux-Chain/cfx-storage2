@@ -69,12 +69,6 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<Pend
 impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     VersionedStore<'db, T, P>
 {
-    pub fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
-        self.pending_part
-            .lock()
-            .commit_to_pending_db(pending_write_schema)
-    }
-
     pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
         if self.pending_part.lock().contains_commit_id(commit) {
             return Ok(true);

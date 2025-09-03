@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use amt::AmtParams;
 
@@ -24,6 +27,7 @@ use crate::{
 };
 
 pub struct LvmtStore<'db, P: DatabaseTrait<PendingTableName>> {
+    pending_persistence_backend: Arc<P>,
     key_value_store: VersionedStore<'db, FlatKeyValue, P>,
     amt_node_store: VersionedStore<'db, AmtNodes, P>,
     slot_alloc_store: VersionedStore<'db, SlotAllocations, P>,
@@ -35,8 +39,8 @@ type KeyValueVec = Vec<(Box<[u8]>, LvmtValue)>;
 
 impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
     fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
-        self.key_value_store
-            .commit_to_pending_db(pending_write_schema)
+        self.pending_persistence_backend
+            .commit(pending_write_schema)
     }
 }
 
@@ -53,12 +57,14 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
     }
 
     pub fn new(
+        pending_persistence_backend: Arc<P>,
         key_value_store: VersionedStore<'db, FlatKeyValue, P>,
         amt_node_store: VersionedStore<'db, AmtNodes, P>,
         slot_alloc_store: VersionedStore<'db, SlotAllocations, P>,
         auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
     ) -> Self {
         Self {
+            pending_persistence_backend,
             key_value_store,
             amt_node_store,
             slot_alloc_store,

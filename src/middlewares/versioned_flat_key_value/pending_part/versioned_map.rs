@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::marker::PhantomData;
 
 use crate::backends::{DatabaseTrait, PendingTableName};
 use crate::traits::{IsCompleted, NeedNext};
@@ -18,19 +18,21 @@ use parking_lot::RwLock;
 /// A versioned, in-memory key-value map with a persistent backend.
 ///
 /// It represents the "pending" part, where modifications are held in memory (`tree`)
-/// and simultaneously logged to a database (`db`) for fault tolerance.
+/// and simultaneously logged to a database for fault tolerance.
 pub struct VersionedMap<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
-    /// A handle to the database used for logging state changes for recovery.
+    /// A marker for the database trait `P`.
     ///
-    /// This database acts as a recovery log, storing snapshots and a
-    /// write-ahead log (WAL) of modification operations submitted by this map.
-    db: Arc<P>,
+    /// This `VersionedMap` does not directly hold a database handle. Instead,
+    /// database operations are performed via a `WriteSchema` passed into the modification methods.
+    /// This marker ensures type safety by associating the `VersionedMap` with a specific
+    /// database implementation `P` without needing to store an actual instance.
+    db_marker: PhantomData<P>,
 
     /// The core in-memory data structure representing the versioned state of the pending part.
     ///
     /// It is bundled with a `PersistenceTracker` to correctly sequence its modifications
     /// for the recovery log. In the event of a crash, its state can be rebuilt to the last
-    /// consistent state recorded in the `db` by replaying the logged operations.
+    /// consistent state recorded in the database by replaying the logged operations.
     tree_with_tracker: TreeWithTracker<S>,
 
     /// A cache holding the key-value map for a specific, "current" version of the tree.
@@ -42,7 +44,7 @@ pub struct VersionedMap<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableN
 }
 
 impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<S, P> {
-    /// Creates a new `VersionedMap` from a database handle and a corresponding, pre-initialized in-memory state.
+    /// Creates a new `VersionedMap` from a pre-initialized in-memory state.
     ///
     /// This constructor assumes the caller has already prepared the storage and derived the correct
     /// initial in-memory state. It simply assembles the `VersionedMap` instance from these components.
@@ -52,9 +54,10 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
     /// 2. A fresh, clean state created after a failed recovery attempt necessitated a database reset.
     /// 3. An empty state corresponding to a newly created database.
     ///
-    /// **Important**: It is the caller's responsibility to ensure that the `db` and `initial_state`
-    /// are perfectly consistent. The `initial_state` must be the exact result of applying all
-    /// operations currently stored in the `db`.
+    /// **Important**: It is the caller's responsibility to ensure that the `initial_state` is
+    /// perfectly consistent with the state of the database that will be used for persistence.
+    /// The `initial_state` must be the exact result of applying all operations currently
+    /// stored in the persistent backend.
     ///
     /// This means the database must not contain any log records that are not already accounted for
     /// in `initial_state`. For instance, no record can exist with a sequence identifier greater than
@@ -64,22 +67,14 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
     ///
     /// # Arguments
     ///
-    /// * `db`: The database handle for logging future modifications.
     /// * `initial_state`: The initial in-memory tree and its corresponding persistence tracker,
     ///   representing a consistent state.
-    pub fn from_initialized_state(db: Arc<P>, initial_state: TreeWithTracker<S>) -> Self {
+    pub fn from_initialized_state(initial_state: TreeWithTracker<S>) -> Self {
         VersionedMap {
-            db,
+            db_marker: PhantomData,
             tree_with_tracker: initial_state,
             current: RwLock::new(None),
         }
-    }
-
-    pub fn commit_to_pending_db(
-        &self,
-        pending_write_schema: P::WriteSchema,
-    ) -> crate::errors::Result<()> {
-        self.db.commit(pending_write_schema)
     }
 
     #[cfg(test)]
@@ -393,6 +388,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::super::{primitives_initialize_empty_schema, primitives_verify_schema_is_empty};
+    use std::sync::Arc;
 
     use crate::{
         backends::{DatabaseTrait, VersionedKVName, WrappedInMemoryDb},
@@ -456,7 +452,7 @@ mod tests {
         let (db, tree_with_tracker) = initialize_empty_pending_db();
 
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
-        let mut versioned_map = VersionedMap::from_initialized_state(db.clone(), tree_with_tracker);
+        let mut versioned_map = VersionedMap::from_initialized_state(tree_with_tracker);
 
         let write_schema = WrappedInMemoryDb::write_schema();
         for i in 1..=num_nodes as CommitId {
@@ -535,7 +531,8 @@ mod tests {
         let (db, tree_with_tracker) = initialize_empty_pending_db();
 
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
-        let mut versioned_map = VersionedMap::from_initialized_state(db.clone(), tree_with_tracker);
+        let mut versioned_map: VersionedMap<_, WrappedInMemoryDb<PendingTableName>> =
+            VersionedMap::from_initialized_state(tree_with_tracker);
 
         forward_only_tree.add_root(0, HashMap::new()).unwrap();
 
@@ -561,7 +558,8 @@ mod tests {
         let (db, tree_with_tracker) = initialize_empty_pending_db();
 
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
-        let mut versioned_map = VersionedMap::from_initialized_state(db, tree_with_tracker);
+        let mut versioned_map: VersionedMap<_, WrappedInMemoryDb<PendingTableName>> =
+            VersionedMap::from_initialized_state(tree_with_tracker);
 
         assert_eq!(
             forward_only_tree.add_non_root_node(1, 0, HashMap::new()),
@@ -580,7 +578,8 @@ mod tests {
         let (db, tree_with_tracker) = initialize_empty_pending_db();
 
         let mut forward_only_tree = Tree::<TestPendingConfig>::new(None, 0);
-        let mut versioned_map = VersionedMap::from_initialized_state(db.clone(), tree_with_tracker);
+        let mut versioned_map: VersionedMap<_, WrappedInMemoryDb<PendingTableName>> =
+            VersionedMap::from_initialized_state(tree_with_tracker);
 
         forward_only_tree.add_root(0, HashMap::new()).unwrap();
 

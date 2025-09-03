@@ -93,15 +93,12 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 
         // Initialization is complete. Now, create the in-memory VersionedMap instances.
         let key_value_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            pending_db.clone(),
             kv_tree_with_tracker,
         )));
         let amt_node_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            pending_db.clone(),
             amt_tree_with_tracker,
         )));
         let slot_alloc_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            pending_db.clone(),
             slot_tree_with_tracker,
         )));
 
@@ -162,15 +159,12 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 
         // Initialization is complete. Now, create the in-memory VersionedMap instances.
         let key_value_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            pending_db.clone(),
             kv_tree_with_tracker,
         )));
         let amt_node_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            pending_db.clone(),
             amt_tree_with_tracker,
         )));
         let slot_alloc_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            pending_db.clone(),
             slot_tree_with_tracker,
         )));
 
@@ -198,6 +192,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             KeyValueStoreBulks::new(Arc::new(self.historical_db.view::<AuthChangeTable>()?));
 
         Ok(LvmtStore::new(
+            self.pending_db.clone(),
             key_value_store,
             amt_node_store,
             slot_alloc_store,

@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     backends::{
@@ -16,18 +16,24 @@ use ethereum_types::H256;
 use parking_lot::Mutex;
 use static_assertions::assert_impl_all;
 
+pub struct FlatStore<'db> {
+    pending_persistence_backend: Arc<WrappedInMemoryDb<PendingTableName>>,
+    key_value_store: VersionedStore<'db, FlatKeyValue, WrappedInMemoryDb<PendingTableName>>,
+}
+
 pub struct Storage {
-    db: Arc<WrappedInMemoryDb<HistoricalTableName>>,
+    historical_db: Arc<WrappedInMemoryDb<HistoricalTableName>>,
+    pending_db: Arc<WrappedInMemoryDb<PendingTableName>>,
     cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue, WrappedInMemoryDb<PendingTableName>>>>,
 }
 
 impl Storage {
-    pub fn new_empty(log_path: impl AsRef<Path>) -> Result<Self> {
-        let cache_persistence = Arc::new(WrappedInMemoryDb::empty());
+    pub fn new_empty() -> Result<Self> {
+        let pending_db = Arc::new(WrappedInMemoryDb::empty());
         primitives_verify_schema_is_empty::<
             PendingKeyValueConfig<FlatKeyValue, CommitID>,
             WrappedInMemoryDb<PendingTableName>,
-        >(&cache_persistence)
+        >(&pending_db)
         .unwrap();
         let write_schema = WrappedInMemoryDb::write_schema();
         let tree_with_tracker = primitives_initialize_empty_schema::<
@@ -36,19 +42,21 @@ impl Storage {
         .unwrap();
 
         Ok(Self {
-            db: WrappedInMemoryDb::empty().into(),
+            historical_db: WrappedInMemoryDb::empty().into(),
+            pending_db,
             cache: Mutex::new(VersionedStoreCache::from_initialized_state(
-                cache_persistence,
                 tree_with_tracker,
             ))
             .into(),
         })
     }
 
-    pub fn as_manager(
-        &mut self,
-    ) -> Result<VersionedStore<'_, FlatKeyValue, WrappedInMemoryDb<PendingTableName>>> {
-        VersionedStore::new(self.db.clone(), self.cache.clone())
+    pub fn as_manager(&mut self) -> Result<FlatStore<'_>> {
+        let key_value_store = VersionedStore::new(self.historical_db.clone(), self.cache.clone())?;
+        Ok(FlatStore {
+            pending_persistence_backend: self.pending_db.clone(),
+            key_value_store,
+        })
     }
 }
 

@@ -763,7 +763,7 @@ fn gen_init<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTable
             history_cids.len() as u64,
         )
         .unwrap();
-    let pending_part = VersionedMap::from_initialized_state(pending_db, tree_with_tracker);
+    let pending_part: VersionedMap<_, P> = VersionedMap::from_initialized_state(tree_with_tracker);
 
     confirm_ids_to_history::<D>(
         historical_db.clone(),
