@@ -31,9 +31,10 @@ pub mod primitives {
     use super::RecoveryError;
 
     use super::super::{
-        DatabaseTrait, ModificationId, PendingKeyValueSchema, PendingTableName, PersistenceTracker,
-        RecoverMap, Result, SnapshotId, SnapshotKey, SnapshotValue, SnapshotsTable, TableRead,
-        Tree, TreeWithTracker, WalKey, WalKeySpecificPart, WalTable, WalValue, WriteSchemaTrait,
+        primitive::delete_snapshot_and_wal_by_snapshot_id, DatabaseTrait, ModificationId,
+        PendingKeyValueSchema, PendingTableName, PersistenceTracker, RecoverMap, Result,
+        SnapshotId, SnapshotKey, SnapshotValue, SnapshotsTable, TableRead, Tree, TreeWithTracker,
+        WalKey, WalKeySpecificPart, WalTable, WalValue,
     };
 
     /// Executes the recovery logic for a single pending schema from the database.
@@ -43,7 +44,7 @@ pub mod primitives {
     /// This is a low-level primitive. See the [module-level documentation](self) for usage guidelines.
     pub fn recover_schema<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>>(
         db: &Arc<P>,
-        write_schema: &impl WriteSchemaTrait<PendingTableName>,
+        write_schema: &P::WriteSchema,
         parent_of_root: Option<S::CommitId>,
         height_of_root: u64,
     ) -> Result<TreeWithTracker<S>> {
@@ -82,32 +83,12 @@ pub mod primitives {
                     }
 
                     // Clean up any newer, now-invalid snapshots and their WALs.
-                    for invalid_item in iter {
-                        let (invalid_snap_key_cow, invalid_snap_value_cow) = invalid_item?;
-                        let SnapshotValue {
-                            snapshot_id: invalid_snapshot_id,
-                            ..
-                        } = invalid_snap_value_cow.as_ref().clone();
-
-                        // Delete the invalid snapshot entry.
-                        let op = (invalid_snap_key_cow, None);
-                        write_schema.write::<SnapshotsTable<S>>(op);
-
-                        // Delete all WAL entries for that invalid snapshot.
-                        let invalid_wal_seek_key =
-                            WalKey::seek_key_for_snapshot(invalid_snapshot_id);
-                        let invalid_wal_iter = wal_view.iter(&invalid_wal_seek_key.key)?;
-
-                        for invalid_wal_item in invalid_wal_iter {
-                            let (invalid_wal_key_cow, _) = invalid_wal_item?;
-
-                            if invalid_wal_key_cow.snapshot_id != invalid_snapshot_id {
-                                break;
-                            }
-
-                            let op = (invalid_wal_key_cow, None);
-                            write_schema.write::<WalTable<S>>(op);
-                        }
+                    for invalid_snapshot_item in iter {
+                        delete_snapshot_and_wal_by_snapshot_id::<S, P>(
+                            &wal_view,
+                            write_schema,
+                            invalid_snapshot_item?,
+                        )?;
                     }
 
                     let tracker = PersistenceTracker {

@@ -7,9 +7,10 @@ pub use commit_id_schema::{
 };
 pub use key_value_store_bulks::{ChangeKey, KeyValueStoreBulks};
 pub use versioned_flat_key_value::{
-    confirm_ids_to_history, confirm_maps_to_history, primitives_initialize_empty_schema,
-    primitives_recover_schema, primitives_verify_schema_is_empty, table_schema, BootstrapError,
-    PendingError, PendingKeyValueConfig, PushError, RecoveryError, SnapshotView, VersionedStore,
+    confirm_ids_to_history, confirm_maps_to_history, primitives_gc_until_height,
+    primitives_initialize_empty_schema, primitives_recover_schema,
+    primitives_verify_schema_is_empty, table_schema, BootstrapError, PendingError,
+    PendingKeyValueConfig, PushError, RecoveryError, SnapshotView, VersionedStore,
     VersionedStoreCache,
 };
 

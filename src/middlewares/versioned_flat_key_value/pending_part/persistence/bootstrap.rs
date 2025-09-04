@@ -34,7 +34,7 @@ pub mod primitives {
     /// A more efficient implementation could drop and recreate the Column Family.
     pub fn clear_pending_schema<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>>(
         db: &Arc<P>,
-        write_schema: &impl WriteSchemaTrait<PendingTableName>,
+        write_schema: &P::WriteSchema,
     ) -> Result<()> {
         let snapshots_view = Arc::new(db.view::<SnapshotsTable<S>>()?);
         for item in snapshots_view.iter_from_start()? {

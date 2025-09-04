@@ -7,7 +7,7 @@ use crate::{
     errors::Result,
     middlewares::{
         confirm_ids_to_history, confirm_maps_to_history, history_number_to_height,
-        primitives_initialize_empty_schema, primitives_recover_schema,
+        primitives_gc_until_height, primitives_initialize_empty_schema, primitives_recover_schema,
         primitives_verify_schema_is_empty, CommitID, CommitIDSchema, HistoryNumberSchema,
         KeyValueStoreBulks, PendingKeyValueConfig, VersionedStore, VersionedStoreCache,
     },
@@ -198,6 +198,62 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             slot_alloc_store,
             auth_changes,
         ))
+    }
+
+    fn get_durable_height(&self) -> Result<u64> {
+        let (_, height_of_pending_root) = get_latest_from_history(&self.historical_db)?;
+        // TODO: safety_height_diff should be a parameter
+        let safety_height_diff = 5;
+        let durable_height = if height_of_pending_root > safety_height_diff {
+            height_of_pending_root - safety_height_diff
+        } else {
+            0
+        };
+        Ok(durable_height)
+    }
+
+    /// Performs background garbage collection on the pending persistence layer.
+    ///
+    /// This method acts as the "upper-level application".
+    /// It orchestrates the cleanup by:
+    /// 1. Fetching the `durable_height` from the historical database.
+    /// 2. Calling the `gc_until_height` primitive from the `persistence` module.
+    /// 3. Committing the changes to the pending database to ensure atomicity.
+    pub fn background_cleanup(&self) -> Result<()> {
+        // Step 1: Get durable_height.
+        let durable_height = self.get_durable_height()?;
+
+        if durable_height == 0 {
+            return Ok(());
+        }
+
+        // Step 2: Prepare the write batch/schema for the pending DB.
+        let write_schema = P::write_schema();
+
+        // Step 3: Call the low-level primitive to populate the write schema.
+        // Multiple tables should use the same write_schema.
+        primitives_gc_until_height::<PendingKeyValueConfig<FlatKeyValue, CommitID>, _>(
+            &self.pending_db,
+            &write_schema,
+            durable_height,
+        )?;
+
+        primitives_gc_until_height::<PendingKeyValueConfig<AmtNodes, CommitID>, _>(
+            &self.pending_db,
+            &write_schema,
+            durable_height,
+        )?;
+
+        primitives_gc_until_height::<PendingKeyValueConfig<SlotAllocations, CommitID>, _>(
+            &self.pending_db,
+            &write_schema,
+            durable_height,
+        )?;
+
+        // Step 4: Commit the changes atomically. The primitive itself doesn't commit.
+        self.pending_db.commit(write_schema)?;
+
+        Ok(())
     }
 
     pub fn commit(

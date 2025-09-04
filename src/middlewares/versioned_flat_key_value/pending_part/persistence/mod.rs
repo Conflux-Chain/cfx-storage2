@@ -1,7 +1,12 @@
 mod bootstrap;
+mod cleanup;
 mod format;
 mod recovery;
 mod writer;
+
+// This module contains shared, low-level persistence operations.
+// It is marked as `mod` to be private to the `persistence` module and its children.
+mod primitive;
 
 pub use bootstrap::BootstrapError;
 pub use recovery::RecoveryError;
@@ -10,6 +15,7 @@ pub use bootstrap::primitives::{
     initialize_empty_schema as primitives_initialize_empty_schema,
     verify_schema_is_empty as primitives_verify_schema_is_empty,
 };
+pub use cleanup::primitives::gc_until_height as primitives_gc_until_height;
 pub use recovery::primitives::recover_schema as primitives_recover_schema;
 
 pub(super) use writer::{
