@@ -102,3 +102,95 @@ pub mod primitives {
         Ok(TreeWithTracker { tree, tracker })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::{
+        format::{
+            ModificationId, SnapshotId, SnapshotKey, SnapshotValue, SnapshotsTable, WalKey,
+            WalKeySpecificPart, WalTable, WalValue,
+        },
+        test_util::TestSchema,
+        DatabaseTrait, Decode, PendingTableName, StorageError, TableSchema, WrappedInMemoryDb,
+        WriteSchemaTrait,
+    };
+    use super::primitives::*;
+    use super::*;
+    use ethereum_types::H256;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_verify_schema_is_empty_when_truly_empty() {
+        // Arrange
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+
+        // Act & Assert
+        let result = verify_schema_is_empty::<TestSchema, _>(&db);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_schema_is_empty_when_not_empty() {
+        // Arrange
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        // Add some data to make it non-empty
+        let wal_key = WalKey::<TestSchema> {
+            snapshot_id: SnapshotId(0),
+            modification_id: ModificationId(0),
+            operation_specific_parts: WalKeySpecificPart::AddNodeMeta,
+        };
+        let wal_value = WalValue::<TestSchema>::MetaValue {
+            commit_id: H256::zero(),
+            maybe_parent_cid: None,
+            map_value_count: 0,
+        };
+        let op = (
+            std::borrow::Cow::Owned(wal_key),
+            Some(std::borrow::Cow::Owned(wal_value)),
+        );
+        write_schema.write::<WalTable<TestSchema>>(op);
+        db.commit(write_schema).unwrap();
+
+        // Act & Assert
+        let result = verify_schema_is_empty::<TestSchema, _>(&db);
+        assert!(matches!(
+            result,
+            Err(StorageError::BootstrapError(
+                BootstrapError::DatabaseNotEmpty
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_initialize_empty_schema() {
+        // Arrange
+        let db = WrappedInMemoryDb::<PendingTableName>::empty();
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let parent_of_root = Some(H256::from_low_u64_be(99));
+        let height_of_root = 100;
+
+        // Act
+        let result =
+            initialize_empty_schema::<TestSchema>(&write_schema, parent_of_root, height_of_root)
+                .unwrap();
+
+        // Assert
+        // 1. Check returned tracker
+        assert_eq!(result.tracker.snapshot_id.0, 0);
+        assert_eq!(result.tracker.next_modification_id.0, 0);
+
+        // 2. Check written data
+        let ops = write_schema.drain();
+        assert_eq!(ops.len(), 1);
+        let op = &ops[0];
+        assert_eq!(op.0, SnapshotsTable::<TestSchema>::NAME);
+
+        let key = SnapshotKey::decode_owned(op.1.clone()).unwrap();
+        let value = SnapshotValue::<TestSchema>::decode_owned(op.2.clone().unwrap()).unwrap();
+
+        assert_eq!(key.0, height_of_root);
+        assert_eq!(value.snapshot_id.0, 0);
+        assert_eq!(value.parent_of_root, parent_of_root);
+    }
+}

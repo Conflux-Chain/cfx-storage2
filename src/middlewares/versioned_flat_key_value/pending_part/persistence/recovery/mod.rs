@@ -104,3 +104,120 @@ pub mod primitives {
         }
     }
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use super::primitives::*;
+//     use super::super::{
+//         test_util::{setup_db_with_snapshots_and_wals, TestSchema},
+//         DatabaseTrait, PendingTableName, WrappedInMemoryDb, StorageError, RecoveryError
+//     };
+//     use ethereum_types::H256;
+//     use std::sync::Arc;
+
+//     #[test]
+//     fn test_recover_schema_happy_path() {
+//         // TODO: 你的 snapshot 没有存 tree 的状态啊。
+
+//         // Arrange
+//         let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+//         // Snapshot at height 100 (id=5) has 3 WAL records.
+//         setup_db_with_snapshots_and_wals(&db, &[(100, 5, 3)]);
+
+//         let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+//         let height_of_root = 100;
+//         let parent_of_root = Some(H256::from_low_u64_be(100)); // Matches setup helper
+
+//         // Act
+//         let result =
+//             recover_schema::<TestSchema, _>(&db, &write_schema, parent_of_root, height_of_root)
+//                 .unwrap();
+
+//         // Assert
+//         assert_eq!(result.tracker.snapshot_id.0, 5, "Should recover snapshot ID 5");
+//         // Replayed 3 modifications (0, 1, 2), so next is 3
+//         assert_eq!(
+//             result.tracker.next_modification_id.0, 3,
+//             "Tracker should be advanced past replayed WALs"
+//         );
+//         assert!(write_schema.drain().is_empty(), "No cleanup should have occurred");
+//     }
+
+//     #[test]
+//     fn test_recover_schema_with_cleanup() {
+//         // Arrange
+//         let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+//         // Recovering to height 100, but a newer, invalid snapshot exists at height 110.
+//         setup_db_with_snapshots_and_wals(&db, &[(100, 5, 3), (110, 6, 2)]);
+
+//         let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+//         let height_of_root = 100;
+//         let parent_of_root = Some(H256::from_low_u64_be(100));
+
+//         // Act
+//         let result =
+//             recover_schema::<TestSchema, _>(&db, &write_schema, parent_of_root, height_of_root)
+//                 .unwrap();
+
+//         // Assert
+//         // 1. Correct state recovered
+//         assert_eq!(result.tracker.snapshot_id.0, 5);
+//         assert_eq!(result.tracker.next_modification_id.0, 3);
+
+//         // 2. Cleanup operations were written
+//         let ops = write_schema.drain();
+//         // 1 snapshot deletion + 2 WAL deletions for snapshot 6
+//         assert_eq!(ops.len(), 3, "Should have generated cleanup operations");
+//         for (_, _, value) in ops {
+//             assert!(value.is_none(), "Cleanup op must be a deletion");
+//         }
+//     }
+
+//     #[test]
+//     fn test_recover_schema_no_valid_snapshot() {
+//         // Arrange
+//         let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+//         // The pending_db only has an old snapshot
+//         setup_db_with_snapshots_and_wals(&db, &[(99, 4, 2)]);
+
+//         let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+//         let height_of_root = 100;
+//         let parent_of_root = Some(H256::from_low_u64_be(100));
+
+//         // Act
+//         let result =
+//             recover_schema::<TestSchema, _>(&db, &write_schema, parent_of_root, height_of_root);
+
+//         // Assert
+//         assert!(matches!(
+//             result,
+//             Err(StorageError::RecoveryError(
+//                 RecoveryError::NoValidSnapshotFound
+//             ))
+//         ));
+//     }
+
+//     #[test]
+//     fn test_recover_schema_inconsistent_snapshot_state() {
+//         // Arrange
+//         let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+//         // The pending_db only has a newer snapshot
+//         setup_db_with_snapshots_and_wals(&db, &[(101, 4, 2)]);
+
+//         let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+//         let height_of_root = 100;
+//         let parent_of_root = Some(H256::from_low_u64_be(100));
+
+//         // Act
+//         let result =
+//             recover_schema::<TestSchema, _>(&db, &write_schema, parent_of_root, height_of_root);
+
+//         // Assert
+//         assert!(matches!(
+//             result,
+//             Err(StorageError::RecoveryError(
+//                 RecoveryError::InconsistentSnapshotState
+//             ))
+//         ));
+//     }
+// }

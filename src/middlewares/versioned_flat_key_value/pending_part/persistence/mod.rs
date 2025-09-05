@@ -8,6 +8,9 @@ mod writer;
 // It is marked as `mod` to be private to the `persistence` module and its children.
 mod primitive;
 
+#[cfg(test)]
+pub mod test_util;
+
 pub use bootstrap::BootstrapError;
 pub use recovery::RecoveryError;
 
@@ -48,6 +51,13 @@ use crate::{
 };
 
 use crate::subkey_not_support;
+
+#[cfg(test)]
+use crate::{
+    backends::{VersionedKVName, WrappedInMemoryDb},
+    errors::StorageError,
+    middlewares::versioned_flat_key_value::{PendingKeyValueConfig, VersionedKeyValueSchema},
+};
 
 /// Tracks the sequence of state modifications to be logged for recovery.
 ///

@@ -88,7 +88,7 @@ pub type LastCommitIdMap<S> = HashMap<Key<S>, Option<CommitId<S>>>;
 pub type CommitIdVec<S> = Vec<CommitId<S>>;
 pub type Result<T> = std::result::Result<T, PendingError>;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingKeyValueConfig<T, CId> {
     _marker: PhantomData<(T, CId)>,
 }

@@ -19,46 +19,6 @@ pub enum WalValue<S: PendingKeyValueSchema> {
     MapValue(RecoverRecord<S>),
 }
 
-impl<T: Encode + Clone> Encode for ValueEntry<T> {
-    fn encode(&self) -> Cow<[u8]> {
-        match self {
-            ValueEntry::Deleted => Cow::Borrowed(&[0x00]),
-            ValueEntry::Value(value) => {
-                let encoded_val = value.encode();
-                let mut vec = Vec::with_capacity(1 + encoded_val.len());
-                vec.push(0x01); // 'Value' tag
-                vec.extend_from_slice(encoded_val.as_ref());
-                Cow::Owned(vec)
-            }
-        }
-    }
-}
-
-impl<T: Decode + Clone + ToOwned<Owned = T>> Decode for ValueEntry<T> {
-    fn decode(input: &[u8]) -> DecResult<Cow<Self>> {
-        if input.is_empty() {
-            return Err(DecodeError::IncorrectLength);
-        }
-
-        let tag = input[0];
-        let data = &input[1..];
-
-        match tag {
-            0x00 => {
-                if !data.is_empty() {
-                    return Err(DecodeError::IncorrectLength);
-                }
-                Ok(Cow::Owned(ValueEntry::Deleted))
-            }
-            0x01 => {
-                let value = T::decode(data)?;
-                Ok(Cow::Owned(ValueEntry::Value(value.into_owned())))
-            }
-            _ => Err(DecodeError::Custom("Invalid ValueEntry variant prefix")),
-        }
-    }
-}
-
 impl<S: PendingKeyValueSchema> Encode for RecoverRecord<S> {
     fn encode(&self) -> Cow<[u8]> {
         let encoded_value_entry = self.value.encode();
@@ -243,6 +203,281 @@ impl<S: PendingKeyValueSchema> Decode for WalValue<S> {
                 Ok(WalValue::MapValue(record))
             }
             _ => Err(DecodeError::Custom("Invalid WalValue variant prefix")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ethereum_types::H256;
+
+    use super::super::super::test_util::*;
+    use super::*;
+
+    #[test]
+    fn meta_value_no_parent_roundtrip_borrowed_and_owned() {
+        let original = WalValue::<TestSchema>::MetaValue {
+            commit_id: H256::from([0x11; 32]),
+            maybe_parent_cid: None,
+            map_value_count: 42,
+        };
+
+        // Encode
+        let enc = original.encode();
+        assert_eq!(enc.as_ref()[0], 0x00, "tag for MetaValue should be 0x00");
+
+        // Borrowed decode: direct equality
+        let dec = WalValue::<TestSchema>::decode(enc.as_ref()).expect("decode should succeed");
+        assert_eq!(dec.as_ref(), &original);
+
+        // Owned decode: direct equality
+        let dec_owned = WalValue::<TestSchema>::decode_owned(enc.into_owned())
+            .expect("decode_owned should succeed");
+        assert_eq!(dec_owned, original);
+    }
+
+    #[test]
+    fn meta_value_with_parent_roundtrip_borrowed_and_owned() {
+        let original = WalValue::<TestSchema>::MetaValue {
+            commit_id: H256::from([0x22; 32]),
+            maybe_parent_cid: Some(H256::from([0x33; 32])),
+            map_value_count: u64::MAX - 7,
+        };
+
+        let enc = original.encode();
+        assert_eq!(enc.as_ref()[0], 0x00);
+
+        // Borrowed decode: direct equality
+        let dec = WalValue::<TestSchema>::decode(enc.as_ref()).expect("decode should succeed");
+        assert_eq!(dec.as_ref(), &original);
+
+        // Owned decode: direct equality
+        let dec_owned = WalValue::<TestSchema>::decode_owned(enc.into_owned())
+            .expect("decode_owned should succeed");
+        assert_eq!(dec_owned, original);
+    }
+
+    #[test]
+    fn meta_value_encoding_structure() {
+        // Validate meta encoding exact layout: [0x00][commit_id(32)][opt_parent][count(8)]
+        let commit_id = H256::from([0x55; 32]);
+        let parent = H256::from([0x66; 32]);
+        let count = 123456789u64;
+
+        let w = WalValue::<TestSchema>::MetaValue {
+            commit_id,
+            maybe_parent_cid: Some(parent),
+            map_value_count: count,
+        };
+
+        let enc = w.encode().into_owned();
+        assert_eq!(enc[0], 0x00);
+
+        // Commit id bytes
+        let cid_enc = <H256 as Encode>::encode(&commit_id);
+        assert_eq!(&enc[1..33], cid_enc.as_ref());
+
+        // Option discriminant for Some
+        assert_eq!(enc[33], 0x01);
+
+        // Parent bytes
+        let parent_enc = <H256 as Encode>::encode(&parent);
+        assert_eq!(&enc[34..66], parent_enc.as_ref());
+
+        // Count bytes
+        assert_eq!(&enc[66..74], &u64::to_be_bytes(count));
+
+        assert_eq!(enc.len(), 1 + 32 + 1 + 32 + 8);
+    }
+
+    #[test]
+    fn map_value_with_value_and_last_cid_roundtrip_borrowed_and_owned() {
+        let value_entry = ValueEntry::<Box<[u8]>>::Value(k(&[0xDE, 0xAD, 0xBE, 0xEF]));
+        let record = RecoverRecord::<TestSchema> {
+            value: value_entry,
+            last_commit_id: Some(H256::from([0x44; 32])),
+        };
+        let original = WalValue::<TestSchema>::MapValue(record.clone());
+
+        let enc = original.encode();
+        assert_eq!(enc.as_ref()[0], 0x01);
+
+        // Borrowed decode: direct equality
+        let dec = WalValue::<TestSchema>::decode(enc.as_ref()).expect("decode should succeed");
+        assert_eq!(dec.as_ref(), &original);
+
+        // Owned decode: direct equality
+        let dec_owned = WalValue::<TestSchema>::decode_owned(enc.into_owned())
+            .expect("decode_owned should succeed");
+        assert_eq!(dec_owned, original);
+
+        // RecoverRecord direct roundtrip (borrowed)
+        let rr_enc = record.encode();
+        let rr_dec =
+            RecoverRecord::<TestSchema>::decode(rr_enc.as_ref()).expect("rr decode should succeed");
+        assert_eq!(rr_dec.as_ref(), &record);
+
+        // RecoverRecord direct roundtrip (owned)
+        let rr_dec_owned = RecoverRecord::<TestSchema>::decode_owned(rr_enc.into_owned())
+            .expect("rr decode_owned should succeed");
+        assert_eq!(rr_dec_owned, record);
+    }
+
+    #[test]
+    fn map_value_deleted_without_last_cid_roundtrip_borrowed_and_owned() {
+        let record = RecoverRecord::<TestSchema> {
+            value: ValueEntry::<Box<[u8]>>::Deleted,
+            last_commit_id: None,
+        };
+        let original = WalValue::<TestSchema>::MapValue(record.clone());
+
+        let enc = original.encode();
+        assert_eq!(enc.as_ref()[0], 0x01);
+
+        // Borrowed decode: direct equality
+        let dec = WalValue::<TestSchema>::decode(enc.as_ref()).expect("decode should succeed");
+        assert_eq!(dec.as_ref(), &original);
+
+        // Owned decode: direct equality
+        let dec_owned = WalValue::<TestSchema>::decode_owned(enc.into_owned())
+            .expect("decode_owned should succeed");
+        assert_eq!(dec_owned, original);
+
+        // RecoverRecord direct roundtrip (borrowed)
+        let rr_enc = record.encode();
+        let rr_dec =
+            RecoverRecord::<TestSchema>::decode(rr_enc.as_ref()).expect("rr decode should succeed");
+        assert_eq!(rr_dec.as_ref(), &record);
+
+        // RecoverRecord direct roundtrip (owned)
+        let rr_dec_owned = RecoverRecord::<TestSchema>::decode_owned(rr_enc.into_owned())
+            .expect("rr decode_owned should succeed");
+        assert_eq!(rr_dec_owned, record);
+    }
+
+    #[test]
+    fn map_value_encoding_structure_is_record_encoding() {
+        // Ensure that MapValue payload equals RecoverRecord encoding
+        let record = RecoverRecord::<TestSchema> {
+            value: ValueEntry::<Box<[u8]>>::Value(k(&[1, 2, 3])),
+            last_commit_id: None,
+        };
+        let w = WalValue::<TestSchema>::MapValue(record.clone());
+
+        let enc = w.encode().into_owned();
+        assert_eq!(enc[0], 0x01);
+
+        let rr_enc = record.encode().into_owned();
+        assert_eq!(&enc[1..], rr_enc.as_slice());
+    }
+
+    #[test]
+    fn wal_value_decode_errors() {
+        // Empty input
+        assert!(matches!(
+            WalValue::<TestSchema>::decode(&[]),
+            Err(DecodeError::IncorrectLength)
+        ));
+        assert!(matches!(
+            WalValue::<TestSchema>::decode_owned(Vec::new()),
+            Err(DecodeError::IncorrectLength)
+        ));
+
+        // Unknown tag
+        assert!(matches!(
+            WalValue::<TestSchema>::decode(&[0xFF]),
+            Err(DecodeError::Custom("Invalid WalValue variant prefix"))
+        ));
+        assert!(matches!(
+            WalValue::<TestSchema>::decode_owned(vec![0xFF]),
+            Err(DecodeError::Custom("Invalid WalValue variant prefix"))
+        ));
+
+        // MetaValue too short for fixed parts (needs at least 32 + 8 bytes after tag)
+        assert!(matches!(
+            WalValue::<TestSchema>::decode(&[0x00, 0xAA]),
+            Err(DecodeError::IncorrectLength)
+        ));
+        assert!(matches!(
+            WalValue::<TestSchema>::decode_owned(vec![0x00, 0xAA]),
+            Err(DecodeError::IncorrectLength)
+        ));
+
+        // MapValue with incomplete RecoverRecord (insufficient for 4-byte length prefix)
+        assert!(matches!(
+            WalValue::<TestSchema>::decode(&[0x01, 0x00]),
+            Err(DecodeError::IncorrectLength)
+        ));
+        assert!(matches!(
+            WalValue::<TestSchema>::decode_owned(vec![0x01, 0x00]),
+            Err(DecodeError::IncorrectLength)
+        ));
+    }
+
+    #[test]
+    fn recover_record_decode_errors() {
+        // Too short for 4-byte length prefix
+        assert!(matches!(
+            RecoverRecord::<TestSchema>::decode(&[0x00, 0x01, 0x02]),
+            Err(DecodeError::IncorrectLength)
+        ));
+        assert!(matches!(
+            RecoverRecord::<TestSchema>::decode_owned(vec![0x00, 0x01, 0x02]),
+            Err(DecodeError::IncorrectLength)
+        ));
+
+        // Length prefix longer than available
+        let mut bad = Vec::new();
+        bad.extend_from_slice(&10u32.to_be_bytes());
+        bad.extend_from_slice(&[0xFF, 0xEE]);
+        assert!(matches!(
+            RecoverRecord::<TestSchema>::decode(&bad),
+            Err(DecodeError::IncorrectLength)
+        ));
+        assert!(matches!(
+            RecoverRecord::<TestSchema>::decode_owned(bad),
+            Err(DecodeError::IncorrectLength)
+        ));
+    }
+
+    #[test]
+    fn mixed_round_trips_without_eq() {
+        let cases = vec![
+            WalValue::<TestSchema>::MetaValue {
+                commit_id: H256::from([0x00; 32]),
+                maybe_parent_cid: None,
+                map_value_count: 0,
+            },
+            WalValue::<TestSchema>::MetaValue {
+                commit_id: H256::from([0xAB; 32]),
+                maybe_parent_cid: Some(H256::from([0xCD; 32])),
+                map_value_count: 1,
+            },
+            WalValue::<TestSchema>::MapValue(RecoverRecord {
+                value: ValueEntry::<Box<[u8]>>::Deleted,
+                last_commit_id: None,
+            }),
+            WalValue::<TestSchema>::MapValue(RecoverRecord {
+                value: ValueEntry::<Box<[u8]>>::Value(k(&[])),
+                last_commit_id: Some(H256::from([0xEF; 32])),
+            }),
+            WalValue::<TestSchema>::MapValue(RecoverRecord {
+                value: ValueEntry::<Box<[u8]>>::Value(k(&[9, 8, 7, 6, 5, 4, 3, 2, 1])),
+                last_commit_id: None,
+            }),
+        ];
+
+        for w in cases {
+            let enc = w.encode();
+
+            // Borrowed decode: direct equality
+            let dec = WalValue::<TestSchema>::decode(enc.as_ref()).expect("decode should succeed");
+            assert_eq!(dec.as_ref(), &w);
+
+            // Owned decode: direct equality
+            let dec_owned = WalValue::<TestSchema>::decode_owned(enc.into_owned())
+                .expect("decode_owned should succeed");
+            assert_eq!(dec_owned, w);
         }
     }
 }
