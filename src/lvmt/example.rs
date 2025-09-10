@@ -137,19 +137,19 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
                 &pending_write_schema,
                 expected_parent_of_root,
                 expected_height_of_root,
-            )?;
+            );
         let amt_tree_with_tracker =
             primitives_initialize_empty_schema::<PendingKeyValueConfig<AmtNodes, CommitID>>(
                 &pending_write_schema,
                 expected_parent_of_root,
                 expected_height_of_root,
-            )?;
+            );
         let slot_tree_with_tracker =
             primitives_initialize_empty_schema::<PendingKeyValueConfig<SlotAllocations, CommitID>>(
                 &pending_write_schema,
                 expected_parent_of_root,
                 expected_height_of_root,
-            )?;
+            );
 
         // Atomically commit all changes (initial snapshots) to the pending DB.
         pending_db.commit(pending_write_schema)?;

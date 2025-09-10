@@ -14,4 +14,6 @@ pub enum PendingError {
     NonRootNodeShouldHaveParent,
     #[error("ancestor height should be in the range of the root height and this node height")]
     InvalidAncestorHeight,
+    #[error("the tree snapshot is inconsistent")]
+    InconsistentSnapshotState,
 }

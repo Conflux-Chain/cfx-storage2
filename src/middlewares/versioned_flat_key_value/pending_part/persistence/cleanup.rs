@@ -8,9 +8,11 @@ pub mod primitives {
 
     use std::sync::Arc;
 
+    use crate::backends::WriteSchemaTrait;
+
     use super::super::{
-        primitive::delete_snapshot_and_wal_by_snapshot_id, DatabaseTrait, PendingKeyValueSchema,
-        PendingTableName, Result, SnapshotsTable, TableRead, WalTable,
+        primitive::delete_wal_by_snapshot_id, DatabaseTrait, PendingKeyValueSchema,
+        PendingTableName, Result, SnapshotValue, SnapshotsTable, TableRead, WalTable,
     };
 
     /// Background GC: Cleans up all snapshots and their WALs with a height < durable_height.
@@ -30,20 +32,37 @@ pub mod primitives {
 
         // Forward scan from the beginning of the snapshots table
         let iter = snapshots_view.iter_from_start()?;
+        let mut last_height = None;
         for old_snapshot_item_res in iter {
             let old_snapshot_item = old_snapshot_item_res?;
 
-            let height = old_snapshot_item.0 .0;
+            let height = old_snapshot_item.0.snapshot_root_height;
+
+            // End
             if height >= durable_height {
                 break;
             }
 
-            // Delete this snapshot and its WAL
-            delete_snapshot_and_wal_by_snapshot_id::<S, P>(
-                &wal_view,
-                write_schema,
-                old_snapshot_item,
-            )?;
+            // This is a new snapshot
+            if last_height != Some(height) {
+                last_height = Some(height);
+
+                // Get the SnapshotId
+                let snapshot_id = match old_snapshot_item.1.as_ref() {
+                    SnapshotValue::MetaValue {
+                        parent_of_root,
+                        snapshot_id,
+                        nodes_count,
+                    } => snapshot_id,
+                    SnapshotValue::MapValue(_) => todo!(),
+                };
+
+                // Delete all WAL of this snapshot
+                delete_wal_by_snapshot_id::<S, P>(&wal_view, write_schema, *snapshot_id)?;
+            }
+
+            // Delete this snapshot record
+            write_schema.write::<SnapshotsTable<S>>((old_snapshot_item.0, None));
         }
 
         Ok(())
@@ -53,123 +72,108 @@ pub mod primitives {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        format::{SnapshotKey, SnapshotsTable, WalKey, WalTable},
+        format::{SnapshotsTable, WalTable},
         test_util::{setup_db_with_snapshots_and_wals, TestSchema},
-        DatabaseTrait, Decode, PendingTableName, TableSchema, WrappedInMemoryDb,
+        DatabaseTrait, PendingTableName, TableSchema, WrappedInMemoryDb,
     };
     use super::primitives::*;
-    use std::{collections::HashSet, sync::Arc};
+    use std::sync::Arc;
 
-    fn get_ids_before_height(data: &[(u64, u64, u64)], durable_height: u64) -> HashSet<u64> {
-        data.iter()
-            .filter(|&&(h, _, _)| h < durable_height)
-            .map(|&(_, id, _)| id)
-            .collect()
-    }
-
-    // For simplicity, we create and manipulate mock data directly inside the test functions.
+    // This is the mock data we will use for all GC tests.
+    // Format: (height, snapshot_id, num_wal_records, num_snapshot_node_records)
+    const TEST_DATA: &[(u64, u64, u64, u64)] = &[
+        (10, 1, 2, 1), // height=10, sid=1, 2 WALs, 1 meta + 1 node record = 2 snapshot records
+        (20, 2, 3, 2), // height=20, sid=2, 3 WALs, 1 meta + 2 node records = 3 snapshot records
+        (30, 3, 1, 1), // height=30, sid=3, 1 WAL,  1 meta + 1 node record = 2 snapshot records
+    ];
 
     /// Helper function: runs a complete GC test case.
     ///
     /// # Arguments
     ///
     /// * `durable_height` - The durable height passed to `gc_until_height`.
-    /// * `expected_deleted_snaps` - The number of snapshot records expected to be deleted.
-    fn run_gc_test_case(durable_height: u64, expected_deleted_snaps: usize) {
+    /// * `expected_deleted_snap_records` - The number of snapshot records expected to be deleted.
+    /// * `expected_deleted_wal_records` - The number of WAL records expected to be deleted.
+    fn run_gc_test_case(
+        durable_height: u64,
+        expected_deleted_snap_records: usize,
+        expected_deleted_wal_records: usize,
+    ) {
         // Arrange
         let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
-
-        let snapshots_and_wals = &[(10, 1, 2), (20, 2, 2), (30, 3, 2)];
-        let expected_snaps_to_be_deleted =
-            get_ids_before_height(snapshots_and_wals, durable_height);
-        setup_db_with_snapshots_and_wals(&db, snapshots_and_wals);
-
         let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+
+        // Populate the DB with our test data.
+        setup_db_with_snapshots_and_wals(&db, TEST_DATA);
 
         // Act
         gc_until_height::<TestSchema, _>(&db, &write_schema, durable_height).unwrap();
 
         // Assert
         let ops = write_schema.drain();
-        // Assume 2 WAL records per snapshot.
-        let expected_deleted_wals = expected_deleted_snaps * 2;
-        let expected_total_deletions = expected_deleted_snaps + expected_deleted_wals;
+        let deleted_snaps = ops
+            .iter()
+            .filter(|(table_name, _, value)| {
+                *table_name == SnapshotsTable::<TestSchema>::NAME && value.is_none()
+            })
+            .count();
+
+        let deleted_wals = ops
+            .iter()
+            .filter(|(table_name, _, value)| {
+                *table_name == WalTable::<TestSchema>::NAME && value.is_none()
+            })
+            .count();
 
         assert_eq!(
-            ops.len(),
-            expected_total_deletions,
-            "Incorrect total number of delete operations for durable_height = {}",
-            durable_height
-        );
-
-        let mut deleted_snap_count = 0;
-        let mut deleted_wal_count = 0;
-
-        for (table_name, encoded_key, encoded_value) in ops {
-            assert!(
-                encoded_value.is_none(),
-                "A GC operation should be a delete (value is None)"
-            );
-            if table_name == SnapshotsTable::<TestSchema>::NAME {
-                deleted_snap_count += 1;
-
-                let key = SnapshotKey::decode_owned(encoded_key.clone()).unwrap();
-                assert!(key.0 < durable_height);
-            } else if table_name == WalTable::<TestSchema>::NAME {
-                deleted_wal_count += 1;
-
-                let key = WalKey::<TestSchema>::decode_owned(encoded_key.clone()).unwrap();
-                assert!(expected_snaps_to_be_deleted.contains(&key.snapshot_id.0));
-            }
-        }
-
-        assert_eq!(
-            deleted_snap_count, expected_deleted_snaps,
-            "Incorrect number of deleted snapshot records for durable_height = {}",
+            deleted_snaps, expected_deleted_snap_records,
+            "Mismatch in deleted snapshot records for durable_height={}",
             durable_height
         );
         assert_eq!(
-            deleted_wal_count, expected_deleted_wals,
-            "Incorrect number of deleted WAL records for durable_height = {}",
+            deleted_wals, expected_deleted_wal_records,
+            "Mismatch in deleted WAL records for durable_height={}",
             durable_height
         );
     }
 
     #[test]
     fn test_gc_deletes_nothing_if_height_is_lte_first_snapshot() {
-        // With durable_height = 10, the cleanup condition is `height < durable_height`,
-        // so the snapshot at height 10 is not deleted.
-        run_gc_test_case(10, 0);
+        // durable_height = 10, condition is `height < 10`, so nothing is deleted.
+        run_gc_test_case(10, 0, 0);
 
-        // A durable_height < 10 should also result in no deletions.
-        run_gc_test_case(9, 0);
+        // durable_height = 9, condition is `height < 9`, so nothing is deleted.
+        run_gc_test_case(9, 0, 0);
     }
 
     #[test]
     fn test_gc_deletes_up_to_boundary_height_21() {
-        // durable_height = 21 should delete snapshots at heights 10 and 20.
-        // The snapshot at height 30 (30 >= 21) is kept.
-        run_gc_test_case(21, 2);
+        // durable_height = 21, deletes snapshots at heights 10 and 20.
+        // Snap records: (1 meta + 1 node) from h=10 + (1 meta + 2 nodes) from h=20 = 2 + 3 = 5
+        // WAL records: 2 from sid=1 + 3 from sid=2 = 5
+        run_gc_test_case(21, 5, 5);
     }
 
     #[test]
     fn test_gc_deletes_up_to_mid_range_height_25() {
-        // durable_height = 25 should delete snapshots at heights 10 and 20.
-        // The snapshot at height 30 (30 >= 25) is kept.
-        run_gc_test_case(25, 2);
+        // durable_height = 25, also deletes snapshots at heights 10 and 20.
+        // Same expectation as for height 21.
+        run_gc_test_case(25, 5, 5);
     }
 
     #[test]
     fn test_gc_deletes_up_to_boundary_height_30() {
-        // durable_height = 30 should delete snapshots at heights 10 and 20.
-        // The snapshot at height 30 (30 >= 30) is kept.
-        run_gc_test_case(30, 2);
+        // durable_height = 30, deletes snapshots at heights 10 and 20.
+        // The snapshot at height 30 is kept because 30 is not < 30.
+        // Same expectation as for height 21.
+        run_gc_test_case(30, 5, 5);
     }
 
     #[test]
     fn test_gc_deletes_all_if_height_is_greater_than_last_snapshot() {
-        // durable_height = 31 is greater than all snapshot heights (10, 20, 30),
-        // so all snapshots are deleted.
-        run_gc_test_case(31, 3);
+        // durable_height = 31, deletes all snapshots (heights 10, 20, 30).
+        // Snap records: 2 (h=10) + 3 (h=20) + 2 (h=30) = 7
+        // WAL records: 2 (sid=1) + 3 (sid=2) + 1 (sid=3) = 6
+        run_gc_test_case(31, 7, 6);
     }
 }

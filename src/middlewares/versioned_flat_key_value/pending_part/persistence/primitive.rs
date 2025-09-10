@@ -1,32 +1,23 @@
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use super::{
-    DatabaseTrait, PendingKeyValueSchema, PendingTableName, Result, SnapshotKey, SnapshotValue,
-    SnapshotsTable, TableRead, WalKey, WalTable, WriteSchemaTrait,
+    format::SnapshotId, DatabaseTrait, PendingKeyValueSchema, PendingTableName, Result, TableRead,
+    WalKey, WalTable, WriteSchemaTrait,
 };
 
-/// Deletes a snapshot and its corresponding WAL file using the snapshot ID.
+/// Deletes all WAL records of a snapshot using the snapshot ID.
 ///
 /// This is a low-level primitive shared by recovery and cleanup logic.
 ///
-/// The caller should provide the exact `snapshot_item`
-/// to be used directly to avoid an extra lookup.
-pub(super) fn delete_snapshot_and_wal_by_snapshot_id<
+/// The deletion of the snapshot records is beyond this function.
+pub(super) fn delete_wal_by_snapshot_id<
     S: PendingKeyValueSchema,
     P: DatabaseTrait<PendingTableName>,
 >(
     wal_view: &Arc<impl TableRead<WalTable<S>> + Send + Sync>,
     write_schema: &P::WriteSchema,
-    snapshot_item: (Cow<'_, SnapshotKey>, Cow<'_, SnapshotValue<S>>),
+    snapshot_id: SnapshotId,
 ) -> Result<()> {
-    let (snapshot_key_cow, snapshot_value_cow) = snapshot_item;
-    let SnapshotValue { snapshot_id, .. } = snapshot_value_cow.as_ref().clone();
-
-    // Delete the snapshot entry.
-    let op = (snapshot_key_cow, None);
-    write_schema.write::<SnapshotsTable<S>>(op);
-
-    // Delete all WAL entries for that snapshot.
     let wal_seek_key = WalKey::seek_key_for_snapshot(snapshot_id);
     let wal_iter = wal_view.iter(&wal_seek_key.key)?;
 

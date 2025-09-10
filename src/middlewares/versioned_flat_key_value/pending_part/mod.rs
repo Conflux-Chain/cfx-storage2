@@ -11,5 +11,5 @@ pub use versioned_map::VersionedMap;
 
 pub use persistence::{
     primitives_gc_until_height, primitives_initialize_empty_schema, primitives_recover_schema,
-    primitives_verify_schema_is_empty, BootstrapError, RecoveryError,
+    primitives_verify_schema_is_empty, BootstrapError, RecoveryError, SnapshotReadError,
 };

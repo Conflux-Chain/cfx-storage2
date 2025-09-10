@@ -11,8 +11,10 @@ mod primitive;
 #[cfg(test)]
 pub mod test_util;
 
+use std::{borrow::Cow, iter};
+
 pub use bootstrap::BootstrapError;
-pub use recovery::RecoveryError;
+pub use recovery::{primitives::SnapshotReadError, RecoveryError};
 
 pub use bootstrap::primitives::{
     initialize_empty_schema as primitives_initialize_empty_schema,
@@ -26,13 +28,14 @@ pub(super) use writer::{
 };
 
 use self::format::{
-    ModificationId, SnapshotId, SnapshotValue, SnapshotsTable, WalKeySpecificPart, WalTable,
-    WalValue,
+    ModificationId, SnapshotId, SnapshotKeyTreePart, SnapshotMapValue, SnapshotNodeDataType,
+    SnapshotRecordType, SnapshotValue, SnapshotsTable, WalKeySpecificPart, WalTable, WalValue,
 };
 use crate::{
     backends::{
         serde::{Decode, Encode, EncodeSubKey, FixedLengthEncoded},
-        DatabaseTrait, PendingTableName, SeekKey, TableRead, TableSchema, WriteSchemaTrait,
+        DatabaseTrait, PendingTableName, SeekKey, TableItem, TableIter, TableRead, TableSchema,
+        WriteSchemaTrait,
     },
     middlewares::versioned_flat_key_value::pending_part::persistence::format::{
         SnapshotKey, WalKey,
@@ -41,7 +44,7 @@ use crate::{
 
 use super::{
     pending_schema::{PendingKeyValueSchema, RecoverMap, RecoverRecord},
-    tree::Tree,
+    tree::{Tree, TreeSnapshot, TreeSnapshotNode},
     tree_with_tracker::TreeWithTracker,
 };
 
@@ -49,8 +52,6 @@ use crate::{
     errors::{DecResult, DecodeError, Result},
     types::ValueEntry,
 };
-
-use crate::subkey_not_support;
 
 #[cfg(test)]
 use crate::{
@@ -87,4 +88,73 @@ impl PersistenceTracker {
     pub fn advance_to_next_modification(&mut self) {
         self.next_modification_id.0 += 1;
     }
+}
+
+fn write_tree_snapshot<S: PendingKeyValueSchema>(
+    tree: &Tree<S>,
+    snapshot_id: SnapshotId,
+    write_schema: &impl WriteSchemaTrait<PendingTableName>,
+) {
+    let TreeSnapshot {
+        parent_of_root,
+        height_of_root: snapshot_root_height,
+        nodes,
+    } = tree.export_snapshot();
+
+    // Emit meta record first.
+    let meta_key = SnapshotKey::<S> {
+        snapshot_root_height,
+        record_type: SnapshotRecordType::Meta,
+    };
+    let meta_val = SnapshotValue::MetaValue {
+        parent_of_root,
+        snapshot_id,
+        nodes_count: nodes.len() as u64,
+    };
+    let meta_op = iter::once((
+        Cow::<SnapshotKey<S>>::Owned(meta_key),
+        Some(Cow::<SnapshotValue<S>>::Owned(meta_val)),
+    ));
+
+    // Emit records for nodes.
+    let map_iter = nodes.into_iter().flat_map(|n| {
+        let node_height = n.node_height;
+        let node_commit_id = n.node_commit_id;
+
+        // NodeMeta
+        let meta_k = SnapshotKey::<S> {
+            snapshot_root_height,
+            record_type: SnapshotRecordType::Map(SnapshotKeyTreePart {
+                node_height,
+                node_commit_id,
+                node_data_type: SnapshotNodeDataType::NodeMeta,
+            }),
+        };
+        let meta_v = SnapshotValue::MapValue(SnapshotMapValue::NodeMeta {
+            parent_commit_id: n.node_parent_commit_id,
+            modifications_count: n.modifications.len() as u64,
+        });
+
+        // NodeMap
+        let maps = n.modifications.into_iter().map({
+            move |(key, rec)| {
+                let k = SnapshotKey::<S> {
+                    snapshot_root_height,
+                    record_type: SnapshotRecordType::Map(SnapshotKeyTreePart {
+                        node_height,
+                        node_commit_id,
+                        node_data_type: SnapshotNodeDataType::NodeMap { key },
+                    }),
+                };
+                let v = SnapshotValue::MapValue(SnapshotMapValue::NodeMap(rec));
+                (Cow::Owned(k), Some(Cow::Owned(v)))
+            }
+        });
+
+        std::iter::once((Cow::Owned(meta_k), Some(Cow::Owned(meta_v)))).chain(maps)
+    });
+
+    let snapshot_op_iter = meta_op.chain(map_iter);
+
+    write_schema.write_batch::<SnapshotsTable<S>>(snapshot_op_iter);
 }

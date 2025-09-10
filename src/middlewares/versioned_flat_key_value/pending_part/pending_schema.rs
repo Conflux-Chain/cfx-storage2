@@ -18,6 +18,7 @@ pub trait PendingKeyValueSchema: 'static + Copy + Send + Sync + Debug {
     type CommitId: ToOwned<Owned = Self::CommitId>
         + Debug
         + Eq
+        + Ord
         + Hash
         + Copy
         + Serialize
@@ -99,6 +100,7 @@ where
     CId: ToOwned<Owned = CId>
         + Debug
         + Eq
+        + Ord
         + Hash
         + Copy
         + Serialize

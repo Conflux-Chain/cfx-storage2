@@ -15,7 +15,7 @@ where
 {
     type TableName = PendingTableName;
     const NAME: PendingTableName = PendingTableName::Snapshots(S::KV_NAME);
-    type Key = SnapshotKey;
+    type Key = SnapshotKey<S>;
     type Value = SnapshotValue<S>;
 }
 

@@ -159,7 +159,7 @@ impl<S: PendingKeyValueSchema> EncodeSubKey for WalKey<S> {
         let encoded_modification_id = ModificationId::encode_owned(input.modification_id);
         prefix_vec.extend_from_slice(&encoded_modification_id);
 
-        let suffix_vec = input.operation_specific_parts.encode().into_owned();
+        let suffix_vec = WalKeySpecificPart::<S>::encode_owned(input.operation_specific_parts);
 
         (prefix_vec, suffix_vec)
     }
