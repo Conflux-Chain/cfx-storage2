@@ -223,17 +223,12 @@ mod tests {
         };
 
         // Encode
-        let enc = original.encode();
+        let original_clone = original.clone();
+        let enc = original_clone.encode();
         assert_eq!(enc.as_ref()[0], 0x00, "tag for MetaValue should be 0x00");
 
-        // Borrowed decode: direct equality
-        let dec = WalValue::<TestSchema>::decode(enc.as_ref()).expect("decode should succeed");
-        assert_eq!(dec.as_ref(), &original);
-
-        // Owned decode: direct equality
-        let dec_owned = WalValue::<TestSchema>::decode_owned(enc.into_owned())
-            .expect("decode_owned should succeed");
-        assert_eq!(dec_owned, original);
+        // Roundtrip
+        test_encode_decode_round_trip(vec![original]);
     }
 
     #[test]
@@ -244,17 +239,12 @@ mod tests {
             map_value_count: u64::MAX - 7,
         };
 
-        let enc = original.encode();
+        let original_clone = original.clone();
+        let enc = original_clone.encode();
         assert_eq!(enc.as_ref()[0], 0x00);
 
-        // Borrowed decode: direct equality
-        let dec = WalValue::<TestSchema>::decode(enc.as_ref()).expect("decode should succeed");
-        assert_eq!(dec.as_ref(), &original);
-
-        // Owned decode: direct equality
-        let dec_owned = WalValue::<TestSchema>::decode_owned(enc.into_owned())
-            .expect("decode_owned should succeed");
-        assert_eq!(dec_owned, original);
+        // Roundtrip
+        test_encode_decode_round_trip(vec![original]);
     }
 
     #[test]
@@ -302,25 +292,11 @@ mod tests {
         let enc = original.encode();
         assert_eq!(enc.as_ref()[0], 0x01);
 
-        // Borrowed decode: direct equality
-        let dec = WalValue::<TestSchema>::decode(enc.as_ref()).expect("decode should succeed");
-        assert_eq!(dec.as_ref(), &original);
-
-        // Owned decode: direct equality
-        let dec_owned = WalValue::<TestSchema>::decode_owned(enc.into_owned())
-            .expect("decode_owned should succeed");
-        assert_eq!(dec_owned, original);
+        // Roundtrip
+        test_encode_decode_round_trip(vec![original]);
 
         // RecoverRecord direct roundtrip (borrowed)
-        let rr_enc = record.encode();
-        let rr_dec =
-            RecoverRecord::<TestSchema>::decode(rr_enc.as_ref()).expect("rr decode should succeed");
-        assert_eq!(rr_dec.as_ref(), &record);
-
-        // RecoverRecord direct roundtrip (owned)
-        let rr_dec_owned = RecoverRecord::<TestSchema>::decode_owned(rr_enc.into_owned())
-            .expect("rr decode_owned should succeed");
-        assert_eq!(rr_dec_owned, record);
+        test_encode_decode_round_trip(vec![record]);
     }
 
     #[test]
@@ -334,25 +310,11 @@ mod tests {
         let enc = original.encode();
         assert_eq!(enc.as_ref()[0], 0x01);
 
-        // Borrowed decode: direct equality
-        let dec = WalValue::<TestSchema>::decode(enc.as_ref()).expect("decode should succeed");
-        assert_eq!(dec.as_ref(), &original);
+        // Roundtrip
+        test_encode_decode_round_trip(vec![original]);
 
-        // Owned decode: direct equality
-        let dec_owned = WalValue::<TestSchema>::decode_owned(enc.into_owned())
-            .expect("decode_owned should succeed");
-        assert_eq!(dec_owned, original);
-
-        // RecoverRecord direct roundtrip (borrowed)
-        let rr_enc = record.encode();
-        let rr_dec =
-            RecoverRecord::<TestSchema>::decode(rr_enc.as_ref()).expect("rr decode should succeed");
-        assert_eq!(rr_dec.as_ref(), &record);
-
-        // RecoverRecord direct roundtrip (owned)
-        let rr_dec_owned = RecoverRecord::<TestSchema>::decode_owned(rr_enc.into_owned())
-            .expect("rr decode_owned should succeed");
-        assert_eq!(rr_dec_owned, record);
+        // RecoverRecord direct roundtrip
+        test_encode_decode_round_trip(vec![record]);
     }
 
     #[test]
@@ -467,17 +429,6 @@ mod tests {
             }),
         ];
 
-        for w in cases {
-            let enc = w.encode();
-
-            // Borrowed decode: direct equality
-            let dec = WalValue::<TestSchema>::decode(enc.as_ref()).expect("decode should succeed");
-            assert_eq!(dec.as_ref(), &w);
-
-            // Owned decode: direct equality
-            let dec_owned = WalValue::<TestSchema>::decode_owned(enc.into_owned())
-                .expect("decode_owned should succeed");
-            assert_eq!(dec_owned, w);
-        }
+        test_encode_decode_round_trip(cases);
     }
 }

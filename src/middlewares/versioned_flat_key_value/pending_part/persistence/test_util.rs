@@ -1,13 +1,42 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::{Borrow, Cow},
+    fmt::Debug,
+    sync::Arc,
+};
 
 use ethereum_types::H256;
 
 use super::{
-    DatabaseTrait, ModificationId, PendingKeyValueConfig, PendingTableName, SnapshotId,
-    SnapshotKey, SnapshotKeyTreePart, SnapshotMapValue, SnapshotNodeDataType, SnapshotRecordType,
-    SnapshotValue, SnapshotsTable, VersionedKVName, VersionedKeyValueSchema, WalKey,
-    WalKeySpecificPart, WalTable, WalValue, WrappedInMemoryDb, WriteSchemaTrait,
+    DatabaseTrait, Decode, Encode, FixedLengthEncoded, ModificationId, PendingKeyValueConfig,
+    PendingTableName, SnapshotId, SnapshotKey, SnapshotKeyTreePart, SnapshotMapValue,
+    SnapshotNodeDataType, SnapshotRecordType, SnapshotValue, SnapshotsTable, VersionedKVName,
+    VersionedKeyValueSchema, WalKey, WalKeySpecificPart, WalTable, WalValue, WrappedInMemoryDb,
+    WriteSchemaTrait,
 };
+
+pub fn test_encode_decode_round_trip<T: Decode + Encode + PartialEq + Debug>(cases: Vec<T>)
+where
+    <T as ToOwned>::Owned: Debug,
+{
+    for case in cases {
+        // encode / decode
+        let enc = case.encode();
+        let dec = T::decode(enc.as_ref()).expect("decode should succeed");
+        assert_eq!(dec.as_ref(), &case);
+
+        // decode_owned path
+        let owned = enc.into_owned();
+        let dec_owned = T::decode_owned(owned).expect("decode_owned should succeed");
+        assert_eq!(dec_owned.borrow(), &case);
+    }
+}
+
+pub fn test_encode_fixed_length<T: FixedLengthEncoded>(cases: Vec<T>) {
+    for case in cases {
+        let enc = case.encode();
+        assert_eq!(enc.len(), T::LENGTH);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VersionedKVTestSchema;

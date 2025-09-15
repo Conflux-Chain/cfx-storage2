@@ -42,10 +42,11 @@ impl Decode for ModificationId {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::test_util::*;
     use super::*;
     use std::borrow::Cow;
 
-    fn sample_values() -> Vec<u64> {
+    fn sample_cases() -> Vec<u64> {
         vec![
             0,
             1,
@@ -57,28 +58,36 @@ mod tests {
         ]
     }
 
+    fn get_snapshot_ids_from_u64s(u64s: Vec<u64>) -> Vec<SnapshotId> {
+        u64s.into_iter().map(SnapshotId).collect()
+    }
+
+    fn get_modification_ids_from_u64s(u64s: Vec<u64>) -> Vec<ModificationId> {
+        u64s.into_iter().map(ModificationId).collect()
+    }
+
     #[test]
     fn snapshot_id_encode_decode_roundtrip() {
-        for v in sample_values() {
-            let id = SnapshotId(v);
-            let enc = id.encode();
-            assert_eq!(enc.len(), SnapshotId::LENGTH);
+        let cases = get_snapshot_ids_from_u64s(sample_cases());
+        test_encode_decode_round_trip::<SnapshotId>(cases);
+    }
 
-            let dec = SnapshotId::decode(&enc).expect("decode ok");
-            assert_eq!(dec.into_owned(), id);
-        }
+    #[test]
+    fn snapshot_id_encode_fixed_length() {
+        let cases = get_snapshot_ids_from_u64s(sample_cases());
+        test_encode_fixed_length::<SnapshotId>(cases);
     }
 
     #[test]
     fn modification_id_encode_decode_roundtrip() {
-        for v in sample_values() {
-            let id = ModificationId(v);
-            let enc = id.encode();
-            assert_eq!(enc.len(), ModificationId::LENGTH);
+        let cases = get_modification_ids_from_u64s(sample_cases());
+        test_encode_decode_round_trip::<ModificationId>(cases);
+    }
 
-            let dec = ModificationId::decode(&enc).expect("decode ok");
-            assert_eq!(dec.into_owned(), id);
-        }
+    #[test]
+    fn modification_id_encode_fixed_length() {
+        let cases = get_modification_ids_from_u64s(sample_cases());
+        test_encode_fixed_length::<ModificationId>(cases);
     }
 
     #[test]

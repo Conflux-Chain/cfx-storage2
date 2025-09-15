@@ -236,11 +236,7 @@ mod tests {
             W::DiscardMeta,
         ];
 
-        for case in cases {
-            let enc = case.encode();
-            let dec = W::decode(enc.as_ref()).expect("decode should succeed");
-            assert_eq!(dec.as_ref(), &case);
-        }
+        test_encode_decode_round_trip::<WalKeySpecificPart<TestSchema>>(cases);
     }
 
     #[test]

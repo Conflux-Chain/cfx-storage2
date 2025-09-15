@@ -339,17 +339,7 @@ mod tests {
             },
         ];
 
-        for case in cases {
-            // encode / decode
-            let enc = case.encode();
-            let dec = WKey::decode(enc.as_ref()).expect("decode should succeed");
-            assert_eq!(dec.as_ref(), &case);
-
-            // decode_owned path
-            let owned = enc.into_owned();
-            let dec_owned = WKey::decode_owned(owned).expect("decode_owned should succeed");
-            assert_eq!(dec_owned, case);
-        }
+        test_encode_decode_round_trip::<WKey>(cases);
     }
 
     #[test]

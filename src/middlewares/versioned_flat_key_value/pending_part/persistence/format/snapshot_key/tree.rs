@@ -219,3 +219,392 @@ impl<S: PendingKeyValueSchema> Ord for SnapshotKeyTreePart<S> {
             .then_with(|| self.node_data_type.cmp(&other.node_data_type))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ethereum_types::H256;
+
+    use super::super::super::super::test_util::*;
+    use super::*;
+    use std::cmp::Ordering;
+
+    type D = SnapshotNodeDataType<TestSchema>;
+    type K = SnapshotKeyTreePart<TestSchema>;
+
+    // --------------------- SnapshotNodeDataType ---------------------
+
+    #[test]
+    fn dtype_eq_and_ord_basic() {
+        // Equality among identical variants
+        assert_eq!(D::NodeMeta, D::NodeMeta);
+        assert_eq!(D::NodeMap { key: k(&[]) }, D::NodeMap { key: k(&[]) });
+        assert_ne!(D::NodeMeta, D::NodeMap { key: k(&[]) });
+
+        // Ordering: NodeMeta < NodeMap
+        assert!(D::NodeMeta < D::NodeMap { key: k(&[]) });
+
+        // Ordering within NodeMap by key
+        assert_eq!(
+            D::NodeMap { key: k(&[1, 2, 3]) }.cmp(&D::NodeMap { key: k(&[1, 2, 3]) }),
+            Ordering::Equal
+        );
+        assert_eq!(
+            D::NodeMap { key: k(&[1, 2, 3]) }.cmp(&D::NodeMap { key: k(&[1, 2, 4]) }),
+            Ordering::Less
+        );
+        assert_eq!(
+            D::NodeMap { key: k(&[1, 3]) }.cmp(&D::NodeMap {
+                key: k(&[1, 2, 255])
+            }),
+            Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn dtype_encode_tags_and_payloads() {
+        // NodeMeta tag only
+        assert_eq!(D::NodeMeta.encode().as_ref(), &[0x00]);
+
+        // NodeMap: 0x01 + key bytes
+        let original = D::NodeMap {
+            key: k(&[0xAA, 0xBB, 0xCC]),
+        };
+        let enc = original.encode();
+        assert_eq!(enc.as_ref(), &[0x01, 0xAA, 0xBB, 0xCC]);
+
+        // Empty key allowed
+        let original_empty = D::NodeMap { key: k(&[]) };
+        let enc_empty = original_empty.encode();
+        assert_eq!(enc_empty.as_ref(), &[0x01]);
+    }
+
+    #[test]
+    fn dtype_decode_cases() {
+        // Empty input -> error
+        assert_eq!(D::decode(&[]), Err(DecodeError::IncorrectLength));
+
+        // NodeMeta single tag
+        assert!(matches!(D::decode(&[0x00]), Ok(c) if matches!(c.as_ref(), D::NodeMeta)));
+
+        // NodeMap empty key
+        assert!(matches!(
+            D::decode(&[0x01]),
+            Ok(c) if matches!(c.as_ref(), D::NodeMap { key } if key.is_empty())
+        ));
+
+        // NodeMap non-empty key
+        assert!(matches!(
+            D::decode(&[0x01, 0x10, 0x20]),
+            Ok(c) if matches!(c.as_ref(), D::NodeMap { key } if key.as_ref() == [0x10, 0x20])
+        ));
+
+        // Unknown tag
+        assert_eq!(
+            D::decode(&[0xFF]),
+            Err(DecodeError::Custom(
+                "Invalid SnapshotNodeDataType variant prefix"
+            ))
+        );
+    }
+
+    #[test]
+    fn dtype_decode_owned_matches_borrowed() {
+        // NodeMeta
+        let owned = D::decode_owned(vec![0x00]).unwrap();
+        assert!(matches!(owned, D::NodeMeta));
+
+        // NodeMap empty key
+        let owned = D::decode_owned(vec![0x01]).unwrap();
+        assert!(matches!(owned, D::NodeMap { ref key } if key.is_empty()));
+
+        // NodeMap non-empty key
+        let owned = D::decode_owned(vec![0x01, 0xDE, 0xAD]).unwrap();
+        assert!(matches!(owned, D::NodeMap { ref key } if key.as_ref() == [0xDE, 0xAD]));
+    }
+
+    #[test]
+    fn dtype_round_trip_encode_decode() {
+        let cases = vec![
+            D::NodeMeta,
+            D::NodeMap { key: k(&[]) },
+            D::NodeMap { key: k(&[1, 2, 3]) },
+        ];
+
+        test_encode_decode_round_trip::<SnapshotNodeDataType<TestSchema>>(cases);
+    }
+
+    // --------------------- SnapshotKeyTreePart ---------------------
+
+    #[test]
+    fn keytree_eq_and_ord_basic() {
+        // Equality
+        let a = K {
+            node_height: 0,
+            node_commit_id: H256::from(&[0x00; 32]),
+            node_data_type: D::NodeMeta,
+        };
+        let b = K {
+            node_height: 0,
+            node_commit_id: H256::from(&[0x00; 32]),
+            node_data_type: D::NodeMeta,
+        };
+        assert_eq!(a, b);
+
+        // Different by height
+        let h0 = K {
+            node_height: 0,
+            node_commit_id: H256::from(&[0x00; 32]),
+            node_data_type: D::NodeMeta,
+        };
+        let h1 = K {
+            node_height: 1,
+            node_commit_id: H256::from(&[0x00; 32]),
+            node_data_type: D::NodeMeta,
+        };
+        assert!(h0 < h1);
+
+        // Same height, different commit id
+        let c0 = K {
+            node_height: 5,
+            node_commit_id: H256::from(&[0x00; 32]),
+            node_data_type: D::NodeMeta,
+        };
+        let c1 = K {
+            node_height: 5,
+            node_commit_id: H256::from(&[0x01; 32]),
+            node_data_type: D::NodeMeta,
+        };
+        assert!(c0 < c1);
+
+        // Same height and commit id, NodeMeta < NodeMap
+        let m0 = K {
+            node_height: 7,
+            node_commit_id: H256::from(&[0x10; 32]),
+            node_data_type: D::NodeMeta,
+        };
+        let m1 = K {
+            node_height: 7,
+            node_commit_id: H256::from(&[0x10; 32]),
+            node_data_type: D::NodeMap { key: k(&[0x00]) },
+        };
+        assert!(m0 < m1);
+
+        // NodeMap ordering by key when height and commit id match
+        let k1 = K {
+            node_height: 9,
+            node_commit_id: H256::from(&[0xFF; 32]),
+            node_data_type: D::NodeMap { key: k(&[1]) },
+        };
+        let k2 = K {
+            node_height: 9,
+            node_commit_id: H256::from(&[0xFF; 32]),
+            node_data_type: D::NodeMap { key: k(&[1, 0]) },
+        };
+        assert!(k1 < k2);
+    }
+
+    #[test]
+    fn keytree_sort_sequence() {
+        // The expected order is by:
+        // 1) node_height (ascending)
+        // 2) node_commit_id (ascending)
+        // 3) node_data_type (NodeMeta before NodeMap, then key ordering)
+        let mut items = vec![
+            K {
+                node_height: 2,
+                node_commit_id: H256::from(&[0x02; 32]),
+                node_data_type: D::NodeMap { key: k(&[2]) },
+            },
+            K {
+                node_height: 1,
+                node_commit_id: H256::from(&[0x02; 32]),
+                node_data_type: D::NodeMeta,
+            },
+            K {
+                node_height: 1,
+                node_commit_id: H256::from(&[0x02; 32]),
+                node_data_type: D::NodeMap { key: k(&[1, 2, 3]) },
+            },
+            K {
+                node_height: 1,
+                node_commit_id: H256::from(&[0x02; 32]),
+                node_data_type: D::NodeMap { key: k(&[1, 2]) },
+            },
+            K {
+                node_height: 1,
+                node_commit_id: H256::from(&[0x01; 32]),
+                node_data_type: D::NodeMeta,
+            },
+            K {
+                node_height: 1,
+                node_commit_id: H256::from(&[0x01; 32]),
+                node_data_type: D::NodeMap { key: k(&[0x00]) },
+            },
+            K {
+                node_height: 2,
+                node_commit_id: H256::from(&[0x02; 32]),
+                node_data_type: D::NodeMeta,
+            },
+            K {
+                node_height: 1,
+                node_commit_id: H256::from(&[0x01; 32]),
+                node_data_type: D::NodeMap { key: k(&[0xFF]) },
+            },
+            K {
+                node_height: 0,
+                node_commit_id: H256::from(&[0x00; 32]),
+                node_data_type: D::NodeMeta,
+            },
+        ];
+
+        items.sort();
+
+        assert_eq!(
+            items,
+            vec![
+                // height 0
+                K {
+                    node_height: 0,
+                    node_commit_id: H256::from(&[0x00; 32]),
+                    node_data_type: D::NodeMeta
+                },
+                // height 1, commit 0x01.. < 0x02..
+                K {
+                    node_height: 1,
+                    node_commit_id: H256::from(&[0x01; 32]),
+                    node_data_type: D::NodeMeta
+                },
+                K {
+                    node_height: 1,
+                    node_commit_id: H256::from(&[0x01; 32]),
+                    node_data_type: D::NodeMap { key: k(&[0x00]) }
+                },
+                K {
+                    node_height: 1,
+                    node_commit_id: H256::from(&[0x01; 32]),
+                    node_data_type: D::NodeMap { key: k(&[0xFF]) }
+                },
+                // height 1, commit 0x02..
+                K {
+                    node_height: 1,
+                    node_commit_id: H256::from(&[0x02; 32]),
+                    node_data_type: D::NodeMeta
+                },
+                K {
+                    node_height: 1,
+                    node_commit_id: H256::from(&[0x02; 32]),
+                    node_data_type: D::NodeMap { key: k(&[1, 2]) }
+                },
+                K {
+                    node_height: 1,
+                    node_commit_id: H256::from(&[0x02; 32]),
+                    node_data_type: D::NodeMap { key: k(&[1, 2, 3]) }
+                },
+                // height 2
+                K {
+                    node_height: 2,
+                    node_commit_id: H256::from(&[0x02; 32]),
+                    node_data_type: D::NodeMeta
+                },
+                K {
+                    node_height: 2,
+                    node_commit_id: H256::from(&[0x02; 32]),
+                    node_data_type: D::NodeMap { key: k(&[2]) }
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn keytree_encode_layout_and_decode() {
+        // Construct a key: height | commit_id | dtype(tag+payload)
+        let value = K {
+            node_height: 42,
+            node_commit_id: H256::from(&[0xAB; 32]),
+            node_data_type: D::NodeMap {
+                key: k(&[0x10, 0x20]),
+            },
+        };
+
+        // Encode
+        let enc = value.encode();
+
+        // Decode (borrowed)
+        let decoded = K::decode(enc.as_ref()).unwrap();
+        assert_eq!(decoded.as_ref(), &value);
+
+        // Decode (owned)
+        let decoded_owned = K::decode_owned(enc.into_owned()).unwrap();
+        assert_eq!(decoded_owned, value);
+    }
+
+    #[test]
+    fn keytree_decode_errors() {
+        // Too short for fixed prefix
+        let fixed = u64::LENGTH + <TestSchema as PendingKeyValueSchema>::CommitId::LENGTH;
+        let short = vec![0u8; fixed - 1];
+        assert_eq!(K::decode(&short), Err(DecodeError::IncorrectLength));
+        assert_eq!(K::decode_owned(short), Err(DecodeError::IncorrectLength));
+
+        // Valid fixed prefix but invalid dtype tag
+        // Compose: height(8) | commit(CommitId::LENGTH) | tag(0xFF)
+        let mut buf = Vec::new();
+        buf.extend_from_slice(u64::encode(&123u64).as_ref());
+        buf.extend_from_slice(
+            <TestSchema as PendingKeyValueSchema>::CommitId::encode(&H256::from(&[0x11; 32]))
+                .as_ref(),
+        );
+        buf.push(0xFF);
+
+        assert_eq!(
+            K::decode(&buf),
+            Err(DecodeError::Custom(
+                "Invalid SnapshotNodeDataType variant prefix"
+            ))
+        );
+        assert_eq!(
+            K::decode_owned(buf),
+            Err(DecodeError::Custom(
+                "Invalid SnapshotNodeDataType variant prefix"
+            ))
+        );
+    }
+
+    #[test]
+    fn keytree_round_trip_encode_decode() {
+        let cases = vec![
+            K {
+                node_height: 0,
+                node_commit_id: H256::from(&[0x00; 32]),
+                node_data_type: D::NodeMeta,
+            },
+            K {
+                node_height: 0,
+                node_commit_id: H256::from(&[0x00; 32]),
+                node_data_type: D::NodeMap { key: k(&[]) },
+            },
+            K {
+                node_height: 0,
+                node_commit_id: H256::from(&[0x00; 32]),
+                node_data_type: D::NodeMap { key: k(&[1, 2, 3]) },
+            },
+            K {
+                node_height: 5,
+                node_commit_id: H256::from(&[0xAB; 32]),
+                node_data_type: D::NodeMeta,
+            },
+            K {
+                node_height: 5,
+                node_commit_id: H256::from(&[0xAB; 32]),
+                node_data_type: D::NodeMap { key: k(&[0xFF]) },
+            },
+            K {
+                node_height: u64::MAX,
+                node_commit_id: H256::from(&[0xFF; 32]),
+                node_data_type: D::NodeMeta,
+            },
+        ];
+
+        test_encode_decode_round_trip::<SnapshotKeyTreePart<TestSchema>>(cases);
+    }
+}
