@@ -39,6 +39,8 @@ pub enum StorageError {
     BootstrapError(#[from] BootstrapError),
     #[error("snapshot read error {0:?}")]
     SnapshotReadError(#[from] SnapshotReadError),
+    #[error("inconsistent pending part from recovery")]
+    InconsistentPendingFromRecovery,
 }
 
 impl From<DecodeError> for StorageError {
@@ -102,6 +104,7 @@ impl PartialEq for StorageError {
             (BootstrapError(e1), BootstrapError(e2)) => e1 == e2,
             (RecoveryError(e1), RecoveryError(e2)) => e1 == e2,
             (SnapshotReadError(e1), SnapshotReadError(e2)) => e1 == e2,
+            (InconsistentPendingFromRecovery, InconsistentPendingFromRecovery) => true,
 
             (VersionNotFound, _) => false,
             (CommitIDNotFound, _) => false,
@@ -114,6 +117,7 @@ impl PartialEq for StorageError {
             (BootstrapError(_), _) => false,
             (RecoveryError(_), _) => false,
             (SnapshotReadError(_), _) => false,
+            (InconsistentPendingFromRecovery, _) => false,
         }
     }
 }

@@ -8,8 +8,9 @@ use crate::{
     middlewares::{
         confirm_ids_to_history, confirm_maps_to_history, history_number_to_height,
         primitives_gc_until_height, primitives_initialize_empty_schema, primitives_recover_schema,
-        primitives_verify_schema_is_empty, CommitID, CommitIDSchema, HistoryNumberSchema,
-        KeyValueStoreBulks, PendingKeyValueConfig, VersionedStore, VersionedStoreCache,
+        primitives_verify_no_newer_records, primitives_verify_schema_is_empty, CommitID,
+        CommitIDSchema, HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig,
+        TreeWithTracker, VersionedStore, VersionedStoreCache,
     },
 };
 
@@ -48,8 +49,37 @@ fn get_latest_from_history<D: DatabaseTrait<HistoricalTableName>>(
     Ok((parent_of_root_commit_id, height_of_root))
 }
 
-fn todo_fn() {
-    unimplemented!()
+fn verify_recovery_consistency<P: DatabaseTrait<PendingTableName>>(
+    kv_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<FlatKeyValue, CommitID>>,
+    amt_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<AmtNodes, CommitID>>,
+    slot_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<SlotAllocations, CommitID>>,
+    pending_db: &Arc<P>,
+    expected_height_of_root: u64,
+) -> Result<()> {
+    if kv_tree_with_tracker.tracker != amt_tree_with_tracker.tracker
+        || kv_tree_with_tracker.tracker != slot_tree_with_tracker.tracker
+    {
+        return Err(crate::StorageError::InconsistentPendingFromRecovery);
+    }
+
+    let tracker = &kv_tree_with_tracker.tracker;
+    primitives_verify_no_newer_records::<PendingKeyValueConfig<FlatKeyValue, CommitID>, P>(
+        pending_db,
+        expected_height_of_root,
+        tracker,
+    )?;
+    primitives_verify_no_newer_records::<PendingKeyValueConfig<AmtNodes, CommitID>, P>(
+        pending_db,
+        expected_height_of_root,
+        tracker,
+    )?;
+    primitives_verify_no_newer_records::<PendingKeyValueConfig<SlotAllocations, CommitID>, P>(
+        pending_db,
+        expected_height_of_root,
+        tracker,
+    )?;
+
+    Ok(())
 }
 
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
@@ -88,8 +118,14 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         // Atomically commit all changes (cleanups, initial snapshots) to the pending DB.
         pending_db.commit(pending_write_schema)?;
 
-        // TODO: verify consistency of three tree_with_tracker and the pending_db
-        todo_fn();
+        // Verify consistency of three tree_with_tracker and the pending_db
+        verify_recovery_consistency(
+            &kv_tree_with_tracker,
+            &amt_tree_with_tracker,
+            &slot_tree_with_tracker,
+            &pending_db,
+            expected_height_of_root,
+        )?;
 
         // Initialization is complete. Now, create the in-memory VersionedMap instances.
         let key_value_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
@@ -154,8 +190,14 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         // Atomically commit all changes (initial snapshots) to the pending DB.
         pending_db.commit(pending_write_schema)?;
 
-        // TODO: verify consistency of three tree_with_tracker and the pending_db
-        // todo_fn();
+        // Verify consistency of three tree_with_tracker and the pending_db
+        verify_recovery_consistency(
+            &kv_tree_with_tracker,
+            &amt_tree_with_tracker,
+            &slot_tree_with_tracker,
+            &pending_db,
+            expected_height_of_root,
+        )?;
 
         // Initialization is complete. Now, create the in-memory VersionedMap instances.
         let key_value_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(

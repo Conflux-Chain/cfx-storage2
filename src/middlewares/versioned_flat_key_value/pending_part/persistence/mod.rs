@@ -21,7 +21,10 @@ pub use bootstrap::primitives::{
     verify_schema_is_empty as primitives_verify_schema_is_empty,
 };
 pub use cleanup::primitives::gc_until_height as primitives_gc_until_height;
-pub use recovery::primitives::recover_schema as primitives_recover_schema;
+pub use recovery::primitives::{
+    recover_schema as primitives_recover_schema,
+    verify_no_newer_records as primitives_verify_no_newer_records,
+};
 
 pub(super) use writer::{
     log_add_non_root_node, log_add_root, log_change_root, log_discard, log_make_pivot,
@@ -67,7 +70,7 @@ use crate::{
 /// identified relative to a base snapshot, which is crucial for reconstructing the
 /// in-memory `tree` after a restart. It does not track completion of I/O, but rather
 /// what the identity of the next submitted operation should be.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct PersistenceTracker {
     /// The identifier for the most recent snapshot that was created.
     /// Subsequent modifications are logged as a delta from this snapshot.

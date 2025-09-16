@@ -59,7 +59,7 @@ mod tests {
     use crate::backends::table_name::MockTableName;
     use crate::backends::{DatabaseTrait, TableRead, WrappedInMemoryDb, WriteSchemaTrait};
     use crate::errors::{DatabaseError, Result};
-    use crate::middlewares::clear_dir_then_create;
+    use crate::middlewares::{clear_dir, clear_dir_then_create};
 
     use super::TableSchema;
 
@@ -185,16 +185,18 @@ mod tests {
     }
 
     #[test]
-    fn test_in_memory_database_behavior() -> Result<()> {
+    fn test_in_memory_database_behavior() {
         let db = WrappedInMemoryDb::empty();
-        test_table_read_behavior(db)
+        test_table_read_behavior(db).unwrap();
     }
 
     #[test]
-    fn test_rocksdb_database_behavior() -> Result<()> {
+    fn test_rocksdb_database_behavior() {
         let temp_dir = "__test_rocksdb_table_read";
         clear_dir_then_create(temp_dir);
-        let db = WrappedRocksDb::open(temp_dir)?;
-        test_table_read_behavior(db)
+        let db = WrappedRocksDb::open(temp_dir).unwrap();
+        test_table_read_behavior(db).unwrap();
+
+        clear_dir(temp_dir);
     }
 }

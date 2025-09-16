@@ -15,15 +15,18 @@ pub use history_indices::PushError;
 pub use manager_impl::SnapshotView;
 use nonempty::NonEmpty;
 use parking_lot::Mutex;
+pub use pending_part::TreeWithTracker;
 pub use pending_part::{
     pending_schema::PendingKeyValueConfig, primitives_gc_until_height,
     primitives_initialize_empty_schema, primitives_recover_schema,
-    primitives_verify_schema_is_empty, BootstrapError, PendingError, RecoveryError,
-    SnapshotReadError,
+    primitives_verify_no_newer_records, primitives_verify_schema_is_empty, BootstrapError,
+    PendingError, RecoveryError, SnapshotReadError,
 };
 
 #[cfg(test)]
-pub use tests::{clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test};
+pub use tests::{
+    clear_dir, clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test,
+};
 
 use self::history_indices::LATEST;
 use self::history_indices_cache::HistoryIndexCache;

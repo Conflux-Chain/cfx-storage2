@@ -16,7 +16,8 @@ use crate::{
     errors::Result,
     lvmt::types::{LvmtValue, KEY_SLOT_SIZE},
     middlewares::{
-        clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test, CommitID,
+        clear_dir, clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test,
+        CommitID,
     },
     traits::{KeyValueStoreIterable, KeyValueStoreManager, KeyValueStoreRead},
 };
@@ -107,30 +108,42 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
 
     // Get a manager for db
     let lvmt = db.as_manager().unwrap();
-    let write_schema = D::write_schema();
+    let historical_write_schema = D::write_schema();
 
     // Perform non-forking commits
-    lvmt.commit(None, commit_1, changes_1, &write_schema, &AMT)
+    lvmt.commit(None, commit_1, changes_1, &historical_write_schema, &AMT)
         .unwrap();
     lvmt.check_consistency(commit_1, &AMT).unwrap();
 
-    lvmt.commit(Some(commit_1), commit_2, changes_2, &write_schema, &AMT)
-        .unwrap();
+    lvmt.commit(
+        Some(commit_1),
+        commit_2,
+        changes_2,
+        &historical_write_schema,
+        &AMT,
+    )
+    .unwrap();
     lvmt.check_consistency(commit_2, &AMT).unwrap();
 
     // Perform a forking commit
-    lvmt.commit(Some(commit_1), commit_2_1, changes_2_1, &write_schema, &AMT)
-        .unwrap();
+    lvmt.commit(
+        Some(commit_1),
+        commit_2_1,
+        changes_2_1,
+        &historical_write_schema,
+        &AMT,
+    )
+    .unwrap();
     lvmt.check_consistency(commit_2_1, &AMT).unwrap();
 
     // Check the previous commit again after adding subsequent commits
     lvmt.check_consistency(commit_1, &AMT).unwrap();
 
     // Persist confirmed commits from caches to the backend.
-    db.confirmed_pending_to_history_with_commit_id(commit_2, &write_schema)
+    db.confirmed_pending_to_history_with_commit_id(commit_2, &historical_write_schema)
         .unwrap();
 
-    db.commit(write_schema).unwrap();
+    db.commit(historical_write_schema).unwrap();
 
     // Reinitialize the manager
     let write_schema = D::write_schema();
@@ -163,12 +176,8 @@ fn test_lvmt_store_rocksdb() {
         100000,
     );
 
-    if std::path::Path::new(historical_path).exists() {
-        std::fs::remove_dir_all(historical_path).unwrap();
-    }
-    if std::path::Path::new(pending_path).exists() {
-        std::fs::remove_dir_all(pending_path).unwrap();
-    }
+    clear_dir(historical_path);
+    clear_dir(pending_path);
 }
 
 #[test]

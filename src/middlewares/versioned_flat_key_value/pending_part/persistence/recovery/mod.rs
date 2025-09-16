@@ -17,6 +17,9 @@ pub enum RecoveryError {
     WalMapValueCountMismatch { expected: u64, got: u64 },
     #[error("Unexpected WAL record found. A new modification should start with a Meta record.")]
     UnexpectedWalRecord,
+
+    #[error("The db after recovery contains newer invalid records.")]
+    DirtyRecoveryResult,
 }
 
 pub mod primitives {
@@ -167,6 +170,43 @@ pub mod primitives {
             }
         }
     }
+
+    /// Verifies that no records newer than the recovery point exist in the database for a specific schema.
+    ///
+    /// The `recover_schema` function generates a `write_schema` containing operations to delete any
+    /// records (e.g., in `SnapshotsTable` or `WalTable`) that are newer than the recovered snapshot.
+    /// This function is intended to be called by a concrete application *after* it has committed
+    /// that `write_schema` to the database.
+    pub fn verify_no_newer_records<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>>(
+        db: &Arc<P>,
+        newest_height: u64,
+        tracker: &PersistenceTracker,
+    ) -> Result<()> {
+        // check SnapshotsTable has no records newer than newest_height
+        let snapshots_view = Arc::new(db.view::<SnapshotsTable<S>>()?);
+        // Seek to the first snapshot with height > newest_height.
+        let snapshot_seek_key = SnapshotKey::seek_key_for_height(newest_height + 1);
+        if snapshots_view
+            .iter(&snapshot_seek_key.key)?
+            .next()
+            .is_some()
+        {
+            Err(RecoveryError::DirtyRecoveryResult)?
+        }
+
+        // check WalTable has no records not older than (newest_snapshot_id, next_modification_id)
+        let newest_snapshot_id = tracker.snapshot_id;
+        let next_modification_id = tracker.next_modification_id;
+        let wal_view = Arc::new(db.view::<WalTable<S>>()?);
+        // Seek to the first WAL record with that >= (newest_snapshot_id, next_modification_id).
+        let wal_seek_key =
+            WalKey::seek_key_for_snap_mod_id(newest_snapshot_id, next_modification_id);
+        if wal_view.iter(&wal_seek_key.key)?.next().is_some() {
+            Err(RecoveryError::DirtyRecoveryResult)?
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -176,13 +216,15 @@ mod tests {
     use super::super::{
         format::{SnapshotsTable, WalTable},
         test_util::{k, setup_db_with_snapshots_and_wals, TestSchema},
-        DatabaseTrait, ModificationId, PendingTableName, RecoverRecord, RecoveryError, SnapshotId,
-        SnapshotKey, SnapshotKeyTreePart, SnapshotMapValue, SnapshotNodeDataType,
-        SnapshotRecordType, SnapshotValue, StorageError, TableSchema, ValueEntry, WalKey,
-        WalKeySpecificPart, WalValue, WrappedInMemoryDb, WriteSchemaTrait,
+        DatabaseTrait, ModificationId, PendingTableName, PersistenceTracker, RecoverRecord,
+        RecoveryError, SnapshotId, SnapshotKey, SnapshotKeyTreePart, SnapshotMapValue,
+        SnapshotNodeDataType, SnapshotRecordType, SnapshotValue, StorageError, TableSchema,
+        ValueEntry, WalKey, WalKeySpecificPart, WalValue, WrappedInMemoryDb, WriteSchemaTrait,
     };
     use super::primitives::*;
     use std::{borrow::Cow, collections::HashMap, sync::Arc};
+
+    // --------------------- recover_schema ---------------------
 
     #[test]
     fn test_recover_no_snapshot_found_on_empty_db() {
@@ -602,5 +644,202 @@ mod tests {
         );
         // The invalid snapshot had one associated WAL record. It should be deleted.
         assert_eq!(deleted_wals, 1, "Should delete 1 invalid WAL record");
+    }
+
+    // --------------------- verify_no_newer_records ---------------------
+
+    #[test]
+    fn test_verify_no_newer_records_clean_ok() {
+        // Arrange
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+
+        // Prepare a latest snapshot at height=10, sid=5.
+        // Only an exact-height snapshot record exists; verify checks strictly greater height.
+        let height = 10;
+        let sid = SnapshotId(5);
+
+        write_schema.write::<SnapshotsTable<TestSchema>>((
+            Cow::Owned(SnapshotKey {
+                snapshot_root_height: height,
+                record_type: SnapshotRecordType::Meta,
+            }),
+            Some(Cow::Owned(SnapshotValue::MetaValue {
+                parent_of_root: Some(H256::zero()),
+                snapshot_id: sid,
+                nodes_count: 0,
+            })),
+        ));
+        db.commit(write_schema).unwrap();
+
+        // Act
+        let tracker = PersistenceTracker {
+            snapshot_id: sid,
+            next_modification_id: ModificationId(3),
+        };
+        let res = verify_no_newer_records::<TestSchema, _>(&db, height, &tracker);
+
+        // Assert
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_verify_no_newer_records_detects_newer_snapshot() {
+        // Arrange
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+        let ws = WrappedInMemoryDb::<PendingTableName>::write_schema();
+
+        // Latest point: height=10, sid=5, next_mod_id=3
+        let newest_height = 10;
+        let newest_sid = SnapshotId(5);
+        let next_mod_id = ModificationId(3);
+
+        // Insert a snapshot at height=11 (> newest_height), which should trigger DirtyRecoveryResult.
+        ws.write::<SnapshotsTable<TestSchema>>((
+            Cow::Owned(SnapshotKey {
+                snapshot_root_height: newest_height + 1,
+                record_type: SnapshotRecordType::Meta,
+            }),
+            Some(Cow::Owned(SnapshotValue::MetaValue {
+                parent_of_root: Some(H256::zero()),
+                snapshot_id: SnapshotId(newest_sid.0 + 1),
+                nodes_count: 0,
+            })),
+        ));
+        db.commit(ws).unwrap();
+
+        // Act
+        let tracker = PersistenceTracker {
+            snapshot_id: newest_sid,
+            next_modification_id: next_mod_id,
+        };
+        let res = verify_no_newer_records::<TestSchema, _>(&db, newest_height, &tracker);
+
+        // Assert
+        assert!(matches!(
+            res,
+            Err(StorageError::RecoveryError(
+                RecoveryError::DirtyRecoveryResult
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_verify_no_newer_records_detects_newer_wal_same_snapshot_higher_or_equal_mod() {
+        // Arrange
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+        let ws = WrappedInMemoryDb::<PendingTableName>::write_schema();
+
+        let newest_height = 10;
+        let newest_sid = SnapshotId(5);
+        let next_mod_id = ModificationId(3);
+
+        // Insert a WAL with the exact boundary key (sid=5, mod=3).
+        // Since verify checks for >= boundary, this should be considered dirty.
+        ws.write::<WalTable<TestSchema>>((
+            Cow::Owned(WalKey {
+                snapshot_id: newest_sid,
+                modification_id: next_mod_id,
+                operation_specific_parts: WalKeySpecificPart::DiscardMeta,
+            }),
+            Some(Cow::Owned(WalValue::MetaValue {
+                commit_id: H256::zero(),
+                maybe_parent_cid: None,
+                map_value_count: 0,
+            })),
+        ));
+        db.commit(ws).unwrap();
+
+        // Act
+        let tracker = PersistenceTracker {
+            snapshot_id: newest_sid,
+            next_modification_id: next_mod_id,
+        };
+        let res = verify_no_newer_records::<TestSchema, _>(&db, newest_height, &tracker);
+
+        // Assert
+        assert!(matches!(
+            res,
+            Err(StorageError::RecoveryError(
+                RecoveryError::DirtyRecoveryResult
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_verify_no_newer_records_detects_newer_wal_higher_snapshot_any_mod() {
+        // Arrange
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+        let ws = WrappedInMemoryDb::<PendingTableName>::write_schema();
+
+        let newest_height = 10;
+        let newest_sid = SnapshotId(5);
+        let next_mod_id = ModificationId(3);
+
+        // Insert a WAL with higher snapshot_id (6). Any modification_id should be considered newer.
+        ws.write::<WalTable<TestSchema>>((
+            Cow::Owned(WalKey {
+                snapshot_id: SnapshotId(newest_sid.0 + 1),
+                modification_id: ModificationId(0),
+                operation_specific_parts: WalKeySpecificPart::DiscardMeta,
+            }),
+            Some(Cow::Owned(WalValue::MetaValue {
+                commit_id: H256::zero(),
+                maybe_parent_cid: None,
+                map_value_count: 0,
+            })),
+        ));
+        db.commit(ws).unwrap();
+
+        // Act
+        let tracker = PersistenceTracker {
+            snapshot_id: newest_sid,
+            next_modification_id: next_mod_id,
+        };
+        let res = verify_no_newer_records::<TestSchema, _>(&db, newest_height, &tracker);
+
+        // Assert
+        assert!(matches!(
+            res,
+            Err(StorageError::RecoveryError(
+                RecoveryError::DirtyRecoveryResult
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_verify_no_newer_records_older_wal_is_ok() {
+        // Arrange
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+        let ws = WrappedInMemoryDb::<PendingTableName>::write_schema();
+
+        let newest_height = 10;
+        let newest_sid = SnapshotId(5);
+        let next_mod_id = ModificationId(3);
+
+        // Insert an older WAL: same snapshot_id but modification_id smaller than boundary (2 < 3).
+        ws.write::<WalTable<TestSchema>>((
+            Cow::Owned(WalKey {
+                snapshot_id: newest_sid,
+                modification_id: ModificationId(next_mod_id.0 - 1),
+                operation_specific_parts: WalKeySpecificPart::DiscardMeta,
+            }),
+            Some(Cow::Owned(WalValue::MetaValue {
+                commit_id: H256::zero(),
+                maybe_parent_cid: None,
+                map_value_count: 0,
+            })),
+        ));
+        db.commit(ws).unwrap();
+
+        // Act
+        let tracker = PersistenceTracker {
+            snapshot_id: newest_sid,
+            next_modification_id: next_mod_id,
+        };
+        let res = verify_no_newer_records::<TestSchema, _>(&db, newest_height, &tracker);
+
+        // Assert
+        assert!(res.is_ok());
     }
 }
