@@ -298,7 +298,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         Ok(())
     }
 
-    pub fn commit(
+    pub fn commit_to_historical_db(
         &self,
         write_schema: <D as DatabaseTrait<HistoricalTableName>>::WriteSchema,
     ) -> Result<()> {
@@ -358,33 +358,60 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         height > height_of_root
     }
 
-    /// `new_root_height` and `pivot_commit_id` should be in the pending part.
-    /// `new_root_height` should not be newer than `pivot_commit_id`.
-    /// This function make the ancestor of `pivot_commit_id` at `new_root_height` to be the new pending root.
+    /// Promotes an ancestor of `pivot_commit_id` at `new_root_height` to become the new pending root.
+    ///
+    /// This is a convenience function that determines the new root commit ID based on the
+    /// provided `new_root_height` and `pivot_commit_id`, then calls the underlying
+    /// `confirmed_pending_to_history_with_commit_id` to execute the full operation.
+    ///
+    /// **Crucially, this function handles the entire persistence process internally.** Upon
+    /// successful return, changes to both the pending and historical components have been
+    /// committed to their respective databases. The caller does not need to manage any
+    /// database transactions.
+    ///
+    /// Preconditions:
+    /// - `pivot_commit_id` and its ancestor at `new_root_height` must exist in the pending part.
+    /// - `new_root_height` must not be greater than the height of `pivot_commit_id`.
+    ///
+    /// Note: The database commits for the pending and historical parts are not atomic and
+    /// a failure between them could lead to an inconsistent state.
     pub fn confirmed_pending_to_history_with_height(
         &self,
         new_root_height: u64,
         pivot_commit_id: CommitID,
-        write_schema: &D::WriteSchema,
     ) -> Result<()> {
         let key_value_cache = self.key_value_cache.lock();
         let new_root_commit_id =
             key_value_cache.get_ancestor_commit_at_height(new_root_height, pivot_commit_id)?;
         drop(key_value_cache);
 
-        self.confirmed_pending_to_history_with_commit_id(new_root_commit_id, write_schema)
+        self.confirmed_pending_to_history_with_commit_id(new_root_commit_id)
     }
 
-    /// The `new_root_commit_id` should be in the pending part, otherwise, an error will be returned.
+    /// Promotes the given `new_root_commit_id` to be the new root of the pending component.
+    ///
+    /// This process involves two main steps:
+    /// 1.  The pending component's in-memory state is updated to reflect the new root, and these
+    ///     changes are persisted to the `pending_db`.
+    /// 2.  The path of nodes from the old root to the new root's parent is pruned from the
+    ///     pending component and moved to the `historical_db`.
+    ///
+    /// All database write schemas (`pending_write_schema` and `historical_write_schema`) are
+    /// created and committed internally within this function.
+    ///
+    /// An error will be returned if the `new_root_commit_id` does not exist in the pending part.
+    ///
+    /// **Note**: The commits to the `pending_db` and `historical_db` are not atomic. A failure
+    /// between these two operations could result in an inconsistent state.
     pub fn confirmed_pending_to_history_with_commit_id(
         &self,
         new_root_commit_id: CommitID,
-        write_schema: &D::WriteSchema,
     ) -> Result<()> {
         let mut key_value_cache = self.key_value_cache.lock();
         let mut amt_node_cache = self.amt_node_cache.lock();
         let mut slot_alloc_cache = self.slot_alloc_cache.lock();
 
+        // pending part
         let pending_write_schema = P::write_schema();
 
         let maybe_key_value_confirmed_path =
@@ -405,32 +432,37 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 
             self.commit_to_pending_db(pending_write_schema)?;
 
+            // historical part
+            let historical_write_schema = D::write_schema();
+
             confirm_ids_to_history::<D>(
                 self.historical_db.clone(),
                 start_height,
                 commit_ids,
-                write_schema,
+                &historical_write_schema,
             )?;
 
             confirm_maps_to_history::<D, FlatKeyValue>(
                 self.historical_db.clone(),
                 start_height,
                 key_value_confirmed_path.key_value_maps,
-                write_schema,
+                &historical_write_schema,
             )?;
             confirm_maps_to_history::<D, AmtNodes>(
                 self.historical_db.clone(),
                 start_height,
                 amt_node_confirmed_path.key_value_maps,
-                write_schema,
+                &historical_write_schema,
             )?;
             confirm_maps_to_history::<D, SlotAllocations>(
                 self.historical_db.clone(),
                 start_height,
                 slot_alloc_confirmed_path.key_value_maps,
-                write_schema,
+                &historical_write_schema,
             )?;
-        }
+
+            self.commit_to_historical_db(historical_write_schema)?;
+        } // else: nothing is changed and no records are in pending_write_schema, so skip directly
 
         Ok(())
     }

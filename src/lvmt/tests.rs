@@ -139,24 +139,34 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     // Check the previous commit again after adding subsequent commits
     lvmt.check_consistency(commit_1, &AMT).unwrap();
 
-    // Persist confirmed commits from caches to the backend.
-    db.confirmed_pending_to_history_with_commit_id(commit_2, &historical_write_schema)
-        .unwrap();
+    // Write AuthChanges transactions to historical_db
+    db.commit_to_historical_db(historical_write_schema).unwrap();
 
-    db.commit(historical_write_schema).unwrap();
+    // Persist confirmed commits from caches to the backend.
+    db.confirmed_pending_to_history_with_commit_id(commit_2)
+        .unwrap();
 
     // Reinitialize the manager
-    let write_schema = D::write_schema();
+    let historical_write_schema = D::write_schema();
 
     // Commit again to verify success after persisting changes to the backend
-    lvmt.commit(Some(commit_2), commit_3, changes_3, &write_schema, &AMT)
-        .unwrap();
+    lvmt.commit(
+        Some(commit_2),
+        commit_3,
+        changes_3,
+        &historical_write_schema,
+        &AMT,
+    )
+    .unwrap();
     lvmt.check_consistency(commit_3, &AMT).unwrap();
 
     // Check previous commits again after they are confirmed or removed
     lvmt.check_consistency(commit_2, &AMT).unwrap();
     lvmt.check_consistency(commit_1, &AMT).unwrap();
     lvmt.check_consistency(commit_2_1, &AMT).unwrap_err();
+
+    // Write AuthChanges transactions to historical_db
+    db.commit_to_historical_db(historical_write_schema).unwrap();
 }
 
 #[test]
