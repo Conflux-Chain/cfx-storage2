@@ -218,6 +218,30 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
         Ok(confirm_path_info)
     }
 
+    #[cfg(test)]
+    pub fn change_root_without_persistence(
+        &mut self,
+        commit_id: S::CommitId,
+    ) -> PendResult<Option<ConfirmedPathInfo<S>>> {
+        let confirm_path_info = self
+            .tree_with_tracker
+            .change_root_without_persistence(commit_id)?;
+
+        if confirm_path_info.is_some() {
+            // clear current is necessary
+            // because apply_commit_id in current.map may be removed from pending part
+
+            // Take a single write lock and do both operations under it
+            let mut guard = self.current.write();
+            self.clear_removed_current_with_guard(&mut guard);
+            if let Some(current) = guard.as_mut() {
+                current.update_rerooted(&self.tree_with_tracker.tree);
+            }
+        }
+
+        Ok(confirm_path_info)
+    }
+
     /// This function discards the siblings of the nodes from the root (excluded) to `commit_id` (included).
     /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
     pub fn make_pivot(

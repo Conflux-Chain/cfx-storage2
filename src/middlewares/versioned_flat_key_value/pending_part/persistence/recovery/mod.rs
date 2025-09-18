@@ -33,6 +33,7 @@ pub mod primitives {
     mod read_tree_snapshot;
     mod wal_player;
 
+    use log::warn;
     pub use read_tree_snapshot::SnapshotReadError;
 
     use std::sync::Arc;
@@ -129,6 +130,16 @@ pub mod primitives {
                                     {
                                         break;
                                     }
+
+                                    warn!(
+                                        "Rolling back WAL entry for incomplete 'change_root' transaction. \
+                                        schema_name={:?}, snapshot_id={}, modification_id={}, deleting_wal_key={:?}",
+                                        S::KV_NAME,
+                                        snapshot_id.0,
+                                        mod_id,
+                                        wal_key_cow.as_ref()
+                                    );
+
                                     write_schema.write::<WalTable<S>>((wal_key_cow, None));
                                 }
 
@@ -170,6 +181,14 @@ pub mod primitives {
                         else {
                             Err(RecoveryError::FirstRecordIsNotMeta)?
                         };
+
+                        warn!(
+                            "WAL replay finished for schema {:?}. Found newer, invalid snapshots. \
+                            Starting cleanup from snapshot_id {} onwards.",
+                            S::KV_NAME,
+                            invalid_snapshot_id.0
+                        );
+
                         // For the meta snapshot record, delete the corresponding WAL records.
                         delete_wal_by_snapshot_id::<S, P>(
                             &wal_view,

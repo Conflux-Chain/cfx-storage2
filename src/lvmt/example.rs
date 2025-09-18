@@ -7,7 +7,8 @@ use crate::{
     errors::Result,
     middlewares::{
         confirm_ids_to_history, confirm_maps_to_history, history_number_to_height,
-        primitives_gc_until_height, primitives_initialize_empty_schema, primitives_recover_schema,
+        primitives_clear_pending_schema, primitives_gc_until_height,
+        primitives_initialize_empty_schema, primitives_recover_schema,
         primitives_verify_no_newer_records, primitives_verify_schema_is_empty, CommitID,
         CommitIDSchema, HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig,
         TreeWithTracker, VersionedStore, VersionedStoreCache,
@@ -21,13 +22,13 @@ use super::{
 };
 
 pub struct LvmtStorage<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> {
-    historical_db: Arc<D>,
+    pub(super) historical_db: Arc<D>,
 
     pending_db: Arc<P>,
 
-    key_value_cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue, P>>>,
-    amt_node_cache: Arc<Mutex<VersionedStoreCache<AmtNodes, P>>>,
-    slot_alloc_cache: Arc<Mutex<VersionedStoreCache<SlotAllocations, P>>>,
+    pub(super) key_value_cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue, P>>>,
+    pub(super) amt_node_cache: Arc<Mutex<VersionedStoreCache<AmtNodes, P>>>,
+    pub(super) slot_alloc_cache: Arc<Mutex<VersionedStoreCache<SlotAllocations, P>>>,
 }
 
 fn get_latest_from_history<D: DatabaseTrait<HistoricalTableName>>(
@@ -145,6 +146,36 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             amt_node_cache,
             slot_alloc_cache,
         })
+    }
+
+    /// Performs a bootstrap recovery.
+    ///
+    /// This function is used in scenarios where `new_from_recovery` fails (e.g., when the pending_db
+    /// state lags behind the historical_db, making it untrustworthy). It completely clears the
+    /// `pending_db`, and then creates a new, clean pending component based on the current state
+    /// of `historical_db`.
+    ///
+    /// **Warning**: This operation will destroy all unconfirmed commits in `pending_db`.
+    pub fn new_from_bootstrap(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+        // 1. Clear the entire pending database.
+        // Create a single WriteSchema for the entire atomic clearup operation.
+        let pending_write_schema = P::write_schema();
+        primitives_clear_pending_schema::<PendingKeyValueConfig<FlatKeyValue, CommitID>, P>(
+            &pending_db,
+            &pending_write_schema,
+        )?;
+        primitives_clear_pending_schema::<PendingKeyValueConfig<AmtNodes, CommitID>, P>(
+            &pending_db,
+            &pending_write_schema,
+        )?;
+        primitives_clear_pending_schema::<PendingKeyValueConfig<SlotAllocations, CommitID>, P>(
+            &pending_db,
+            &pending_write_schema,
+        )?;
+        pending_db.commit(pending_write_schema)?;
+
+        // 2. After clearing, this is equivalent to starting from an empty pending_db.
+        Self::new_from_empty_pending(historical_db, pending_db)
     }
 
     /// Creates a new LvmtStorage instance. It is the caller's responsibility to ensure that the `pending_db` is empty.
@@ -305,7 +336,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         self.historical_db.commit(write_schema)
     }
 
-    fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
+    pub(super) fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
         self.pending_db.commit(pending_write_schema)
     }
 

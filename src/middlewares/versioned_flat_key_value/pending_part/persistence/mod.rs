@@ -17,6 +17,7 @@ pub use bootstrap::BootstrapError;
 pub use recovery::{primitives::SnapshotReadError, RecoveryError};
 
 pub use bootstrap::primitives::{
+    clear_pending_schema as primitives_clear_pending_schema,
     initialize_empty_schema as primitives_initialize_empty_schema,
     verify_schema_is_empty as primitives_verify_schema_is_empty,
 };
