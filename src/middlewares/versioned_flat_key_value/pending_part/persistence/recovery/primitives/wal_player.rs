@@ -29,20 +29,33 @@ pub enum OneModificationForTree<S: PendingKeyValueSchema> {
     Discard { commit_id: S::CommitId },
 }
 
+/// The status of a single WAL modification replay attempt.
+pub(super) enum ReplayStatus {
+    /// A modification was successfully found and applied to the tree.
+    Applied,
+    /// No more modifications were found for the current snapshot_id.
+    NoMoreModifications,
+    /// A `change_root` operation was encountered, signaling the end of this snapshot's valid WAL.
+    /// This represents an incomplete transaction that needs to be rolled back.
+    ChangeRootEncountered,
+}
+
 /// Attempts to replay all WAL records corresponding to a single modification_id.
 ///
-/// - If a modification is successfully found and applied, returns `Ok(true)`.
-/// - If no records for the given modification_id are found (indicating the end of the WAL replay), returns `Ok(false)`.
-/// - If an error occurs, returns `Err(...)`.
+/// Returns a [`ReplayStatus`] indicating the outcome:
+/// - `Applied`: A modification was successfully found and applied.
+/// - `NoMoreModifications`: No records for the given modification_id were found.
+/// - `ChangeRootEncountered`: A `change_root` operation was found and NOT applied.
 pub(super) fn replay_one_modification<S: PendingKeyValueSchema, P: TableRead<WalTable<S>>>(
     wal_view: &P,
     tree: &mut Tree<S>,
     snapshot_id: SnapshotId,
     modification_id: ModificationId,
-) -> Result<bool> {
+) -> Result<ReplayStatus> {
     let mut this_modification: Option<OneModificationForTree<S>> = None;
     let wal_seek_key = WalKey::seek_key_for_snap_mod_id(snapshot_id, modification_id);
 
+    // Iterate over WAL records for the current modification_id.
     for wal_item in wal_view.iter(&wal_seek_key.key)? {
         let (wal_key_cow, wal_value_cow) = wal_item?;
         let wal_key = wal_key_cow.into_owned();
@@ -52,18 +65,27 @@ pub(super) fn replay_one_modification<S: PendingKeyValueSchema, P: TableRead<Wal
             break;
         }
 
+        // We can consume the item now.
         let wal_value = wal_value_cow.into_owned();
         collect_modification_info(&mut this_modification, wal_key, wal_value)?;
     }
 
     if let Some(modification) = this_modification {
-        // If a modification was successfully constructed, validate and apply it to the tree.
-        check_modification_info(&modification)?;
-        apply_wal_to_tree(tree, modification)?;
-        Ok(true) // Indicates that one modification was successfully processed.
+        // A modification was successfully constructed. Now, decide what to do with it.
+        match modification {
+            // For a ChangeRoot operation, we do NOT apply it.
+            // Instead, we signal that an incomplete transaction was found.
+            OneModificationForTree::ChangeRoot { .. } => Ok(ReplayStatus::ChangeRootEncountered),
+            // For all other valid operations, apply them to the tree.
+            _ => {
+                check_modification_info(&modification)?;
+                apply_wal_to_tree(tree, modification)?;
+                Ok(ReplayStatus::Applied) // Indicates one modification was successfully processed.
+            }
+        }
     } else {
         // If `this_modification` is None, it means there are no records for the current modification_id.
-        Ok(false) // Indicates that there are no more modifications to process.
+        Ok(ReplayStatus::NoMoreModifications) // Indicates that there are no more modifications to process.
     }
 }
 

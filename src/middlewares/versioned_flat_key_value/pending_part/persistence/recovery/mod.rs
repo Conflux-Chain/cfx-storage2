@@ -94,15 +94,66 @@ pub mod primitives {
                             &mut iter,
                         )?;
 
-                    // Replay WAL records in a loop until the replayer returns false.
+                    // Replay WAL records in a loop until the replayer signals to stop.
                     let mut mod_id = 0;
-                    while wal_player::replay_one_modification(
-                        &*wal_view,
-                        &mut tree,
-                        snapshot_id,
-                        ModificationId(mod_id),
-                    )? {
-                        mod_id += 1;
+                    loop {
+                        let status = wal_player::replay_one_modification(
+                            &*wal_view,
+                            &mut tree,
+                            snapshot_id,
+                            ModificationId(mod_id),
+                        )?;
+
+                        match status {
+                            // A standard operation was applied. Continue to the next modification.
+                            wal_player::ReplayStatus::Applied => {
+                                mod_id += 1;
+                            }
+                            // No more WAL records for this snapshot. Replay is cleanly finished.
+                            wal_player::ReplayStatus::NoMoreModifications => {
+                                break;
+                            }
+                            // An incomplete `change_root` transaction was found. Roll it back.
+                            wal_player::ReplayStatus::ChangeRootEncountered => {
+                                // --- Rollback Logic ---
+                                // 1. Delete all WAL records for this failed modification.
+                                let wal_seek_key = WalKey::seek_key_for_snap_mod_id(
+                                    snapshot_id,
+                                    ModificationId(mod_id),
+                                );
+                                for wal_item in wal_view.iter(&wal_seek_key.key)? {
+                                    let (wal_key_cow, _) = wal_item?;
+                                    if wal_key_cow.as_ref().snapshot_id != snapshot_id
+                                        || wal_key_cow.as_ref().modification_id
+                                            != ModificationId(mod_id)
+                                    {
+                                        break;
+                                    }
+                                    write_schema.write::<WalTable<S>>((wal_key_cow, None));
+                                }
+
+                                // 2. (Crucial Sanity Check) Verify no more WAL records exist for this snapshot_id.
+                                // A `change_root` must be the final operation.
+                                let next_mod_seek_key = WalKey::seek_key_for_snap_mod_id(
+                                    snapshot_id,
+                                    ModificationId(mod_id + 1),
+                                );
+                                if let Some(next_item) =
+                                    wal_view.iter(&next_mod_seek_key.key)?.next()
+                                {
+                                    let (next_key, _) = next_item?;
+                                    if next_key.as_ref().snapshot_id == snapshot_id {
+                                        Err(RecoveryError::InconsistentWalRecord(
+                                            "WAL data found after a change_root operation for the same snapshot.",
+                                        ))?;
+                                    }
+                                }
+
+                                // 3. Stop the replay loop. The `mod_id` is NOT incremented,
+                                // because this modification was rolled back.
+                                break;
+                            }
+                        }
                     }
 
                     // Clean up any newer, now-invalid snapshots and their WALs.
