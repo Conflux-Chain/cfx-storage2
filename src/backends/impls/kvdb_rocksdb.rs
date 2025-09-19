@@ -148,7 +148,7 @@ impl CachedDB {
 
 pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database> {
     let mut config = DatabaseConfig::with_columns(num_cols);
-    let total_memory_budget = 12 * 1024;
+    let total_memory_budget = 16 * 1024;
     let column_memory_budget = total_memory_budget / num_cols as usize;
     let mut map = HashMap::new();
     for i in 0..num_cols {

@@ -56,8 +56,20 @@ fn process_subtree(
     items: &[H256],
     key: AuthChangeKey,
     btree: &mut BTreeMap<AuthChangeKey, AuthChangeNode>,
+) {
+    if !items.is_empty() {
+        process_subtree_nonempty(items, key, btree);
+    } // else { leave btree as empty }
+}
+
+fn process_subtree_nonempty(
+    items: &[H256],
+    key: AuthChangeKey,
+    btree: &mut BTreeMap<AuthChangeKey, AuthChangeNode>,
 ) -> AuthChangeNode {
     let size = items.len();
+    assert!(size > 0);
+
     let size_log = log2_ceil(size);
 
     let layer_size_log = if key.is_root() {
@@ -70,23 +82,28 @@ fn process_subtree(
             let node = AuthChangeNode::from_leaves(items);
             btree.insert(key, node.clone());
             return node;
-        }
+        } // else { assert!(top_size_log < size_log); assert!(top_size_log >= 1); }
         top_size_log
     } else {
         assert!(size_log >= MAX_NODE_SIZE_LOG - 1);
-        if items.len() <= MAX_NODE_SIZE {
+        if size <= MAX_NODE_SIZE {
             let node = AuthChangeNode::from_leaves(items);
             btree.insert(key, node.clone());
             return node;
-        }
+        } // else { assert!(size_log > MAX_NODE_SIZE_LOG) }
         MAX_NODE_SIZE_LOG
     };
-    assert!(layer_size_log <= MAX_NODE_SIZE_LOG);
+    assert!(layer_size_log <= MAX_NODE_SIZE_LOG); // ==> assert!(layer_size_log <= usize::BITS - 1);
+    assert!(layer_size_log < size_log);
 
     let num_subtree = 1usize << layer_size_log;
-    let subtree_size_log = size_log - layer_size_log;
+    let subtree_size_log = size_log - layer_size_log; // >= 1; size_log <= usize::BITS, top_size_log >= 1 ==> subtree_size_log < usize::BITS
+    assert!(
+        subtree_size_log < usize::BITS as usize,
+        "subtree_size_log must be less than bit width to prevent shift overflow"
+    );
     let max_subtree_size = 1usize << subtree_size_log;
-    let min_subtree_size = 1usize << (subtree_size_log - 1);
+    let min_subtree_size = 1usize << (subtree_size_log - 1); // >= 1
 
     let mut items = items;
     let mut processed_nodes = vec![];
@@ -98,10 +115,10 @@ fn process_subtree(
             max_subtree_size,
             items.len() - min_subtree_size * (num_subtree - i - 1),
         );
-        assert!(subtree_size >= min_subtree_size);
+        assert!(subtree_size >= min_subtree_size); // ==> assert!(subtree_size >= 1);
 
         let subtree;
-        (subtree, items) = items.split_at(subtree_size);
+        (subtree, items) = items.split_at(subtree_size); // !subtree.is_empty()
 
         if !items.is_empty() {
             ticks.push(items[0]);
@@ -112,7 +129,8 @@ fn process_subtree(
             }
         }
 
-        let node = process_subtree(subtree, key.child(i), btree);
+        assert!(!subtree.is_empty());
+        let node = process_subtree_nonempty(subtree, key.child(i), btree);
         processed_nodes.push(node);
     }
 
