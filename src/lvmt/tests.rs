@@ -546,6 +546,55 @@ fn test_lvmt_recovery_historical_ahead_inmemory() {
     >(Arc::new(historical_db), Arc::new(pending_db), 1000);
 }
 
+#[test]
+fn test_lvmt_commit_with_empty_changes() {
+    // Define paths for the test databases.
+    let historical_path = "__test_lvmt_commit_with_empty_changes_historical";
+    let pending_path = "__test_lvmt_commit_with_empty_changes_pending";
+
+    // Create clean directories for the test.
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+
+    // Initialize database instances.
+    let historical_db = Arc::new(WrappedRocksDb::open(historical_path).unwrap());
+    let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
+
+    // Set up the LVMT storage from an empty state.
+    let db = LvmtStorage::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>::new_from_empty_pending(
+        historical_db,
+        pending_db,
+    )
+    .unwrap();
+
+    // Get a manager to interact with the LVMT.
+    let lvmt = db.as_manager().unwrap();
+
+    // Generate a unique commit ID for our test commit.
+    let mut rng = get_rng_for_test();
+    let mut previous_commits = HashSet::new();
+    let commit_id = gen_novel_commit_id(&mut rng, &mut previous_commits);
+
+    let historical_write_schema = WrappedRocksDb::<HistoricalTableName>::write_schema();
+
+    // Perform a commit with an empty set of updates.
+    lvmt.commit(
+        None,
+        commit_id,
+        std::iter::empty(),
+        &historical_write_schema,
+        &AMT,
+    )
+    .unwrap();
+
+    db.commit_to_historical_db(historical_write_schema).unwrap();
+
+    lvmt.check_consistency(commit_id, &AMT).unwrap();
+
+    clear_dir(historical_path);
+    clear_dir(pending_path);
+}
+
 impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
     pub fn check_consistency(&self, commit: CommitID, pp: &AmtParams<PE>) -> Result<()> {
         use std::collections::BTreeSet;
