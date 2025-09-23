@@ -1,5 +1,5 @@
 use crate::{
-    backends::{DatabaseTrait, HistoricalTableName, PendingTableName, WriteSchemaTrait},
+    backends::{DatabaseTrait, PendingTableName, TableNameTrait, WriteSchemaTrait},
     errors::Result,
 };
 
@@ -50,13 +50,13 @@ where
     fn get_versioned_key(&self, commit: &C, key: &K) -> Result<Option<V>>;
 }
 
-pub trait KeyValueStoreBulksTrait<K, V, C> {
+pub trait KeyValueStoreBulksTrait<K, V, C, TN: TableNameTrait> {
     /// Commit a bundle of key-values, with provided commit version
     fn commit(
         &self,
         commit: C,
         bulk: impl Iterator<Item = (K, Option<V>)>,
-        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
+        write_schema: &impl WriteSchemaTrait<TN>,
     ) -> Result<()>;
 
     /// Get with the given commit version and key.
@@ -66,6 +66,6 @@ pub trait KeyValueStoreBulksTrait<K, V, C> {
     fn gc_commit(
         &self,
         changes: impl Iterator<Item = (C, K, Option<V>)>,
-        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
+        write_schema: &impl WriteSchemaTrait<TN>,
     ) -> Result<()>;
 }

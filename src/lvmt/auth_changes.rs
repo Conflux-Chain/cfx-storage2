@@ -4,7 +4,7 @@ use blake2::Blake2s;
 use ethereum_types::H256;
 
 use crate::{
-    backends::{serde::Encode, HistoricalTableName, TableSchema},
+    backends::{serde::Encode, PendingTableName, TableSchema},
     lvmt::types::auth_changes::log2_ceil,
     middlewares::{ChangeKey, CommitID},
 };
@@ -18,8 +18,8 @@ use blake2::Digest;
 #[derive(Clone, Copy)]
 pub struct AuthChangeTable;
 impl TableSchema for AuthChangeTable {
-    type TableName = HistoricalTableName;
-    const NAME: HistoricalTableName = HistoricalTableName::AuthNodeChange;
+    type TableName = PendingTableName;
+    const NAME: PendingTableName = PendingTableName::AuthNodeChange;
 
     type Key = ChangeKey<CommitID, AuthChangeKey>;
     type Value = AuthChangeNode;

@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use crate::{
     backends::{
         serde::{Decode, Encode, EncodeSubKey, FixedLengthEncoded},
-        HistoricalTableName, TableReader, TableSchema, WriteSchemaTrait,
+        TableNameTrait, TableReader, TableSchema, WriteSchemaTrait,
     },
     errors::{DecResult, Result},
     traits::KeyValueStoreBulksTrait,
@@ -34,9 +34,10 @@ impl<'db, T: TableSchema> Clone for KeyValueStoreBulks<'db, T> {
     }
 }
 
-impl<'a, K, V, C, T> KeyValueStoreBulksTrait<K, V, C> for KeyValueStoreBulks<'a, T>
+impl<'a, K, V, C, T, TN> KeyValueStoreBulksTrait<K, V, C, TN> for KeyValueStoreBulks<'a, T>
 where
-    T: TableSchema<Key = ChangeKey<C, K>, Value = V, TableName = HistoricalTableName>,
+    TN: TableNameTrait,
+    T: TableSchema<Key = ChangeKey<C, K>, Value = V, TableName = TN>,
     C: Copy,
     K: Clone,
     V: Clone,
@@ -45,7 +46,7 @@ where
         &self,
         commit: C,
         bulk: impl Iterator<Item = (K, Option<V>)>,
-        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
+        write_schema: &impl WriteSchemaTrait<TN>,
     ) -> Result<()> {
         let table_op =
             bulk.map(|(k, v)| (Cow::Owned(ChangeKey(commit, k)), v.map(|x| Cow::Owned(x))));
@@ -61,7 +62,7 @@ where
     fn gc_commit(
         &self,
         changes: impl Iterator<Item = (C, K, Option<V>)>,
-        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
+        write_schema: &impl WriteSchemaTrait<TN>,
     ) -> Result<()> {
         let table_op = changes
             .map(|(commit, k, v)| (Cow::Owned(ChangeKey(commit, k)), v.map(|x| Cow::Owned(x))));

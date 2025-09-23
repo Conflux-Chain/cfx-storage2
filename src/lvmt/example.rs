@@ -381,7 +381,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         let slot_alloc_store =
             VersionedStore::new(self.historical_db.clone(), self.slot_alloc_cache.clone())?;
         let auth_changes =
-            KeyValueStoreBulks::new(Arc::new(self.historical_db.view::<AuthChangeTable>()?));
+            KeyValueStoreBulks::new(Arc::new(self.pending_db.view::<AuthChangeTable>()?));
 
         Ok(LvmtStore::new(
             self.pending_db.clone(),

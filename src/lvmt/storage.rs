@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -9,11 +10,12 @@ use super::{
     amt_change_manager::AmtChangeManager,
     auth_changes::{amt_change_hash, key_value_hash, process_dump_items, AuthChangeTable},
     crypto::PE,
+    state_root::{StateRoot, StateRootTable},
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
     types::{AllocatePosition, AmtNodeId},
 };
 use crate::{
-    backends::{DatabaseTrait, HistoricalTableName, PendingTableName, WriteSchemaTrait},
+    backends::{DatabaseTrait, PendingTableName, TableRead, WriteSchemaTrait},
     errors::Result,
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::{table_schema::KeyValueSnapshotRead, CommitID},
@@ -45,6 +47,13 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
 }
 
 impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
+    /// Get the state root of the given commit.
+    /// If not found in the pending persistence db, return `None`.
+    pub fn get_state_root(&self, commit: CommitID) -> Result<Option<StateRoot>> {
+        let state_root_view = Arc::new(self.pending_persistence_backend.view::<StateRootTable>()?);
+        Ok(state_root_view.get(&commit)?.map(|x| x.into_owned()))
+    }
+
     pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
         self.get_state(commit)?.get(&key)
     }
@@ -80,21 +89,31 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
         self.amt_node_store.query_commit_existence(commit)
     }
 
-    /// Commits changes to the "pending" component, updating both its in-memory instance
-    /// and persisting the changes to the underlying database (pending_db).
-    ///
-    /// Within this function, a `pending_write_schema` is initialized and then directly
-    /// applied to the `pending_db`. The update to the in-memory instance is also
+    /// Commits all transient data for a new commit ID to the pending database in a single
+    /// atomic operation. The update to the in-memory instance is also
     /// performed here, making this function the designated place for these changes.
     ///
-    /// Note: The `historical_write_schema` is used separately here, only to append
-    /// records to the AuthChangeTable.
+    /// The `AuthChange` and `StateRoot` tables are now managed within the `pending_db`.
+    /// This is because they are generated for every new commit, which aligns with the
+    /// high-frequency write pattern of the pending database, but not with the less
+    /// frequent confirmation cycle of the historical database. This architectural change
+    /// allows all related data for a commit to be written within a single `pending_write_schema`.
+    ///
+    /// To ensure that all five data components (`key-values`, `AMT nodes`, `slot allocations`,
+    /// `auth changes`, and the `state root`) are written atomically, the `state_root` is
+    /// passed in as a parameter. This enables the function to create and manage the
+    /// `pending_write_schema` internally, rather than delegating that responsibility to
+    /// the caller.
+    ///
+    /// TODO: If the historical database ever needs this information, a process can be added
+    /// to copy the `AuthChange` and `StateRoot` data from the pending DB to the historical DB
+    /// when a state is confirmed. Currently, there is no such requirement.
     pub fn commit(
         &self,
         old_commit: Option<CommitID>,
         new_commit: CommitID,
+        state_root: StateRoot,
         changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
-        historical_write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
         pp: &AmtParams<PE>,
     ) -> Result<()> {
         let (amt_node_view, slot_alloc_view, key_value_view) = if let Some(old_commit) = old_commit
@@ -158,10 +177,9 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
 
         // Write to the pending part of db.
         // TODO: Write to the history part is beyond the range of LvmtStore.
-        // TODO: LvmtStore.auth_changes includes all commits, even if they are removed but not confirmed,
-        //       so consider gc_commit elsewhere.
         let pending_write_schema = P::write_schema();
 
+        // write amt_node schema
         let amt_node_updates: HashMap<_, _> =
             amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
         self.amt_node_store.add_to_pending_part(
@@ -171,6 +189,7 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
             &pending_write_schema,
         )?;
 
+        // write key_value schema
         let key_value_updates: HashMap<_, _> = key_value_changes
             .into_iter()
             .map(|(k, v)| (k, Some(v)))
@@ -182,6 +201,7 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
             &pending_write_schema,
         )?;
 
+        // write slot_alloc schema
         let slot_alloc_updates: HashMap<_, _> = allocations
             .into_changes()
             .into_iter()
@@ -194,12 +214,17 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
             &pending_write_schema,
         )?;
 
-        self.commit_to_pending_db(pending_write_schema)?;
-
+        // write auth_change
         let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
         // TODO: Will there be a situation where the same commit but different content occurs?
         self.auth_changes
-            .commit(new_commit, auth_change_bulk, historical_write_schema)?;
+            .commit(new_commit, auth_change_bulk, &pending_write_schema)?;
+
+        // write state_root
+        pending_write_schema
+            .write::<StateRootTable>((Cow::Owned(new_commit), Some(Cow::Owned(state_root))));
+
+        self.commit_to_pending_db(pending_write_schema)?;
 
         Ok(())
     }

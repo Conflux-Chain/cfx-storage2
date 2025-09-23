@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use ethereum_types::H256;
 use once_cell::sync::Lazy;
 use rand_chacha::ChaChaRng;
 
@@ -135,14 +136,12 @@ fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTa
     lvmt: &LvmtStore<'_, P>,
     setup: &TestSetup,
 ) {
-    let historical_write_schema = D::write_schema();
-
     // Perform non-forking commits
     lvmt.commit(
         None,
         setup.commit_1,
+        H256::zero(), // state_root is not used in the test case, so just provide a toy
         TestSetup::changes_iter(&setup.updates_1),
-        &historical_write_schema,
         &AMT,
     )
     .unwrap();
@@ -151,8 +150,8 @@ fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTa
     lvmt.commit(
         Some(setup.commit_1),
         setup.commit_2,
+        H256::zero(),
         TestSetup::changes_iter(&setup.updates_2),
-        &historical_write_schema,
         &AMT,
     )
     .unwrap();
@@ -162,8 +161,8 @@ fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTa
     lvmt.commit(
         Some(setup.commit_1),
         setup.commit_2_1,
+        H256::zero(),
         TestSetup::changes_iter(&setup.updates_2_1),
-        &historical_write_schema,
         &AMT,
     )
     .unwrap();
@@ -171,9 +170,6 @@ fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTa
 
     // Check the previous commit again after adding subsequent commits
     lvmt.check_consistency(setup.commit_1, &AMT).unwrap();
-
-    // Write AuthChanges transactions to historical_db
-    db.commit_to_historical_db(historical_write_schema).unwrap();
 }
 
 /// Verifies the state after a successful root promotion.
@@ -186,14 +182,12 @@ fn run_verification_after_successful_promotion<
 ) {
     let lvmt = db.as_manager().unwrap();
 
-    let historical_write_schema = D::write_schema();
-
     // Commit again to verify success after persisting changes to the backend
     lvmt.commit(
         Some(setup.commit_2),
         setup.commit_3,
+        H256::zero(),
         TestSetup::changes_iter(&setup.updates_3),
-        &historical_write_schema,
         &AMT,
     )
     .unwrap();
@@ -204,9 +198,6 @@ fn run_verification_after_successful_promotion<
     lvmt.check_consistency(setup.commit_1, &AMT).unwrap();
     // commit_2_1 should have been pruned due to the confirmation of commit_2, so this will fail.
     lvmt.check_consistency(setup.commit_2_1, &AMT).unwrap_err();
-
-    // Write AuthChanges transactions to historical_db
-    db.commit_to_historical_db(historical_write_schema).unwrap();
 }
 
 /// Verifies the state after a failed root promotion (which has been rolled back).
@@ -425,17 +416,15 @@ fn test_lvmt_recovery_historical_ahead<
     // After bootstrap recovery, the historical state should be equivalent to the state after a successful promotion, and the pending part should be empty.
     // In this example, the pending part of a successful recovery should have a commit_2 node, so we first add commit_2,
     // and then reuse `run_verification_after_successful_promotion` to verify that subsequent operations are correct.
-    let historical_write_schema = D::write_schema();
     lvmt.commit(
         Some(setup.commit_1),
         setup.commit_2,
+        H256::zero(),
         TestSetup::changes_iter(&setup.updates_2),
-        &historical_write_schema,
         &AMT,
     )
     .unwrap();
     lvmt.check_consistency(setup.commit_2, &AMT).unwrap();
-    historical_db.commit(historical_write_schema).unwrap();
 
     run_verification_after_successful_promotion(&db, &setup);
 }
@@ -769,19 +758,9 @@ fn test_lvmt_commit_with_empty_changes() {
     let mut previous_commits = HashSet::new();
     let commit_id = gen_novel_commit_id(&mut rng, &mut previous_commits);
 
-    let historical_write_schema = WrappedRocksDb::<HistoricalTableName>::write_schema();
-
     // Perform a commit with an empty set of updates.
-    lvmt.commit(
-        None,
-        commit_id,
-        std::iter::empty(),
-        &historical_write_schema,
-        &AMT,
-    )
-    .unwrap();
-
-    db.commit_to_historical_db(historical_write_schema).unwrap();
+    lvmt.commit(None, commit_id, H256::zero(), std::iter::empty(), &AMT)
+        .unwrap();
 
     lvmt.check_consistency(commit_id, &AMT).unwrap();
 

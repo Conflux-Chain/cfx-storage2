@@ -20,13 +20,11 @@ pub enum HistoricalTableName {
     HistoryNumber,
     HistoryChange(VersionedKVName),
     HistoryIndex(VersionedKVName),
-    AuthNodeChange,
-    StateRoot,
 }
 
 impl TableNameTrait for HistoricalTableName {
     fn num_tables() -> u32 {
-        10
+        8
     }
 }
 
@@ -43,8 +41,6 @@ impl From<HistoricalTableName> for u32 {
             HistoryIndex(AmtNode) => 5,
             HistoryChange(SlotAllocation) => 6,
             HistoryIndex(SlotAllocation) => 7,
-            AuthNodeChange => 8,
-            StateRoot => 9,
         }
     }
 }
@@ -61,8 +57,6 @@ impl From<HistoricalTableName> for &'static str {
             HistoryIndex(AmtNode) => "amt_node_history_index",
             HistoryChange(SlotAllocation) => "slot_alloc_change_history",
             HistoryIndex(SlotAllocation) => "slot_alloc_history_index",
-            AuthNodeChange => "auth_node_change",
-            StateRoot => "state_root",
         }
     }
 }
@@ -71,11 +65,13 @@ impl From<HistoricalTableName> for &'static str {
 pub enum PendingTableName {
     Snapshots(VersionedKVName),
     Wal(VersionedKVName),
+    AuthNodeChange,
+    StateRoot,
 }
 
 impl TableNameTrait for PendingTableName {
     fn num_tables() -> u32 {
-        6
+        8
     }
 }
 
@@ -89,6 +85,8 @@ impl From<PendingTableName> for u32 {
             Wal(AmtNode) => 3,
             Snapshots(SlotAllocation) => 4,
             Wal(SlotAllocation) => 5,
+            AuthNodeChange => 6,
+            StateRoot => 7,
         }
     }
 }
@@ -103,6 +101,8 @@ impl From<PendingTableName> for &'static str {
             Wal(AmtNode) => "amt_node_pending_wal",
             Snapshots(SlotAllocation) => "slot_alloc_pending_snapshots",
             Wal(SlotAllocation) => "slot_alloc_pending_wal",
+            AuthNodeChange => "auth_node_change",
+            StateRoot => "state_root",
         }
     }
 }
