@@ -1,9 +1,12 @@
-use std::sync::Arc;
+use std::{fs, path::Path, sync::Arc};
 
 use parking_lot::Mutex;
 
 use crate::{
-    backends::{DatabaseTrait, HistoricalTableName, PendingTableName, TableRead},
+    backends::{
+        impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, PendingTableName,
+        TableRead,
+    },
     errors::Result,
     middlewares::{
         confirm_ids_to_history, confirm_maps_to_history, history_number_to_height,
@@ -13,6 +16,7 @@ use crate::{
         CommitIDSchema, HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig,
         TreeWithTracker, VersionedStore, VersionedStoreCache,
     },
+    StorageError,
 };
 
 use super::{
@@ -81,6 +85,57 @@ fn verify_recovery_consistency<P: DatabaseTrait<PendingTableName>>(
     )?;
 
     Ok(())
+}
+
+impl LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>> {
+    /// Creates a new `Arc<LvmtStorage>` instance directly from file paths for RocksDB.
+    ///
+    /// This is a convenience constructor for the most common use case. It handles:
+    /// - Creating the database directories if they don't exist.
+    /// - **Validating that the historical and pending paths are not the same.**
+    /// - Opening the RocksDB instances.
+    /// - Calling the generic `new` constructor for initialization/recovery.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - The paths are identical.
+    /// - Directory creation fails.
+    /// - The database files cannot be opened.
+    /// - The internal recovery/initialization logic fails.
+    pub fn new_from_paths<P: AsRef<Path>>(
+        historical_db_path: P,
+        pending_db_path: P,
+    ) -> Result<Arc<Self>> {
+        fs::create_dir_all(historical_db_path.as_ref()).map_err(|e| {
+            StorageError::DbInitError(format!("Failed to create historical db path: {}", e))
+        })?;
+        fs::create_dir_all(pending_db_path.as_ref()).map_err(|e| {
+            StorageError::DbInitError(format!("Failed to create pending db path: {}", e))
+        })?;
+
+        let historical_canon_path = fs::canonicalize(historical_db_path.as_ref()).map_err(|e| {
+            StorageError::DbInitError(format!("Failed to canonicalize historical path: {}", e))
+        })?;
+        let pending_canon_path = fs::canonicalize(pending_db_path.as_ref()).map_err(|e| {
+            StorageError::DbInitError(format!("Failed to canonicalize pending path: {}", e))
+        })?;
+        if historical_canon_path == pending_canon_path {
+            return Err(StorageError::InvalidConfig(
+                "Historical and pending database paths cannot be the same.".to_string(),
+            ));
+        }
+
+        let historical_db = WrappedRocksDb::open(historical_db_path).map_err(|e| {
+            StorageError::DbInitError(format!("Failed to open historical db: {}", e))
+        })?;
+        let pending_db = WrappedRocksDb::open(pending_db_path)
+            .map_err(|e| StorageError::DbInitError(format!("Failed to open pending db: {}", e)))?;
+
+        let storage = Self::new(Arc::new(historical_db), Arc::new(pending_db))?;
+
+        Ok(Arc::new(storage))
+    }
 }
 
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {

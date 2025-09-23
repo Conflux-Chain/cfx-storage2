@@ -41,6 +41,11 @@ pub enum StorageError {
     SnapshotReadError(#[from] SnapshotReadError),
     #[error("inconsistent pending part from recovery")]
     InconsistentPendingFromRecovery,
+
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
+    #[error("Database initialization failed: {0}")]
+    DbInitError(String),
 }
 
 impl From<DecodeError> for StorageError {
@@ -105,6 +110,8 @@ impl PartialEq for StorageError {
             (RecoveryError(e1), RecoveryError(e2)) => e1 == e2,
             (SnapshotReadError(e1), SnapshotReadError(e2)) => e1 == e2,
             (InconsistentPendingFromRecovery, InconsistentPendingFromRecovery) => true,
+            (InvalidConfig(e1), InvalidConfig(e2)) => e1 == e2,
+            (DbInitError(e1), DbInitError(e2)) => e1 == e2,
 
             (VersionNotFound, _) => false,
             (CommitIDNotFound, _) => false,
@@ -118,6 +125,8 @@ impl PartialEq for StorageError {
             (RecoveryError(_), _) => false,
             (SnapshotReadError(_), _) => false,
             (InconsistentPendingFromRecovery, _) => false,
+            (InvalidConfig(_), _) => false,
+            (DbInitError(_), _) => false,
         }
     }
 }

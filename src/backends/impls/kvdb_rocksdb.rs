@@ -1,7 +1,7 @@
 use std::{
     borrow::{Borrow, Cow},
     marker::PhantomData,
-    path::PathBuf,
+    path::Path,
     sync::Arc,
 };
 
@@ -24,10 +24,9 @@ pub struct RocksDBColumn {
     inner: Arc<kvdb_rocksdb::Database>,
 }
 
-pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database> {
+pub fn open_database<P: AsRef<Path>>(num_cols: u32, path: P) -> Result<kvdb_rocksdb::Database> {
     let config = DatabaseConfig::with_columns(num_cols);
-    let db_path = PathBuf::from(path);
-    Ok(kvdb_rocksdb::Database::open(&config, db_path)?)
+    Ok(kvdb_rocksdb::Database::open(&config, path)?)
 }
 
 impl<T: TableSchema> TableRead<T> for RocksDBColumn {
@@ -91,7 +90,7 @@ pub struct WrappedRocksDb<TN: TableNameTrait> {
 }
 
 impl<TN: TableNameTrait> WrappedRocksDb<TN> {
-    pub fn open(db_path: &str) -> Result<Self> {
+    pub fn open<P: AsRef<Path>>(db_path: P) -> Result<Self> {
         let db = open_database(TN::num_tables(), db_path)?;
         Ok(Self {
             inner: Arc::new(db),
