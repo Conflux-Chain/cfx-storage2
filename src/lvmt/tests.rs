@@ -259,8 +259,7 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     let setup = get_setup(num_keys);
 
     // Initialize db
-    let db = LvmtStorage::<D, P>::new_from_empty_pending(historical_db.clone(), pending_db.clone())
-        .unwrap();
+    let db = LvmtStorage::<D, P>::new(historical_db.clone(), pending_db.clone()).unwrap();
 
     // Get a manager for db
     let lvmt = db.as_manager().unwrap();
@@ -277,9 +276,15 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     run_verification_after_successful_promotion(&db, &setup);
 }
 
+#[derive(Clone)]
+enum ConstructionMethod {
+    Split,   // invoke from_empty_pending and from_recovery
+    Unified, // invoke new
+}
+
 /// Helper function to set up, simulate a shutdown, and then recover.
 /// It returns the recovered db and lvmt instances for subsequent verification.
-fn setup_and_recover_for_test<
+fn setup_and_reconstruct_for_test<
     D: DatabaseTrait<HistoricalTableName>,
     P: DatabaseTrait<PendingTableName>,
     F: FnOnce(&LvmtStorage<D, P>, &TestSetup),
@@ -288,14 +293,21 @@ fn setup_and_recover_for_test<
     pending_db: Arc<P>,
     num_keys: usize,
     simulate_shutdown_state: F,
+    method: ConstructionMethod,
 ) -> (Result<LvmtStorage<D, P>>, Cow<'static, TestSetup>) {
     let setup = get_setup(num_keys);
 
     // --- Simulate pre-shutdown operations ---
     {
-        let db =
-            LvmtStorage::<D, P>::new_from_empty_pending(historical_db.clone(), pending_db.clone())
-                .unwrap();
+        let db = match method {
+            ConstructionMethod::Split => {
+                LvmtStorage::<D, P>::from_empty_pending(historical_db.clone(), pending_db.clone())
+                    .unwrap()
+            }
+            ConstructionMethod::Unified => {
+                LvmtStorage::<D, P>::new(historical_db.clone(), pending_db.clone()).unwrap()
+            }
+        };
         let lvmt = db.as_manager().unwrap();
         run_phase_1(&db, &lvmt, &setup);
 
@@ -303,7 +315,14 @@ fn setup_and_recover_for_test<
     }
 
     // --- Simulate post-shutdown recovery ---
-    let db_res = LvmtStorage::<D, P>::new_from_recovery(historical_db.clone(), pending_db.clone());
+    let db_res = match method {
+        ConstructionMethod::Split => {
+            LvmtStorage::<D, P>::from_recovery(historical_db.clone(), pending_db.clone())
+        }
+        ConstructionMethod::Unified => {
+            LvmtStorage::<D, P>::new(historical_db.clone(), pending_db.clone())
+        }
+    };
 
     (db_res, setup)
 }
@@ -315,8 +334,9 @@ fn test_lvmt_recovery_consistent_state<
     historical_db: Arc<D>,
     pending_db: Arc<P>,
     num_keys: usize,
+    method: ConstructionMethod,
 ) {
-    let (db_res, setup) = setup_and_recover_for_test(
+    let (db_res, setup) = setup_and_reconstruct_for_test(
         historical_db.clone(),
         pending_db.clone(),
         num_keys,
@@ -325,6 +345,7 @@ fn test_lvmt_recovery_consistent_state<
             db.confirmed_pending_to_history_with_commit_id(setup.commit_2)
                 .unwrap();
         },
+        method,
     );
 
     // The state after recovery should be that the promotion was successful, so we proceed directly to the success verification.
@@ -339,8 +360,9 @@ fn test_lvmt_recovery_pending_ahead<
     historical_db: Arc<D>,
     pending_db: Arc<P>,
     num_keys: usize,
+    method: ConstructionMethod,
 ) {
-    let (db_res, setup) = setup_and_recover_for_test(
+    let (db_res, setup) = setup_and_reconstruct_for_test(
         historical_db.clone(),
         pending_db.clone(),
         num_keys,
@@ -348,6 +370,7 @@ fn test_lvmt_recovery_pending_ahead<
             // Simulate an abnormal shutdown: pending_db is updated, but historical_db is not.
             db.make_pending_db_ahead_for_test(setup.commit_2).unwrap();
         },
+        method,
     );
 
     // The recovery logic should have rolled back the promotion, so we use the verification logic for the failed scenario.
@@ -362,8 +385,9 @@ fn test_lvmt_recovery_historical_ahead<
     historical_db: Arc<D>,
     pending_db: Arc<P>,
     num_keys: usize,
+    method: ConstructionMethod,
 ) {
-    let (db_res, setup) = setup_and_recover_for_test(
+    let (db_res, setup) = setup_and_reconstruct_for_test(
         historical_db.clone(),
         pending_db.clone(),
         num_keys,
@@ -372,21 +396,29 @@ fn test_lvmt_recovery_historical_ahead<
             db.make_historical_db_ahead_for_test(setup.commit_2)
                 .unwrap();
         },
+        method.clone(),
     );
 
-    // Assert that starting in recovery mode fails because pending_db is outdated.
-    assert!(
-        matches!(
-            db_res,
-            Err(StorageError::RecoveryError(
-                RecoveryError::NoValidSnapshotFound
-            ))
-        ),
-        "Expected recovery to fail with NoValidSnapshotFound"
-    );
+    let db = match method {
+        ConstructionMethod::Split => {
+            // Assert that starting in recovery mode fails because pending_db is outdated.
+            assert!(
+                matches!(
+                    db_res,
+                    Err(StorageError::RecoveryError(
+                        RecoveryError::NoValidSnapshotFound
+                    ))
+                ),
+                "Expected recovery to fail with NoValidSnapshotFound"
+            );
 
-    // Since regular recovery failed, we perform a bootstrap recovery.
-    let db = LvmtStorage::new_from_bootstrap(historical_db.clone(), pending_db.clone()).unwrap();
+            // Since regular recovery failed, we perform a bootstrap recovery.
+            LvmtStorage::from_bootstrap(historical_db.clone(), pending_db.clone()).unwrap()
+        }
+
+        ConstructionMethod::Unified => db_res.unwrap(),
+    };
+
     let lvmt = db.as_manager().unwrap();
 
     // Verify the state.
@@ -446,6 +478,137 @@ fn setup_logger() {
 }
 
 #[test]
+fn test_lvmt_recovery_consistent_state_rocksdb_unified() {
+    let historical_path = "__test_lvmt_recovery_consistent_state_historical_unified";
+    let pending_path = "__test_lvmt_recovery_consistent_state_pending_unified";
+
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+
+    let historical_db = WrappedRocksDb::open(historical_path).unwrap();
+    let pending_db = WrappedRocksDb::open(pending_path).unwrap();
+
+    test_lvmt_recovery_consistent_state::<
+        WrappedRocksDb<HistoricalTableName>,
+        WrappedRocksDb<PendingTableName>,
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        100000,
+        ConstructionMethod::Unified,
+    );
+
+    clear_dir(historical_path);
+    clear_dir(pending_path);
+}
+
+#[test]
+fn test_lvmt_recovery_consistent_state_inmemory_unified() {
+    let historical_db = WrappedInMemoryDb::empty();
+    let pending_db = WrappedInMemoryDb::empty();
+
+    test_lvmt_recovery_consistent_state::<
+        WrappedInMemoryDb<HistoricalTableName>,
+        WrappedInMemoryDb<PendingTableName>,
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        1000,
+        ConstructionMethod::Unified,
+    );
+}
+
+#[test]
+fn test_lvmt_recovery_pending_ahead_rocksdb_unified() {
+    setup_logger();
+
+    let historical_path = "__test_lvmt_recovery_pending_ahead_historical_unified";
+    let pending_path = "__test_lvmt_recovery_pending_ahead_pending_unified";
+
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+
+    let historical_db = WrappedRocksDb::open(historical_path).unwrap();
+    let pending_db = WrappedRocksDb::open(pending_path).unwrap();
+
+    test_lvmt_recovery_pending_ahead::<
+        WrappedRocksDb<HistoricalTableName>,
+        WrappedRocksDb<PendingTableName>,
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        100000,
+        ConstructionMethod::Unified,
+    );
+
+    clear_dir(historical_path);
+    clear_dir(pending_path);
+}
+
+#[test]
+fn test_lvmt_recovery_pending_ahead_inmemory_unified() {
+    setup_logger();
+
+    let historical_db = WrappedInMemoryDb::empty();
+    let pending_db = WrappedInMemoryDb::empty();
+
+    test_lvmt_recovery_pending_ahead::<
+        WrappedInMemoryDb<HistoricalTableName>,
+        WrappedInMemoryDb<PendingTableName>,
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        1000,
+        ConstructionMethod::Unified,
+    );
+}
+
+#[test]
+fn test_lvmt_recovery_historical_ahead_rocksdb_unified() {
+    setup_logger();
+
+    let historical_path = "__test_lvmt_recovery_historical_ahead_historical_unified";
+    let pending_path = "__test_lvmt_recovery_historical_ahead_pending_unified";
+
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+
+    let historical_db = WrappedRocksDb::open(historical_path).unwrap();
+    let pending_db = WrappedRocksDb::open(pending_path).unwrap();
+
+    test_lvmt_recovery_historical_ahead::<
+        WrappedRocksDb<HistoricalTableName>,
+        WrappedRocksDb<PendingTableName>,
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        100000,
+        ConstructionMethod::Unified,
+    );
+
+    clear_dir(historical_path);
+    clear_dir(pending_path);
+}
+
+#[test]
+fn test_lvmt_recovery_historical_ahead_inmemory_unified() {
+    setup_logger();
+
+    let historical_db = WrappedInMemoryDb::empty();
+    let pending_db = WrappedInMemoryDb::empty();
+
+    test_lvmt_recovery_historical_ahead::<
+        WrappedInMemoryDb<HistoricalTableName>,
+        WrappedInMemoryDb<PendingTableName>,
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        1000,
+        ConstructionMethod::Unified,
+    );
+}
+
+#[test]
 fn test_lvmt_recovery_consistent_state_rocksdb() {
     let historical_path = "__test_lvmt_recovery_consistent_state_historical";
     let pending_path = "__test_lvmt_recovery_consistent_state_pending";
@@ -459,7 +622,12 @@ fn test_lvmt_recovery_consistent_state_rocksdb() {
     test_lvmt_recovery_consistent_state::<
         WrappedRocksDb<HistoricalTableName>,
         WrappedRocksDb<PendingTableName>,
-    >(Arc::new(historical_db), Arc::new(pending_db), 100000);
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        100000,
+        ConstructionMethod::Split,
+    );
 
     clear_dir(historical_path);
     clear_dir(pending_path);
@@ -473,7 +641,12 @@ fn test_lvmt_recovery_consistent_state_inmemory() {
     test_lvmt_recovery_consistent_state::<
         WrappedInMemoryDb<HistoricalTableName>,
         WrappedInMemoryDb<PendingTableName>,
-    >(Arc::new(historical_db), Arc::new(pending_db), 1000);
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        1000,
+        ConstructionMethod::Split,
+    );
 }
 
 #[test]
@@ -492,7 +665,12 @@ fn test_lvmt_recovery_pending_ahead_rocksdb() {
     test_lvmt_recovery_pending_ahead::<
         WrappedRocksDb<HistoricalTableName>,
         WrappedRocksDb<PendingTableName>,
-    >(Arc::new(historical_db), Arc::new(pending_db), 100000);
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        100000,
+        ConstructionMethod::Split,
+    );
 
     clear_dir(historical_path);
     clear_dir(pending_path);
@@ -508,7 +686,12 @@ fn test_lvmt_recovery_pending_ahead_inmemory() {
     test_lvmt_recovery_pending_ahead::<
         WrappedInMemoryDb<HistoricalTableName>,
         WrappedInMemoryDb<PendingTableName>,
-    >(Arc::new(historical_db), Arc::new(pending_db), 1000);
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        1000,
+        ConstructionMethod::Split,
+    );
 }
 
 #[test]
@@ -527,7 +710,12 @@ fn test_lvmt_recovery_historical_ahead_rocksdb() {
     test_lvmt_recovery_historical_ahead::<
         WrappedRocksDb<HistoricalTableName>,
         WrappedRocksDb<PendingTableName>,
-    >(Arc::new(historical_db), Arc::new(pending_db), 100000);
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        100000,
+        ConstructionMethod::Split,
+    );
 
     clear_dir(historical_path);
     clear_dir(pending_path);
@@ -543,7 +731,12 @@ fn test_lvmt_recovery_historical_ahead_inmemory() {
     test_lvmt_recovery_historical_ahead::<
         WrappedInMemoryDb<HistoricalTableName>,
         WrappedInMemoryDb<PendingTableName>,
-    >(Arc::new(historical_db), Arc::new(pending_db), 1000);
+    >(
+        Arc::new(historical_db),
+        Arc::new(pending_db),
+        1000,
+        ConstructionMethod::Split,
+    );
 }
 
 #[test]
@@ -561,11 +754,12 @@ fn test_lvmt_commit_with_empty_changes() {
     let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
 
     // Set up the LVMT storage from an empty state.
-    let db = LvmtStorage::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>::new_from_empty_pending(
-        historical_db,
-        pending_db,
-    )
-    .unwrap();
+    let db =
+        LvmtStorage::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>::new(
+            historical_db,
+            pending_db,
+        )
+        .unwrap();
 
     // Get a manager to interact with the LVMT.
     let lvmt = db.as_manager().unwrap();

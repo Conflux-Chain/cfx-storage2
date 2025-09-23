@@ -84,8 +84,72 @@ fn verify_recovery_consistency<P: DatabaseTrait<PendingTableName>>(
 }
 
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
+    /// Creates a new LvmtStorage instance, automatically handling recovery or initialization.
+    ///
+    /// This function first checks the state of the `pending_db`.
+    /// - If `pending_db` is empty, it initializes from the latest state of `historical_db`.
+    /// - If `pending_db` is not empty, it attempts to recover the state from it.
+    /// - If recovery fails, it automatically falls back to bootstrap mode: clearing the `pending_db`
+    ///   and re-initializing it. In this case, all unconfirmed commits in the `pending_db` will be lost.
+    pub fn new(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+        if Self::is_pending_db_empty(&pending_db)? {
+            // Scenario 1: The pending_db is empty, so initialize directly using the 'from_empty' logic.
+            Self::from_empty_pending(historical_db, pending_db)
+        } else {
+            // Scenario 2: The pending_db is not empty, so attempt recovery.
+            // Note: We clone the Arcs here because if 'from_recovery' fails, we need to
+            // pass ownership of the Arcs to 'from_bootstrap'. Cloning an Arc is cheap
+            // (it only increments the reference count).
+            match Self::from_recovery(historical_db.clone(), pending_db.clone()) {
+                Ok(instance) => Ok(instance),
+                Err(e) => {
+                    // Scenario 3: Recovery failed, fall back to bootstrap mode.
+                    // Log a critical error. This situation is severe because it implies data loss
+                    // (unconfirmed commits) and suggests a potential data corruption or a bug that
+                    // should not happen in principle.
+                    // We use `error!` as it's the highest severity level in the standard `log` crate.
+                    // We don't `panic!` because the system is designed to recover by bootstrapping,
+                    // and panicking would prevent this automatic recovery.
+                    log::error!(
+                        "Failed to recover from pending database: {}. This is a critical event. \
+                        Falling back to bootstrap mode. ALL UNCONFIRMED COMMITS in the pending database will be LOST.",
+                        e
+                    );
+                    Self::from_bootstrap(historical_db, pending_db)
+                }
+            }
+        }
+    }
+
+    /// Checks if the `pending_db` is empty.
+    ///
+    /// It is considered empty if all relevant data schemas contain no entries.
+    fn is_pending_db_empty(pending_db: &Arc<P>) -> Result<bool> {
+        let kv_is_empty = primitives_verify_schema_is_empty::<
+            PendingKeyValueConfig<FlatKeyValue, CommitID>,
+            P,
+        >(pending_db)
+        .is_ok();
+        let amt_is_empty = primitives_verify_schema_is_empty::<
+            PendingKeyValueConfig<AmtNodes, CommitID>,
+            P,
+        >(pending_db)
+        .is_ok();
+        let slot_is_empty = primitives_verify_schema_is_empty::<
+            PendingKeyValueConfig<SlotAllocations, CommitID>,
+            P,
+        >(pending_db)
+        .is_ok();
+
+        // The entire pending_db is considered empty only if all its component schemas are empty.
+        // If a situation arises where some schemas are empty and others are not, this indicates
+        // an inconsistent state. In such a case, this function will return `false`, correctly
+        // triggering the recovery process (and potentially a bootstrap if recovery fails).
+        Ok(kv_is_empty && amt_is_empty && slot_is_empty)
+    }
+
     /// Creates a new LvmtStorage instance, opening databases and running the recovery process.
-    pub fn new_from_recovery(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+    pub(super) fn from_recovery(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
         let (expected_parent_of_root, expected_height_of_root) =
             get_latest_from_history(&historical_db)?;
 
@@ -150,13 +214,13 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 
     /// Performs a bootstrap recovery.
     ///
-    /// This function is used in scenarios where `new_from_recovery` fails (e.g., when the pending_db
+    /// This function is used in scenarios where `from_recovery` fails (e.g., when the pending_db
     /// state lags behind the historical_db, making it untrustworthy). It completely clears the
     /// `pending_db`, and then creates a new, clean pending component based on the current state
     /// of `historical_db`.
     ///
     /// **Warning**: This operation will destroy all unconfirmed commits in `pending_db`.
-    pub fn new_from_bootstrap(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+    pub(super) fn from_bootstrap(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
         // 1. Clear the entire pending database.
         // Create a single WriteSchema for the entire atomic clearup operation.
         let pending_write_schema = P::write_schema();
@@ -175,11 +239,11 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         pending_db.commit(pending_write_schema)?;
 
         // 2. After clearing, this is equivalent to starting from an empty pending_db.
-        Self::new_from_empty_pending(historical_db, pending_db)
+        Self::from_empty_pending(historical_db, pending_db)
     }
 
     /// Creates a new LvmtStorage instance. It is the caller's responsibility to ensure that the `pending_db` is empty.
-    pub fn new_from_empty_pending(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+    pub(super) fn from_empty_pending(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
         let (expected_parent_of_root, expected_height_of_root) =
             get_latest_from_history(&historical_db)?;
 
