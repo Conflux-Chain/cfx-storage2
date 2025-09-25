@@ -58,10 +58,15 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
         self.get_state(commit)?.get(&key)
     }
 
-    pub fn iter_prefix(&self, commit: CommitID, key_prefix: Box<[u8]>) -> Result<KeyValueVec> {
+    pub fn iter_range(
+        &self,
+        commit: CommitID,
+        lower_bound_incl: Box<[u8]>,
+        upper_bound_excl: Option<Box<[u8]>>,
+    ) -> Result<KeyValueVec> {
         Ok(self
             .get_state(commit)?
-            .iter_prefix(key_prefix)?
+            .iter_range(lower_bound_incl, upper_bound_excl)?
             .collect::<Vec<_>>())
     }
 

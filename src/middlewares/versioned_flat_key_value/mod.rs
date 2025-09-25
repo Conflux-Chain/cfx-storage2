@@ -221,18 +221,19 @@ fn get_versioned_key_previous<'db, T: VersionedKeyValueSchema>(
     }
 }
 
-/// Collects all exsiting keys starting with `key_prefix` and their values at the view of `query_version_number`.
-fn iter_history_prefix<'db, T>(
+/// Collects all exsiting keys in the range of [lower_bound_incl, upper_bound_excl) and their values
+/// at the view of `query_version_number`.
+fn iter_history_range<'db, T>(
     query_version_number: HistoryNumber,
     history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
     maybe_change_history_table: Option<&KeyValueStoreBulks<'db, HistoryChangeTable<T>>>,
-    key_prefix: T::Key,
+    lower_bound_incl: T::Key,
+    upper_bound_excl: Option<T::Key>,
 ) -> Result<BTreeMap<T::Key, T::Value>>
 where
     T: VersionedKeyValueSchema,
-    T::Key: AsRef<[u8]>,
 {
-    let range_query_key = HistoryIndexKey(key_prefix.clone(), 0);
+    let range_query_key = HistoryIndexKey(lower_bound_incl.clone(), 0);
     let (history_index_key, _) = match history_index_table.iter(&range_query_key)?.next() {
         Some(item) => item.unwrap(),
         None => return Ok(BTreeMap::new()),
@@ -242,9 +243,11 @@ where
     let mut history_map = BTreeMap::new();
 
     loop {
-        // check key's prefix
-        if !key.as_ref().starts_with(key_prefix.as_ref()) {
-            break;
+        // check whether key is in range
+        if let Some(ref upper_bound_excl_inner) = upper_bound_excl {
+            if &key >= upper_bound_excl_inner {
+                break;
+            }
         }
 
         let value = if let Some(change_history_table) = maybe_change_history_table {

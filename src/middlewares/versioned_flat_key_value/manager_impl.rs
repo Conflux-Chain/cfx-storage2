@@ -16,7 +16,7 @@ use crate::{
 use super::{
     get_versioned_key_latest, get_versioned_key_previous,
     history_indices::HistoryIndices,
-    iter_history, iter_history_prefix,
+    iter_history, iter_history_range,
     pending_part::{pending_schema::PendingKeyValueConfig, VersionedMap},
     table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema},
     HistoryIndexKey, PendingError, VersionedStore,
@@ -116,18 +116,20 @@ where
     T: VersionedKeyValueSchema,
     T::Key: AsRef<[u8]>,
 {
-    pub fn iter_prefix(
+    pub fn iter_range(
         &self,
-        key_prefix: T::Key,
+        lower_bound_incl: T::Key,
+        upper_bound_excl: Option<T::Key>,
     ) -> Result<impl Iterator<Item = (T::Key, T::Value)>> {
         let res_map = match self {
             SnapshotView::Pending(pending_snapshot) => {
                 let mut map = if let Some(latest_history_snapshot) = &pending_snapshot.latest {
-                    iter_history_prefix(
+                    iter_history_range(
                         latest_history_snapshot.history_number,
                         &latest_history_snapshot.history_index_table,
                         None,
-                        key_prefix.clone(),
+                        lower_bound_incl.clone(),
+                        upper_bound_excl.clone(),
                     )?
                 } else {
                     BTreeMap::new()
@@ -135,8 +137,11 @@ where
 
                 let pending_updates = &pending_snapshot.pending;
                 let pending_guard = pending_updates.inner.lock();
-                let pending_map = pending_guard
-                    .get_versioned_store_prefix(pending_updates.commit_id, &key_prefix)?;
+                let pending_map = pending_guard.get_versioned_store_range(
+                    pending_updates.commit_id,
+                    lower_bound_incl.clone(),
+                    upper_bound_excl.clone(),
+                )?;
                 for (k, v) in pending_map {
                     match v {
                         ValueEntry::Value(value_not_deleted) => {
@@ -149,17 +154,19 @@ where
                 map
             }
             SnapshotView::Historical(historical_snapshot) => match historical_snapshot {
-                HistoricalSnapshot::Latest(latest_history_snapshot) => iter_history_prefix(
+                HistoricalSnapshot::Latest(latest_history_snapshot) => iter_history_range(
                     latest_history_snapshot.history_number,
                     &latest_history_snapshot.history_index_table,
                     None,
-                    key_prefix,
+                    lower_bound_incl.clone(),
+                    upper_bound_excl.clone(),
                 )?,
-                HistoricalSnapshot::Previous(previous_history_snapshot) => iter_history_prefix(
+                HistoricalSnapshot::Previous(previous_history_snapshot) => iter_history_range(
                     previous_history_snapshot.history_number,
                     &previous_history_snapshot.history_index_table,
                     Some(&previous_history_snapshot.change_history_table),
-                    key_prefix,
+                    lower_bound_incl.clone(),
+                    upper_bound_excl.clone(),
                 )?,
             },
         };

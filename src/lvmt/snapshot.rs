@@ -27,9 +27,10 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'db, P> {
         self.key_value_view.get(key)
     }
 
-    pub fn iter_prefix(
+    pub fn iter_range(
         &self,
-        key_prefix: Box<[u8]>,
+        lower_bound_incl: Box<[u8]>,
+        upper_bound_excl: Option<Box<[u8]>>,
     ) -> Result<
         impl '_
             + Iterator<
@@ -39,6 +40,7 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'db, P> {
                 ),
             >,
     > {
-        self.key_value_view.iter_prefix(key_prefix)
+        self.key_value_view
+            .iter_range(lower_bound_incl, upper_bound_excl)
     }
 }

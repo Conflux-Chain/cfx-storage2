@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::ops::Bound;
 
 use crate::backends::{DatabaseTrait, PendingTableName};
 use crate::traits::{IsCompleted, NeedNext};
@@ -386,10 +387,11 @@ where
     S: PendingKeyValueSchema,
     S::Key: AsRef<[u8]>,
 {
-    pub fn get_versioned_store_prefix(
+    pub fn get_versioned_store_range(
         &self,
         commit_id: S::CommitId,
-        key_prefix: &S::Key,
+        lower_bound_incl: S::Key,
+        upper_bound_excl: Option<S::Key>,
     ) -> PendResult<KeyValueMap<S>> {
         // let query node to be self.current
         let mut guard = self.current.write();
@@ -399,10 +401,12 @@ where
 
         let current = guard.as_ref().unwrap();
         let mut result = HashMap::new();
-        for (key, apply_record) in current.range(key_prefix..) {
-            if !key.as_ref().starts_with(key_prefix.as_ref()) {
-                break;
-            }
+        let start_bound = Bound::Included(lower_bound_incl);
+        let end_bound = match &upper_bound_excl {
+            Some(upper) => Bound::Excluded(upper.clone()),
+            None => Bound::Unbounded,
+        };
+        for (key, apply_record) in current.range((start_bound, end_bound)) {
             result.insert(key.clone(), apply_record.value.clone());
         }
         Ok(result)
