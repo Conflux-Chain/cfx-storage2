@@ -27,8 +27,8 @@ pub enum StorageError {
     #[error("pending error {0:?}")]
     PendingError(#[from] PendingError),
 
-    #[error("corrupted history indices")]
-    CorruptedHistoryIndices,
+    #[error("corrupted history indices: {0}")]
+    CorruptedHistoryIndices(String),
 
     #[error("push error {0:?}")]
     PushError(#[from] PushError),
@@ -104,7 +104,7 @@ impl PartialEq for StorageError {
             (ConsistencyCheckFailure, ConsistencyCheckFailure) => true,
             (DatabaseError(e1), DatabaseError(e2)) => e1 == e2,
             (PendingError(e1), PendingError(e2)) => e1 == e2,
-            (CorruptedHistoryIndices, CorruptedHistoryIndices) => true,
+            (CorruptedHistoryIndices(e1), CorruptedHistoryIndices(e2)) => true,
             (PushError(e1), PushError(e2)) => e1 == e2,
             (BootstrapError(e1), BootstrapError(e2)) => e1 == e2,
             (RecoveryError(e1), RecoveryError(e2)) => e1 == e2,
@@ -119,7 +119,7 @@ impl PartialEq for StorageError {
             (ConsistencyCheckFailure, _) => false,
             (DatabaseError(_), _) => false,
             (PendingError(_), _) => false,
-            (CorruptedHistoryIndices, _) => false,
+            (CorruptedHistoryIndices(_), _) => false,
             (PushError(_), _) => false,
             (BootstrapError(_), _) => false,
             (RecoveryError(_), _) => false,

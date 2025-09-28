@@ -387,10 +387,15 @@ impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
                 history_indices.collect_versions_le(end_version_number, end_version_number)?;
 
             match all_version_numbers.pop() {
-                None => return Err(StorageError::CorruptedHistoryIndices),
+                None => {
+                    return Err(StorageError::CorruptedHistoryIndices(
+                        ("A record's all_version_numbers should contain at least one element.")
+                            .to_string(),
+                    ))
+                }
                 Some(largest_version_number) => {
                     if largest_version_number != end_version_number {
-                        return Err(StorageError::CorruptedHistoryIndices);
+                        return Err(StorageError::CorruptedHistoryIndices(format!("A record's all_version_numbers's largest_version_number should be the end_version_number {} instead of {}", end_version_number, largest_version_number)));
                     }
                 }
             }

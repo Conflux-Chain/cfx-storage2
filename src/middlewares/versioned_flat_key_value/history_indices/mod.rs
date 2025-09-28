@@ -95,12 +95,14 @@ impl<V: Clone> HistoryIndices<V> {
             } => {
                 let latest_version_number = start_version_number + range_encoding.max_offset();
                 if latest_version_number > version_number {
-                    Err(StorageError::CorruptedHistoryIndices)
+                    Err(StorageError::CorruptedHistoryIndices(format!("The queried version_number {} is older than the latest {} in get_latest_value().", version_number, latest_version_number)))
                 } else {
                     Ok(latest_value.clone())
                 }
             }
-            HistoryIndices::Previous(_) => Err(StorageError::CorruptedHistoryIndices),
+            HistoryIndices::Previous(_) => Err(StorageError::CorruptedHistoryIndices(
+                "HistoryIndices::Previous calls get_latest_value().".to_string(),
+            )),
         }
     }
 
@@ -140,7 +142,10 @@ impl<V: Clone> HistoryIndices<V> {
             } => {
                 let latest_version_number = *start_version_number + range_encoding.max_offset();
                 if latest_version_number >= version_number {
-                    Err(StorageError::CorruptedHistoryIndices)
+                    Err(StorageError::CorruptedHistoryIndices(format!(
+                        "The version_number {} to be pushed is older than the latest {} in push().",
+                        version_number, latest_version_number
+                    )))
                 } else {
                     // start_version_number <= latest_version_number < version_number
                     let offset = version_number - *start_version_number;
@@ -164,7 +169,9 @@ impl<V: Clone> HistoryIndices<V> {
                     }
                 }
             }
-            HistoryIndices::Previous(_) => Err(StorageError::CorruptedHistoryIndices),
+            HistoryIndices::Previous(_) => Err(StorageError::CorruptedHistoryIndices(
+                "HistoryIndices::Previous calls push().".to_string(),
+            )),
         }
     }
 
@@ -194,7 +201,7 @@ impl<V: Clone> HistoryIndices<V> {
         version_specifier: HistoryNumber,
     ) -> Result<Option<HistoryNumber>> {
         if version_number > version_specifier {
-            return Err(StorageError::CorruptedHistoryIndices);
+            return Err(StorageError::CorruptedHistoryIndices(format!("The queried version_number {} is larger than the version_specifier {} in last_le().", version_number, version_specifier)));
         };
 
         let (start_version_number, range_encoding) =
@@ -211,13 +218,24 @@ impl<V: Clone> HistoryIndices<V> {
     ///   `version_specifier` parameter (from this function's arguments) as its version specifier.
     /// - The record's `version_specifier` should be the **smallest** value
     ///   satisfying `version_specifier >= version_number` in the version chain.
+    ///
+    /// # Cases Analysis
+    /// 1. **With previous record:**
+    ///    - Current record's `start_version_number` = previous record's `end_version_number`.
+    ///    - Previous record's `end_version_number` < `version_number`.
+    ///    - Therefore: `start_version_number < version_number <= version_specifier`.
+    ///      The output list contains at least one element (i.e., current record's `start_version_number`).
+    ///
+    /// 2. **No previous record:**
+    ///    - If `version_number < start_version_number`: The output list is empty.
+    ///    - Else: The output list contains at least one element (i.e., current record's `start_version_number`).
     pub fn collect_versions_le(
         &self,
         version_number: HistoryNumber,
         version_specifier: HistoryNumber,
     ) -> Result<Vec<HistoryNumber>> {
         if version_number > version_specifier {
-            return Err(StorageError::CorruptedHistoryIndices);
+            return Err(StorageError::CorruptedHistoryIndices(format!("The queried version_number {} is larger than the version_specifier {} in collect_versions_le().", version_number, version_specifier)));
         }
 
         let (start_version_number, range_encoding) =
@@ -226,6 +244,9 @@ impl<V: Clone> HistoryIndices<V> {
         Ok(range_encoding.collect_versions_le(start_version_number, version_number))
     }
 
+    /// # Preconditions
+    /// - `self` must correspond to the record stored at [`super::HistoryIndexKey`] with
+    ///   `version_specifier` parameter (from this function's arguments) as its version specifier.
     fn compute_start_version(
         &self,
         version_specifier: HistoryNumber,
@@ -237,18 +258,18 @@ impl<V: Clone> HistoryIndices<V> {
                 ..
             } => {
                 if version_specifier != LATEST {
-                    return Err(StorageError::CorruptedHistoryIndices);
+                    return Err(StorageError::CorruptedHistoryIndices(format!("HistoryIndices::Latest calls compute_start_version() with version_specifier {} that is not equal to LATEST {}", version_specifier, LATEST)));
                 }
                 Ok((*start_version_number, range_encoding))
             }
             HistoryIndices::Previous(range_encoding) => {
                 if version_specifier == LATEST {
-                    return Err(StorageError::CorruptedHistoryIndices);
+                    return Err(StorageError::CorruptedHistoryIndices(format!("HistoryIndices::Previous calls compute_start_version() with version_specifier that is equal to LATEST {}", LATEST)));
                 }
 
                 let max_offset = range_encoding.max_offset();
                 if version_specifier < max_offset {
-                    return Err(StorageError::CorruptedHistoryIndices);
+                    return Err(StorageError::CorruptedHistoryIndices(format!("HistoryIndices::Previous calls compute_start_version() with version_specifier {} that is less than max_offset {}", version_specifier, max_offset)));
                 }
                 let start_version_number = version_specifier - max_offset;
 
