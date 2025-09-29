@@ -132,10 +132,12 @@ impl TestSetup {
 
 /// Executes the first phase of the test: performing a series of commit operations.
 fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>>(
-    db: &LvmtStorage<D, P>,
-    lvmt: &LvmtStore<'_, P>,
+    db: &mut LvmtStorage<D, P>,
     setup: &TestSetup,
 ) {
+    // Get a manager for db
+    let mut lvmt = db.as_manager().unwrap();
+
     // Perform non-forking commits
     lvmt.commit(
         None,
@@ -177,10 +179,10 @@ fn run_verification_after_successful_promotion<
     D: DatabaseTrait<HistoricalTableName>,
     P: DatabaseTrait<PendingTableName>,
 >(
-    db: &LvmtStorage<D, P>,
+    db: &mut LvmtStorage<D, P>,
     setup: &TestSetup,
 ) {
-    let lvmt = db.as_manager().unwrap();
+    let mut lvmt = db.as_manager().unwrap();
 
     // Commit again to verify success after persisting changes to the backend
     lvmt.commit(
@@ -205,7 +207,7 @@ fn run_verification_after_failed_promotion<
     D: DatabaseTrait<HistoricalTableName>,
     P: DatabaseTrait<PendingTableName>,
 >(
-    db: &LvmtStorage<D, P>,
+    db: &mut LvmtStorage<D, P>,
     setup: &TestSetup,
 ) {
     let lvmt = db.as_manager().unwrap();
@@ -215,6 +217,7 @@ fn run_verification_after_failed_promotion<
     lvmt.check_consistency(setup.commit_2_1, &AMT).unwrap();
     lvmt.check_consistency(setup.commit_2, &AMT).unwrap();
     lvmt.check_consistency(setup.commit_1, &AMT).unwrap();
+    drop(lvmt);
 
     // 2. Now, we re-attempt the previously failed operation. This simulates a real system retrying a failed task after recovery.
     db.confirmed_pending_to_history_with_commit_id(setup.commit_2)
@@ -250,13 +253,10 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     let setup = get_setup(num_keys);
 
     // Initialize db
-    let db = LvmtStorage::<D, P>::new(historical_db.clone(), pending_db.clone()).unwrap();
-
-    // Get a manager for db
-    let lvmt = db.as_manager().unwrap();
+    let mut db = LvmtStorage::<D, P>::new(historical_db.clone(), pending_db.clone()).unwrap();
 
     // --- Phase 1 ---
-    run_phase_1(&db, &lvmt, &setup);
+    run_phase_1(&mut db, &setup);
 
     // Persist confirmed commits from caches to the backend.
     db.confirmed_pending_to_history_with_commit_id(setup.commit_2)
@@ -264,7 +264,7 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
 
     // Note: We are still using the same db instance here because we haven't actually restarted.
     // In the recovery tests, we will create new LvmtStorage instances.
-    run_verification_after_successful_promotion(&db, &setup);
+    run_verification_after_successful_promotion(&mut db, &setup);
 }
 
 #[derive(Clone)]
@@ -278,7 +278,7 @@ enum ConstructionMethod {
 fn setup_and_reconstruct_for_test<
     D: DatabaseTrait<HistoricalTableName>,
     P: DatabaseTrait<PendingTableName>,
-    F: FnOnce(&LvmtStorage<D, P>, &TestSetup),
+    F: FnOnce(&mut LvmtStorage<D, P>, &TestSetup),
 >(
     historical_db: Arc<D>,
     pending_db: Arc<P>,
@@ -290,7 +290,7 @@ fn setup_and_reconstruct_for_test<
 
     // --- Simulate pre-shutdown operations ---
     {
-        let db = match method {
+        let mut db = match method {
             ConstructionMethod::Split => {
                 LvmtStorage::<D, P>::from_empty_pending(historical_db.clone(), pending_db.clone())
                     .unwrap()
@@ -299,10 +299,9 @@ fn setup_and_reconstruct_for_test<
                 LvmtStorage::<D, P>::new(historical_db.clone(), pending_db.clone()).unwrap()
             }
         };
-        let lvmt = db.as_manager().unwrap();
-        run_phase_1(&db, &lvmt, &setup);
+        run_phase_1(&mut db, &setup);
 
-        simulate_shutdown_state(&db, &setup);
+        simulate_shutdown_state(&mut db, &setup);
     }
 
     // --- Simulate post-shutdown recovery ---
@@ -340,8 +339,8 @@ fn test_lvmt_recovery_consistent_state<
     );
 
     // The state after recovery should be that the promotion was successful, so we proceed directly to the success verification.
-    let db = db_res.unwrap();
-    run_verification_after_successful_promotion(&db, &setup);
+    let mut db = db_res.unwrap();
+    run_verification_after_successful_promotion(&mut db, &setup);
 }
 
 fn test_lvmt_recovery_pending_ahead<
@@ -365,8 +364,8 @@ fn test_lvmt_recovery_pending_ahead<
     );
 
     // The recovery logic should have rolled back the promotion, so we use the verification logic for the failed scenario.
-    let db = db_res.unwrap();
-    run_verification_after_failed_promotion(&db, &setup);
+    let mut db = db_res.unwrap();
+    run_verification_after_failed_promotion(&mut db, &setup);
 }
 
 fn test_lvmt_recovery_historical_ahead<
@@ -390,7 +389,7 @@ fn test_lvmt_recovery_historical_ahead<
         method.clone(),
     );
 
-    let db = match method {
+    let mut db = match method {
         ConstructionMethod::Split => {
             // Assert that starting in recovery mode fails because pending_db is outdated.
             assert!(
@@ -410,7 +409,7 @@ fn test_lvmt_recovery_historical_ahead<
         ConstructionMethod::Unified => db_res.unwrap(),
     };
 
-    let lvmt = db.as_manager().unwrap();
+    let mut lvmt = db.as_manager().unwrap();
 
     // Verify the state.
     // After bootstrap recovery, the historical state should be equivalent to the state after a successful promotion, and the pending part should be empty.
@@ -425,8 +424,9 @@ fn test_lvmt_recovery_historical_ahead<
     )
     .unwrap();
     lvmt.check_consistency(setup.commit_2, &AMT).unwrap();
+    drop(lvmt);
 
-    run_verification_after_successful_promotion(&db, &setup);
+    run_verification_after_successful_promotion(&mut db, &setup);
 }
 
 #[test]
@@ -743,7 +743,7 @@ fn test_lvmt_commit_with_empty_changes() {
     let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
 
     // Set up the LVMT storage from an empty state.
-    let db =
+    let mut db =
         LvmtStorage::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>::new(
             historical_db,
             pending_db,
@@ -751,7 +751,7 @@ fn test_lvmt_commit_with_empty_changes() {
         .unwrap();
 
     // Get a manager to interact with the LVMT.
-    let lvmt = db.as_manager().unwrap();
+    let mut lvmt = db.as_manager().unwrap();
 
     // Generate a unique commit ID for our test commit.
     let mut rng = get_rng_for_test();
@@ -768,7 +768,7 @@ fn test_lvmt_commit_with_empty_changes() {
     clear_dir(pending_path);
 }
 
-impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
+impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
     pub fn check_consistency(&self, commit: CommitID, pp: &AmtParams<PE>) -> Result<()> {
         use std::collections::BTreeSet;
 
@@ -896,35 +896,30 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
 
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
     pub fn confirmed_pending_to_history_with_commit_id(
-        &self,
+        &mut self,
         new_root_commit_id: CommitID,
     ) -> Result<()> {
-        let mut key_value_cache = self.key_value_cache.lock();
-        self.confirmed_pending_to_history_with_commit_id_inner(
-            new_root_commit_id,
-            &mut *key_value_cache,
-        )
+        self.confirmed_pending_to_history_with_commit_id_inner(new_root_commit_id)
     }
 
     /// **For testing only**
     /// Simulates a crash that occurs after pending_db is updated but before historical_db is updated.
     /// This executes a part of the logic of `confirmed_pending_to_history_with_commit_id`:
     /// It updates the in-memory state of the pending component and pending_db, but does not move the nodes to historical_db.
-    pub fn make_pending_db_ahead_for_test(&self, new_root_commit_id: CommitID) -> Result<()> {
-        let mut key_value_cache = self.key_value_cache.lock();
-        let mut amt_node_cache = self.amt_node_cache.lock();
-        let mut slot_alloc_cache = self.slot_alloc_cache.lock();
-
+    pub fn make_pending_db_ahead_for_test(&mut self, new_root_commit_id: CommitID) -> Result<()> {
         // pending part
         let pending_write_schema = P::write_schema();
 
-        let maybe_key_value_confirmed_path =
-            key_value_cache.change_root(new_root_commit_id, &pending_write_schema)?;
+        let maybe_key_value_confirmed_path = self
+            .key_value_cache
+            .change_root(new_root_commit_id, &pending_write_schema)?;
         if let Some(key_value_confirmed_path) = maybe_key_value_confirmed_path {
-            let amt_node_confirmed_path = amt_node_cache
+            let amt_node_confirmed_path = self
+                .amt_node_cache
                 .change_root(new_root_commit_id, &pending_write_schema)?
                 .expect("AMT node cache should have changed root if key-value cache did");
-            let slot_alloc_confirmed_path = slot_alloc_cache
+            let slot_alloc_confirmed_path = self
+                .slot_alloc_cache
                 .change_root(new_root_commit_id, &pending_write_schema)?
                 .expect("Slot alloc cache should have changed root if key-value cache did");
 
@@ -947,23 +942,22 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     /// This executes a part of the logic of `confirmed_pending_to_history_with_commit_id`:
     /// It updates the in-memory state of the pending component and moves the nodes to historical_db, but does not update pending_db.
     pub(crate) fn make_historical_db_ahead_for_test(
-        &self,
+        &mut self,
         new_root_commit_id: CommitID,
     ) -> Result<()> {
         use crate::lvmt::table_schema::{AmtNodes, FlatKeyValue, SlotAllocations};
 
-        let mut key_value_cache = self.key_value_cache.lock();
-        let mut amt_node_cache = self.amt_node_cache.lock();
-        let mut slot_alloc_cache = self.slot_alloc_cache.lock();
-
         // pending part
-        let maybe_key_value_confirmed_path =
-            key_value_cache.change_root_without_persistence(new_root_commit_id)?;
+        let maybe_key_value_confirmed_path = self
+            .key_value_cache
+            .change_root_without_persistence(new_root_commit_id)?;
         if let Some(key_value_confirmed_path) = maybe_key_value_confirmed_path {
-            let amt_node_confirmed_path = amt_node_cache
+            let amt_node_confirmed_path = self
+                .amt_node_cache
                 .change_root_without_persistence(new_root_commit_id)?
                 .expect("AMT node cache should have changed root if key-value cache did");
-            let slot_alloc_confirmed_path = slot_alloc_cache
+            let slot_alloc_confirmed_path = self
+                .slot_alloc_cache
                 .change_root_without_persistence(new_root_commit_id)?
                 .expect("Slot alloc cache should have changed root if key-value cache did");
 

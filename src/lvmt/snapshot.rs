@@ -7,11 +7,11 @@ use crate::{
 
 use super::{storage::LvmtStore, table_schema::FlatKeyValue};
 
-pub struct LvmtSnapshot<'db, P: DatabaseTrait<PendingTableName>> {
-    key_value_view: SnapshotView<'db, FlatKeyValue, P>,
+pub struct LvmtSnapshot<'a, 'db, P: DatabaseTrait<PendingTableName>> {
+    key_value_view: SnapshotView<'a, 'db, FlatKeyValue, P>,
 }
 
-impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
+impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
     pub fn get_state(&self, commit: CommitID) -> Result<LvmtSnapshot<P>> {
         let key_value_view = self.get_key_value_store().get_versioned_store(&commit)?;
 
@@ -19,7 +19,7 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
     }
 }
 
-impl<'db, P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'db, P> {
+impl<'a, 'db, P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'a, 'db, P> {
     pub fn get(
         &self,
         key: &<FlatKeyValue as VersionedKeyValueSchema>::Key,

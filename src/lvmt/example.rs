@@ -1,7 +1,5 @@
 use std::{fs, path::Path, sync::Arc};
 
-use parking_lot::Mutex;
-
 use crate::{
     backends::{
         impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, PendingTableName,
@@ -30,9 +28,9 @@ pub struct LvmtStorage<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<P
 
     pending_db: Arc<P>,
 
-    pub(super) key_value_cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue, P>>>,
-    pub(super) amt_node_cache: Arc<Mutex<VersionedStoreCache<AmtNodes, P>>>,
-    pub(super) slot_alloc_cache: Arc<Mutex<VersionedStoreCache<SlotAllocations, P>>>,
+    pub(super) key_value_cache: VersionedStoreCache<FlatKeyValue, P>,
+    pub(super) amt_node_cache: VersionedStoreCache<AmtNodes, P>,
+    pub(super) slot_alloc_cache: VersionedStoreCache<SlotAllocations, P>,
 }
 
 impl LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>> {
@@ -54,7 +52,7 @@ impl LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTabl
     pub fn new_from_paths<P: AsRef<Path>>(
         historical_db_path: P,
         pending_db_path: P,
-    ) -> Result<Arc<Self>> {
+    ) -> Result<Self> {
         fs::create_dir_all(historical_db_path.as_ref()).map_err(|e| {
             StorageError::DbInitError(format!("Failed to create historical db path: {}", e))
         })?;
@@ -82,7 +80,7 @@ impl LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTabl
 
         let storage = Self::new(Arc::new(historical_db), Arc::new(pending_db))?;
 
-        Ok(Arc::new(storage))
+        Ok(storage)
     }
 }
 
@@ -196,15 +194,9 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         )?;
 
         // Initialization is complete. Now, create the in-memory VersionedMap instances.
-        let key_value_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            kv_tree_with_tracker,
-        )));
-        let amt_node_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            amt_tree_with_tracker,
-        )));
-        let slot_alloc_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            slot_tree_with_tracker,
-        )));
+        let key_value_cache = VersionedStoreCache::from_initialized_state(kv_tree_with_tracker);
+        let amt_node_cache = VersionedStoreCache::from_initialized_state(amt_tree_with_tracker);
+        let slot_alloc_cache = VersionedStoreCache::from_initialized_state(slot_tree_with_tracker);
 
         Ok(Self {
             historical_db,
@@ -298,15 +290,9 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         )?;
 
         // Initialization is complete. Now, create the in-memory VersionedMap instances.
-        let key_value_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            kv_tree_with_tracker,
-        )));
-        let amt_node_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            amt_tree_with_tracker,
-        )));
-        let slot_alloc_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
-            slot_tree_with_tracker,
-        )));
+        let key_value_cache = VersionedStoreCache::from_initialized_state(kv_tree_with_tracker);
+        let amt_node_cache = VersionedStoreCache::from_initialized_state(amt_tree_with_tracker);
+        let slot_alloc_cache = VersionedStoreCache::from_initialized_state(slot_tree_with_tracker);
 
         Ok(Self {
             historical_db,
@@ -427,13 +413,13 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 }
 
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
-    pub fn as_manager(&self) -> Result<LvmtStore<'_, P>> {
+    pub fn as_manager(&mut self) -> Result<LvmtStore<'_, '_, P>> {
         let key_value_store =
-            VersionedStore::new(self.historical_db.clone(), self.key_value_cache.clone())?;
+            VersionedStore::new(self.historical_db.clone(), &mut self.key_value_cache)?;
         let amt_node_store =
-            VersionedStore::new(self.historical_db.clone(), self.amt_node_cache.clone())?;
+            VersionedStore::new(self.historical_db.clone(), &mut self.amt_node_cache)?;
         let slot_alloc_store =
-            VersionedStore::new(self.historical_db.clone(), self.slot_alloc_cache.clone())?;
+            VersionedStore::new(self.historical_db.clone(), &mut self.slot_alloc_cache)?;
         let auth_changes =
             KeyValueStoreBulks::new(Arc::new(self.pending_db.view::<AuthChangeTable>()?));
 
@@ -477,53 +463,15 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     /// Note: The database commits for the pending and historical parts are not atomic and
     /// a failure between them could lead to an inconsistent state.
     pub fn confirmed_pending_to_history_with_height(
-        &self,
+        &mut self,
         new_root_height: u64,
         pivot_commit_id: CommitID,
     ) -> Result<()> {
-        // CRITICAL: Always obtain key_value_cache' lock first, to avoid dead lock.
-        let mut key_value_cache = self.key_value_cache.lock();
+        let new_root_commit_id = self
+            .key_value_cache
+            .get_ancestor_commit_at_height(new_root_height, pivot_commit_id)?;
 
-        // CRITICAL: This entire function must be atomic, protected by a lock.
-        // The following describes a severe race condition that leads to state corruption
-        // if a lock is not present.
-        //
-        // RACE CONDITION SCENARIO (TOCTOU: Time-of-Check to Time-of-Use):
-        //
-        // 1. (Time-of-Check) Thread A executes the line below. At this precise moment, the
-        //    state of `key_value_cache` is valid for this operation, and the call SUCCEEDS,
-        //    returning a valid `new_root_commit_id`.
-        //
-        // 2. (Interference) A context switch occurs. Thread B executes a concurrent write
-        //    function, like `confirmed_pending_to_history...`. This moves critical data from
-        //    the `pending_part` to the `history_part`. This action fundamentally INVALIDATES
-        //    the preconditions under which Thread A's operation was initiated.
-        //
-        // 3. (Time-of-Use / State Corruption) The context switches back to Thread A. It is
-        //    unaware that its initial check is now meaningless. It proceeds to use the
-        //    `new_root_commit_id` it obtained in step 1 to perform further writes.
-        //    This corrupts the system state because it's applying changes based on a premise
-        //    that is no longer true.
-        //
-        // THE CORRECT (SERIALIZED) BEHAVIOR:
-        // If Thread B had executed first, Thread A's call to `get_ancestor_commit_at_height`
-        // would have occurred *after* the state change. The function would have correctly
-        // FAILED because the data is no longer where it's expected. The `?` operator would
-        // then safely abort the entire operation, preventing any state corruption.
-        //
-        // CONCLUSION:
-        // The race condition creates a brief window where an operation that *should fail*
-        // instead *succeeds*. The lock prevents this by ensuring that the check and the use
-        // (the rest of the function's logic) are an indivisible, atomic unit.
-        let new_root_commit_id =
-            key_value_cache.get_ancestor_commit_at_height(new_root_height, pivot_commit_id)?;
-
-        // ... The rest of this function is the "Time-of-Use" part, which MUST NOT
-        // ... execute if the state has changed since the check above.
-        self.confirmed_pending_to_history_with_commit_id_inner(
-            new_root_commit_id,
-            &mut *key_value_cache,
-        )
+        self.confirmed_pending_to_history_with_commit_id_inner(new_root_commit_id)
     }
 
     /// Promotes the given `new_root_commit_id` to be the new root of the pending component.
@@ -542,23 +490,22 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     /// **Note**: The commits to the `pending_db` and `historical_db` are not atomic. A failure
     /// between these two operations could result in an inconsistent state.
     pub fn confirmed_pending_to_history_with_commit_id_inner(
-        &self,
+        &mut self,
         new_root_commit_id: CommitID,
-        key_value_cache: &mut VersionedStoreCache<FlatKeyValue, P>,
     ) -> Result<()> {
-        let mut amt_node_cache = self.amt_node_cache.lock();
-        let mut slot_alloc_cache = self.slot_alloc_cache.lock();
-
         // pending part
         let pending_write_schema = P::write_schema();
 
-        let maybe_key_value_confirmed_path =
-            key_value_cache.change_root(new_root_commit_id, &pending_write_schema)?;
+        let maybe_key_value_confirmed_path = self
+            .key_value_cache
+            .change_root(new_root_commit_id, &pending_write_schema)?;
         if let Some(key_value_confirmed_path) = maybe_key_value_confirmed_path {
-            let amt_node_confirmed_path = amt_node_cache
+            let amt_node_confirmed_path = self
+                .amt_node_cache
                 .change_root(new_root_commit_id, &pending_write_schema)?
                 .expect("AMT node cache should have changed root if key-value cache did");
-            let slot_alloc_confirmed_path = slot_alloc_cache
+            let slot_alloc_confirmed_path = self
+                .slot_alloc_cache
                 .change_root(new_root_commit_id, &pending_write_schema)?
                 .expect("Slot alloc cache should have changed root if key-value cache did");
 

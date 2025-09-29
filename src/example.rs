@@ -13,18 +13,17 @@ use crate::{
     traits::KeyValueStoreManager,
 };
 use ethereum_types::H256;
-use parking_lot::Mutex;
 use static_assertions::assert_impl_all;
 
-pub struct FlatStore<'db> {
+pub struct FlatStore<'cache, 'db> {
     pending_persistence_backend: Arc<WrappedInMemoryDb<PendingTableName>>,
-    key_value_store: VersionedStore<'db, FlatKeyValue, WrappedInMemoryDb<PendingTableName>>,
+    key_value_store: VersionedStore<'cache, 'db, FlatKeyValue, WrappedInMemoryDb<PendingTableName>>,
 }
 
 pub struct Storage {
     historical_db: Arc<WrappedInMemoryDb<HistoricalTableName>>,
     pending_db: Arc<WrappedInMemoryDb<PendingTableName>>,
-    cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue, WrappedInMemoryDb<PendingTableName>>>>,
+    cache: VersionedStoreCache<FlatKeyValue, WrappedInMemoryDb<PendingTableName>>,
 }
 
 impl Storage {
@@ -43,15 +42,12 @@ impl Storage {
         Ok(Self {
             historical_db: WrappedInMemoryDb::empty().into(),
             pending_db,
-            cache: Mutex::new(VersionedStoreCache::from_initialized_state(
-                tree_with_tracker,
-            ))
-            .into(),
+            cache: VersionedStoreCache::from_initialized_state(tree_with_tracker),
         })
     }
 
-    pub fn as_manager(&self) -> Result<FlatStore<'_>> {
-        let key_value_store = VersionedStore::new(self.historical_db.clone(), self.cache.clone())?;
+    pub fn as_manager(&mut self) -> Result<FlatStore<'_, '_>> {
+        let key_value_store = VersionedStore::new(self.historical_db.clone(), &mut self.cache)?;
         Ok(FlatStore {
             pending_persistence_backend: self.pending_db.clone(),
             key_value_store,
@@ -60,7 +56,7 @@ impl Storage {
 
     // TODO: The durable_height should be obtained from self.historical_part, but this is just a demo.
     fn get_durable_height(&self) -> u64 {
-        let height_of_pending_root = self.cache.lock().get_height_of_root();
+        let height_of_pending_root = self.cache.get_height_of_root();
         let safety_height_diff = 5;
         if height_of_pending_root > safety_height_diff {
             height_of_pending_root - safety_height_diff
@@ -103,7 +99,7 @@ impl Storage {
     }
 }
 
-assert_impl_all!(VersionedStore<'_, FlatKeyValue, WrappedInMemoryDb<PendingTableName>>: KeyValueStoreManager<Box<[u8]>, Box<[u8]>, H256, WrappedInMemoryDb<PendingTableName>>);
+assert_impl_all!(VersionedStore<'_, '_, FlatKeyValue, WrappedInMemoryDb<PendingTableName>>: KeyValueStoreManager<Box<[u8]>, Box<[u8]>, H256, WrappedInMemoryDb<PendingTableName>>);
 
 #[derive(Clone, Copy, Debug)]
 pub struct FlatKeyValue;

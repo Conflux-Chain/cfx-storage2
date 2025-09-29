@@ -29,10 +29,12 @@ where
     C: 'static,
     P: DatabaseTrait<PendingTableName>,
 {
-    type Store: KeyValueStoreRead<K, V>;
+    type Store<'a>: 'a + KeyValueStoreRead<K, V>
+    where
+        Self: 'a;
 
     /// Get the key value store after the commit of given id
-    fn get_versioned_store(&self, commit: &C) -> Result<Self::Store>;
+    fn get_versioned_store<'s>(&'s self, commit: &C) -> Result<Self::Store<'s>>;
 
     /// Start from the given commit, and iter changes backforward
     #[allow(clippy::type_complexity)]

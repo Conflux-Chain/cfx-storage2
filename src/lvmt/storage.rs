@@ -28,19 +28,19 @@ use crate::{
     utils::hash::blake2s,
 };
 
-pub struct LvmtStore<'db, P: DatabaseTrait<PendingTableName>> {
+pub struct LvmtStore<'cache, 'db, P: DatabaseTrait<PendingTableName>> {
     pending_persistence_backend: Arc<P>,
-    key_value_store: VersionedStore<'db, FlatKeyValue, P>,
-    amt_node_store: VersionedStore<'db, AmtNodes, P>,
-    slot_alloc_store: VersionedStore<'db, SlotAllocations, P>,
-    auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
+    key_value_store: VersionedStore<'cache, 'db, FlatKeyValue, P>,
+    amt_node_store: VersionedStore<'cache, 'db, AmtNodes, P>,
+    slot_alloc_store: VersionedStore<'cache, 'db, SlotAllocations, P>,
+    auth_changes: KeyValueStoreBulks<'static, AuthChangeTable>,
 }
 
 const ALLOC_START_VERSION: u64 = 1;
 type KeyValueVec = Vec<(Box<[u8]>, LvmtValue)>;
 
 // Read-only
-impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
+impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
     /// Get the state root of the given commit.
     /// If not found in the pending persistence db, return `None`.
     pub fn get_state_root(&self, commit: CommitID) -> Result<Option<StateRoot>> {
@@ -66,10 +66,10 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
 
     pub fn new(
         pending_persistence_backend: Arc<P>,
-        key_value_store: VersionedStore<'db, FlatKeyValue, P>,
-        amt_node_store: VersionedStore<'db, AmtNodes, P>,
-        slot_alloc_store: VersionedStore<'db, SlotAllocations, P>,
-        auth_changes: KeyValueStoreBulks<'db, AuthChangeTable>,
+        key_value_store: VersionedStore<'cache, 'db, FlatKeyValue, P>,
+        amt_node_store: VersionedStore<'cache, 'db, AmtNodes, P>,
+        slot_alloc_store: VersionedStore<'cache, 'db, SlotAllocations, P>,
+        auth_changes: KeyValueStoreBulks<'static, AuthChangeTable>,
     ) -> Self {
         Self {
             pending_persistence_backend,
@@ -97,7 +97,7 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
 }
 
 // Write
-impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
+impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
     pub fn checkout_current(&mut self, commit: CommitID) -> Result<()> {
         self.key_value_store.checkout_current(commit)
     }
@@ -158,7 +158,7 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
     /// to copy the `AuthChange` and `StateRoot` data from the pending DB to the historical DB
     /// when a state is confirmed. Currently, there is no such requirement.
     pub fn commit(
-        &self,
+        &mut self,
         old_commit: Option<CommitID>,
         new_commit: CommitID,
         state_root: StateRoot,
@@ -336,18 +336,18 @@ fn allocate_version_slot(
     }
 }
 
-impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
-    pub fn get_key_value_store(&self) -> &VersionedStore<'db, FlatKeyValue, P> {
+impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
+    pub fn get_key_value_store(&self) -> &VersionedStore<'cache, 'db, FlatKeyValue, P> {
         &self.key_value_store
     }
 
     #[cfg(test)]
-    pub fn get_amt_node_store(&self) -> &VersionedStore<'db, AmtNodes, P> {
+    pub fn get_amt_node_store(&self) -> &VersionedStore<'cache, 'db, AmtNodes, P> {
         &self.amt_node_store
     }
 
     #[cfg(test)]
-    pub fn get_slot_alloc_store(&self) -> &VersionedStore<'db, SlotAllocations, P> {
+    pub fn get_slot_alloc_store(&self) -> &VersionedStore<'cache, 'db, SlotAllocations, P> {
         &self.slot_alloc_store
     }
 }

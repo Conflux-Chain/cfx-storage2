@@ -14,7 +14,6 @@ use std::sync::Arc;
 pub use history_indices::PushError;
 pub use manager_impl::SnapshotView;
 use nonempty::NonEmpty;
-use parking_lot::Mutex;
 pub use pending_part::TreeWithTracker;
 pub use pending_part::{
     pending_schema::PendingKeyValueConfig, primitives_clear_pending_schema,
@@ -61,8 +60,13 @@ pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 
 pub type HistoryChangeKey<K> = ChangeKey<HistoryNumber, K>;
 
-pub struct VersionedStore<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
-    pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>, P>>>,
+pub struct VersionedStore<
+    'cache,
+    'db,
+    T: VersionedKeyValueSchema,
+    P: DatabaseTrait<PendingTableName>,
+> {
+    pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>, P>,
 
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
@@ -70,8 +74,8 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<Pend
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    VersionedStore<'db, T, P>
+impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStore<'cache, 'db, T, P>
 {
     pub fn is_in_historical_part(&self, commit: &CommitID) -> Result<bool> {
         if self.commit_id_table.get(commit)?.is_some() {
@@ -82,7 +86,7 @@ impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 
     pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
-        if self.pending_part.lock().contains_commit_id(commit) {
+        if self.pending_part.contains_commit_id(commit) {
             return Ok(true);
         }
 
@@ -90,13 +94,11 @@ impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 
     pub fn get_height_of_root(&self) -> u64 {
-        let pending_guard = self.pending_part.lock();
-        pending_guard.get_height_of_root()
+        self.pending_part.get_height_of_root()
     }
 
     pub fn checkout_current(&self, commit: CommitID) -> Result<()> {
-        let pending_guard = self.pending_part.lock();
-        Ok(pending_guard.checkout_current(commit)?)
+        Ok(self.pending_part.checkout_current(commit)?)
     }
 
     pub fn make_pivot(
@@ -104,19 +106,12 @@ impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         commit_id: CommitID,
         write_schema: &P::WriteSchema,
     ) -> Result<bool> {
-        let mut pending_guard = self.pending_part.lock();
-        Ok(pending_guard.make_pivot(commit_id, write_schema)?)
-    }
-
-    pub fn into_pending_part(
-        self,
-    ) -> Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>, P>>> {
-        self.pending_part
+        Ok(self.pending_part.make_pivot(commit_id, write_schema)?)
     }
 
     pub fn new<D: DatabaseTrait<HistoricalTableName>>(
         db: Arc<D>,
-        pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>, P>>>,
+        pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>, P>,
     ) -> Result<Self> {
         let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
         let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
@@ -136,7 +131,7 @@ impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 
     pub fn add_to_pending_part(
-        &self,
+        &mut self,
         parent_commit: Option<CommitID>,
         commit: CommitID,
         updates: HashMap<T::Key, Option<T::Value>>,
@@ -146,8 +141,9 @@ impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
             return Err(StorageError::CommitIdAlreadyExistsInHistory);
         }
 
-        let mut pending_part = self.pending_part.lock();
-        Ok(pending_part.add_node(updates, commit, parent_commit, pending_write_schema)?)
+        Ok(self
+            .pending_part
+            .add_node(updates, commit, parent_commit, pending_write_schema)?)
     }
 
     fn get_history_number_by_commit_id(&self, commit: CommitID) -> Result<HistoryNumber> {
@@ -361,14 +357,13 @@ pub fn confirmed_pending_to_history<
     T: VersionedKeyValueSchema,
 >(
     historical_db: Arc<D>,
-    pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>, P>>>,
+    pending_part: &mut VersionedMap<PendingKeyValueConfig<T, CommitID>, P>,
     new_root_commit_id: CommitID,
     historical_write_schema: &D::WriteSchema,
     pending_write_schema: &P::WriteSchema,
 ) -> Result<()> {
-    let mut pending_part_guard = pending_part.lock();
     let maybe_confirmed_path =
-        pending_part_guard.change_root(new_root_commit_id, pending_write_schema)?;
+        pending_part.change_root(new_root_commit_id, pending_write_schema)?;
 
     if let Some(confirmed_path) = maybe_confirmed_path {
         confirm_ids_to_history::<D>(
