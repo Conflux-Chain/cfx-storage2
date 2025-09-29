@@ -895,6 +895,17 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
 }
 
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
+    pub fn confirmed_pending_to_history_with_commit_id(
+        &self,
+        new_root_commit_id: CommitID,
+    ) -> Result<()> {
+        let mut key_value_cache = self.key_value_cache.lock();
+        self.confirmed_pending_to_history_with_commit_id_inner(
+            new_root_commit_id,
+            &mut *key_value_cache,
+        )
+    }
+
     /// **For testing only**
     /// Simulates a crash that occurs after pending_db is updated but before historical_db is updated.
     /// This executes a part of the logic of `confirmed_pending_to_history_with_commit_id`:

@@ -39,13 +39,7 @@ pub struct LvmtStore<'db, P: DatabaseTrait<PendingTableName>> {
 const ALLOC_START_VERSION: u64 = 1;
 type KeyValueVec = Vec<(Box<[u8]>, LvmtValue)>;
 
-impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
-    fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
-        self.pending_persistence_backend
-            .commit(pending_write_schema)
-    }
-}
-
+// Read-only
 impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
     /// Get the state root of the given commit.
     /// If not found in the pending persistence db, return `None`.
@@ -86,12 +80,62 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
         }
     }
 
+    pub fn is_newer_than_pending_root(&self, height: u64) -> bool {
+        let height_of_root = self.key_value_store.get_height_of_root();
+        height > height_of_root
+    }
+
+    pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
+        self.key_value_store.query_commit_existence(commit)
+    }
+
+    // check whether `commit_id` is already in historical part
+    // TODO: this function should be invoked in many interfaces
+    fn is_in_historical_part(&self, commit: &CommitID) -> Result<bool> {
+        self.key_value_store.is_in_historical_part(commit)
+    }
+}
+
+// Write
+impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
     pub fn checkout_current(&mut self, commit: CommitID) -> Result<()> {
         self.key_value_store.checkout_current(commit)
     }
 
-    pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
-        self.amt_node_store.query_commit_existence(commit)
+    fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
+        self.pending_persistence_backend
+            .commit(pending_write_schema)
+    }
+
+    /// This function discards the siblings of the nodes from the root (excluded) to `commit_id` (included).
+    /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
+    /// The input `commit_id` may be already in historical part, so the first thing is to check this.
+    pub fn make_pivot(&mut self, commit_id: CommitID) -> Result<bool> {
+        let pending_write_schema = P::write_schema();
+
+        if self.is_in_historical_part(&commit_id)? {
+            return Ok(false);
+        }
+
+        let key_value_has_discarded_nodes = self
+            .key_value_store
+            .make_pivot(commit_id, &pending_write_schema)?;
+        let amt_node_has_discarded_nodes = self
+            .amt_node_store
+            .make_pivot(commit_id, &pending_write_schema)?;
+        let slot_alloc_has_discarded_nodes = self
+            .slot_alloc_store
+            .make_pivot(commit_id, &pending_write_schema)?;
+
+        if (key_value_has_discarded_nodes != amt_node_has_discarded_nodes)
+            || (key_value_has_discarded_nodes != slot_alloc_has_discarded_nodes)
+        {
+            return Err(crate::StorageError::ConsistencyCheckFailure);
+        }
+
+        self.commit_to_pending_db(pending_write_schema)?;
+
+        Ok(key_value_has_discarded_nodes)
     }
 
     /// Commits all transient data for a new commit ID to the pending database in a single

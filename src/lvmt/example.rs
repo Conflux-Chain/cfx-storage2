@@ -13,8 +13,8 @@ use crate::{
         primitives_clear_pending_schema, primitives_gc_until_height,
         primitives_initialize_empty_schema, primitives_recover_schema,
         primitives_verify_no_newer_records, primitives_verify_schema_is_empty, CommitID,
-        CommitIDSchema, HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig,
-        TreeWithTracker, VersionedStore, VersionedStoreCache,
+        HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig, TreeWithTracker,
+        VersionedStore, VersionedStoreCache,
     },
     StorageError,
 };
@@ -33,58 +33,6 @@ pub struct LvmtStorage<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<P
     pub(super) key_value_cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue, P>>>,
     pub(super) amt_node_cache: Arc<Mutex<VersionedStoreCache<AmtNodes, P>>>,
     pub(super) slot_alloc_cache: Arc<Mutex<VersionedStoreCache<SlotAllocations, P>>>,
-}
-
-fn get_latest_from_history<D: DatabaseTrait<HistoricalTableName>>(
-    historical_db: &Arc<D>,
-) -> Result<(Option<CommitID>, u64)> {
-    let history_number_table = Arc::new(historical_db.view::<HistoryNumberSchema>()?);
-    let (parent_of_root_commit_id, history_number_of_root) =
-        match history_number_table.iter_rev_from_end()?.next() {
-            Some(latest) => {
-                let (parent_of_root_history_number, parent_of_root_cid) = latest?;
-                (
-                    Some(*parent_of_root_cid.as_ref()),
-                    parent_of_root_history_number.as_ref() + 1,
-                )
-            }
-            None => (None, 0),
-        };
-    let height_of_root = history_number_to_height(history_number_of_root);
-    Ok((parent_of_root_commit_id, height_of_root))
-}
-
-fn verify_recovery_consistency<P: DatabaseTrait<PendingTableName>>(
-    kv_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<FlatKeyValue, CommitID>>,
-    amt_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<AmtNodes, CommitID>>,
-    slot_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<SlotAllocations, CommitID>>,
-    pending_db: &Arc<P>,
-    expected_height_of_root: u64,
-) -> Result<()> {
-    if kv_tree_with_tracker.tracker != amt_tree_with_tracker.tracker
-        || kv_tree_with_tracker.tracker != slot_tree_with_tracker.tracker
-    {
-        return Err(crate::StorageError::InconsistentPendingFromRecovery);
-    }
-
-    let tracker = &kv_tree_with_tracker.tracker;
-    primitives_verify_no_newer_records::<PendingKeyValueConfig<FlatKeyValue, CommitID>, P>(
-        pending_db,
-        expected_height_of_root,
-        tracker,
-    )?;
-    primitives_verify_no_newer_records::<PendingKeyValueConfig<AmtNodes, CommitID>, P>(
-        pending_db,
-        expected_height_of_root,
-        tracker,
-    )?;
-    primitives_verify_no_newer_records::<PendingKeyValueConfig<SlotAllocations, CommitID>, P>(
-        pending_db,
-        expected_height_of_root,
-        tracker,
-    )?;
-
-    Ok(())
 }
 
 impl LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>> {
@@ -206,7 +154,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     /// Creates a new LvmtStorage instance, opening databases and running the recovery process.
     pub(super) fn from_recovery(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
         let (expected_parent_of_root, expected_height_of_root) =
-            get_latest_from_history(&historical_db)?;
+            Self::get_latest_from_history(&historical_db)?;
 
         // Create a single WriteSchema for the entire atomic recovery operation.
         let pending_write_schema = P::write_schema();
@@ -239,7 +187,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         pending_db.commit(pending_write_schema)?;
 
         // Verify consistency of three tree_with_tracker and the pending_db
-        verify_recovery_consistency(
+        Self::verify_recovery_consistency(
             &kv_tree_with_tracker,
             &amt_tree_with_tracker,
             &slot_tree_with_tracker,
@@ -300,7 +248,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     /// Creates a new LvmtStorage instance. It is the caller's responsibility to ensure that the `pending_db` is empty.
     pub(super) fn from_empty_pending(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
         let (expected_parent_of_root, expected_height_of_root) =
-            get_latest_from_history(&historical_db)?;
+            Self::get_latest_from_history(&historical_db)?;
 
         // Verify the `pending_db` is empty for each schema type.
         primitives_verify_schema_is_empty::<PendingKeyValueConfig<FlatKeyValue, CommitID>, P>(
@@ -341,7 +289,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         pending_db.commit(pending_write_schema)?;
 
         // Verify consistency of three tree_with_tracker and the pending_db
-        verify_recovery_consistency(
+        Self::verify_recovery_consistency(
             &kv_tree_with_tracker,
             &amt_tree_with_tracker,
             &slot_tree_with_tracker,
@@ -369,31 +317,60 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         })
     }
 
-    pub fn get_backend(&self) -> Arc<D> {
-        self.historical_db.clone()
+    fn get_latest_from_history(historical_db: &Arc<D>) -> Result<(Option<CommitID>, u64)> {
+        let history_number_table = Arc::new(historical_db.view::<HistoryNumberSchema>()?);
+        let (parent_of_root_commit_id, history_number_of_root) =
+            match history_number_table.iter_rev_from_end()?.next() {
+                Some(latest) => {
+                    let (parent_of_root_history_number, parent_of_root_cid) = latest?;
+                    (
+                        Some(*parent_of_root_cid.as_ref()),
+                        parent_of_root_history_number.as_ref() + 1,
+                    )
+                }
+                None => (None, 0),
+            };
+        let height_of_root = history_number_to_height(history_number_of_root);
+        Ok((parent_of_root_commit_id, height_of_root))
     }
 
-    pub fn as_manager(&self) -> Result<LvmtStore<'_, P>> {
-        let key_value_store =
-            VersionedStore::new(self.historical_db.clone(), self.key_value_cache.clone())?;
-        let amt_node_store =
-            VersionedStore::new(self.historical_db.clone(), self.amt_node_cache.clone())?;
-        let slot_alloc_store =
-            VersionedStore::new(self.historical_db.clone(), self.slot_alloc_cache.clone())?;
-        let auth_changes =
-            KeyValueStoreBulks::new(Arc::new(self.pending_db.view::<AuthChangeTable>()?));
+    fn verify_recovery_consistency(
+        kv_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<FlatKeyValue, CommitID>>,
+        amt_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<AmtNodes, CommitID>>,
+        slot_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<SlotAllocations, CommitID>>,
+        pending_db: &Arc<P>,
+        expected_height_of_root: u64,
+    ) -> Result<()> {
+        if kv_tree_with_tracker.tracker != amt_tree_with_tracker.tracker
+            || kv_tree_with_tracker.tracker != slot_tree_with_tracker.tracker
+        {
+            return Err(crate::StorageError::InconsistentPendingFromRecovery);
+        }
 
-        Ok(LvmtStore::new(
-            self.pending_db.clone(),
-            key_value_store,
-            amt_node_store,
-            slot_alloc_store,
-            auth_changes,
-        ))
+        let tracker = &kv_tree_with_tracker.tracker;
+        primitives_verify_no_newer_records::<PendingKeyValueConfig<FlatKeyValue, CommitID>, P>(
+            pending_db,
+            expected_height_of_root,
+            tracker,
+        )?;
+        primitives_verify_no_newer_records::<PendingKeyValueConfig<AmtNodes, CommitID>, P>(
+            pending_db,
+            expected_height_of_root,
+            tracker,
+        )?;
+        primitives_verify_no_newer_records::<PendingKeyValueConfig<SlotAllocations, CommitID>, P>(
+            pending_db,
+            expected_height_of_root,
+            tracker,
+        )?;
+
+        Ok(())
     }
+}
 
+impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
     fn get_durable_height(&self) -> Result<u64> {
-        let (_, height_of_pending_root) = get_latest_from_history(&self.historical_db)?;
+        let (_, height_of_pending_root) = Self::get_latest_from_history(&self.historical_db)?;
         // TODO: safety_height_diff should be a parameter
         let safety_height_diff = 5;
         let durable_height = if height_of_pending_root > safety_height_diff {
@@ -447,65 +424,39 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 
         Ok(())
     }
+}
 
-    pub fn commit_to_historical_db(
-        &self,
-        write_schema: <D as DatabaseTrait<HistoricalTableName>>::WriteSchema,
-    ) -> Result<()> {
-        self.historical_db.commit(write_schema)
+impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
+    pub fn as_manager(&self) -> Result<LvmtStore<'_, P>> {
+        let key_value_store =
+            VersionedStore::new(self.historical_db.clone(), self.key_value_cache.clone())?;
+        let amt_node_store =
+            VersionedStore::new(self.historical_db.clone(), self.amt_node_cache.clone())?;
+        let slot_alloc_store =
+            VersionedStore::new(self.historical_db.clone(), self.slot_alloc_cache.clone())?;
+        let auth_changes =
+            KeyValueStoreBulks::new(Arc::new(self.pending_db.view::<AuthChangeTable>()?));
+
+        Ok(LvmtStore::new(
+            self.pending_db.clone(),
+            key_value_store,
+            amt_node_store,
+            slot_alloc_store,
+            auth_changes,
+        ))
     }
+}
 
+impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
     pub(super) fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
         self.pending_db.commit(pending_write_schema)
     }
 
-    // check whether `commit_id` is already in historical part
-    // TODO: this function should be invoked in many interfaces
-    fn is_in_historical_part(&self, commit_id: CommitID) -> Result<bool> {
-        let commit_id_table = Arc::new(self.historical_db.view::<CommitIDSchema>()?);
-        if commit_id_table.get(&commit_id)?.is_some() {
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// This function discards the siblings of the nodes from the root (excluded) to `commit_id` (included).
-    /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
-    /// The input `commit_id` may be already in historical part, so the first thing is to check this.
-    pub fn make_pivot(&self, commit_id: CommitID) -> Result<bool> {
-        if self.is_in_historical_part(commit_id)? {
-            return Ok(false);
-        }
-
-        let pending_write_schema = P::write_schema();
-
-        let mut key_value_cache = self.key_value_cache.lock();
-        let mut amt_node_cache = self.amt_node_cache.lock();
-        let mut slot_alloc_cache = self.slot_alloc_cache.lock();
-
-        let key_value_has_discarded_nodes =
-            key_value_cache.make_pivot(commit_id, &pending_write_schema)?;
-        let amt_node_has_discarded_nodes =
-            amt_node_cache.make_pivot(commit_id, &pending_write_schema)?;
-        let slot_alloc_has_discarded_nodes =
-            slot_alloc_cache.make_pivot(commit_id, &pending_write_schema)?;
-
-        if (key_value_has_discarded_nodes != amt_node_has_discarded_nodes)
-            || (key_value_has_discarded_nodes != slot_alloc_has_discarded_nodes)
-        {
-            return Err(crate::StorageError::ConsistencyCheckFailure);
-        }
-
-        self.commit_to_pending_db(pending_write_schema)?;
-
-        Ok(key_value_has_discarded_nodes)
-    }
-
-    pub fn is_newer_than_pending_root(&self, height: u64) -> bool {
-        let key_value_cache = self.key_value_cache.lock();
-        let height_of_root = key_value_cache.get_height_of_root();
-        height > height_of_root
+    pub(super) fn commit_to_historical_db(
+        &self,
+        write_schema: <D as DatabaseTrait<HistoricalTableName>>::WriteSchema,
+    ) -> Result<()> {
+        self.historical_db.commit(write_schema)
     }
 
     /// Promotes an ancestor of `pivot_commit_id` at `new_root_height` to become the new pending root.
@@ -530,12 +481,49 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         new_root_height: u64,
         pivot_commit_id: CommitID,
     ) -> Result<()> {
-        let key_value_cache = self.key_value_cache.lock();
+        // CRITICAL: Always obtain key_value_cache' lock first, to avoid dead lock.
+        let mut key_value_cache = self.key_value_cache.lock();
+
+        // CRITICAL: This entire function must be atomic, protected by a lock.
+        // The following describes a severe race condition that leads to state corruption
+        // if a lock is not present.
+        //
+        // RACE CONDITION SCENARIO (TOCTOU: Time-of-Check to Time-of-Use):
+        //
+        // 1. (Time-of-Check) Thread A executes the line below. At this precise moment, the
+        //    state of `key_value_cache` is valid for this operation, and the call SUCCEEDS,
+        //    returning a valid `new_root_commit_id`.
+        //
+        // 2. (Interference) A context switch occurs. Thread B executes a concurrent write
+        //    function, like `confirmed_pending_to_history...`. This moves critical data from
+        //    the `pending_part` to the `history_part`. This action fundamentally INVALIDATES
+        //    the preconditions under which Thread A's operation was initiated.
+        //
+        // 3. (Time-of-Use / State Corruption) The context switches back to Thread A. It is
+        //    unaware that its initial check is now meaningless. It proceeds to use the
+        //    `new_root_commit_id` it obtained in step 1 to perform further writes.
+        //    This corrupts the system state because it's applying changes based on a premise
+        //    that is no longer true.
+        //
+        // THE CORRECT (SERIALIZED) BEHAVIOR:
+        // If Thread B had executed first, Thread A's call to `get_ancestor_commit_at_height`
+        // would have occurred *after* the state change. The function would have correctly
+        // FAILED because the data is no longer where it's expected. The `?` operator would
+        // then safely abort the entire operation, preventing any state corruption.
+        //
+        // CONCLUSION:
+        // The race condition creates a brief window where an operation that *should fail*
+        // instead *succeeds*. The lock prevents this by ensuring that the check and the use
+        // (the rest of the function's logic) are an indivisible, atomic unit.
         let new_root_commit_id =
             key_value_cache.get_ancestor_commit_at_height(new_root_height, pivot_commit_id)?;
-        drop(key_value_cache);
 
-        self.confirmed_pending_to_history_with_commit_id(new_root_commit_id)
+        // ... The rest of this function is the "Time-of-Use" part, which MUST NOT
+        // ... execute if the state has changed since the check above.
+        self.confirmed_pending_to_history_with_commit_id_inner(
+            new_root_commit_id,
+            &mut *key_value_cache,
+        )
     }
 
     /// Promotes the given `new_root_commit_id` to be the new root of the pending component.
@@ -553,11 +541,11 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     ///
     /// **Note**: The commits to the `pending_db` and `historical_db` are not atomic. A failure
     /// between these two operations could result in an inconsistent state.
-    pub fn confirmed_pending_to_history_with_commit_id(
+    pub fn confirmed_pending_to_history_with_commit_id_inner(
         &self,
         new_root_commit_id: CommitID,
+        key_value_cache: &mut VersionedStoreCache<FlatKeyValue, P>,
     ) -> Result<()> {
-        let mut key_value_cache = self.key_value_cache.lock();
         let mut amt_node_cache = self.amt_node_cache.lock();
         let mut slot_alloc_cache = self.slot_alloc_cache.lock();
 

@@ -58,7 +58,7 @@ impl Storage {
         })
     }
 
-    // The durable_height should be obtained from self.historical_part, but this is just a demo.
+    // TODO: The durable_height should be obtained from self.historical_part, but this is just a demo.
     fn get_durable_height(&self) -> u64 {
         let height_of_pending_root = self.cache.lock().get_height_of_root();
         let safety_height_diff = 5;

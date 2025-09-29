@@ -73,21 +73,39 @@ pub struct VersionedStore<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<Pend
 impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     VersionedStore<'db, T, P>
 {
+    pub fn is_in_historical_part(&self, commit: &CommitID) -> Result<bool> {
+        if self.commit_id_table.get(commit)?.is_some() {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
         if self.pending_part.lock().contains_commit_id(commit) {
             return Ok(true);
         }
 
-        if self.commit_id_table.get(commit)?.is_some() {
-            return Ok(true);
-        }
-
-        Ok(false)
+        self.is_in_historical_part(commit)
     }
 
-    pub fn checkout_current(&mut self, commit: CommitID) -> Result<()> {
+    pub fn get_height_of_root(&self) -> u64 {
+        let pending_guard = self.pending_part.lock();
+        pending_guard.get_height_of_root()
+    }
+
+    pub fn checkout_current(&self, commit: CommitID) -> Result<()> {
         let pending_guard = self.pending_part.lock();
         Ok(pending_guard.checkout_current(commit)?)
+    }
+
+    pub fn make_pivot(
+        &mut self,
+        commit_id: CommitID,
+        write_schema: &P::WriteSchema,
+    ) -> Result<bool> {
+        let mut pending_guard = self.pending_part.lock();
+        Ok(pending_guard.make_pivot(commit_id, write_schema)?)
     }
 
     pub fn into_pending_part(
