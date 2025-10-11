@@ -178,7 +178,11 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
 {
     type Store<'a> = MockOneStore<T::Key, T::Value> where Self: 'a;
 
-    fn get_versioned_store<'s>(&'s self, commit: &CommitID) -> Result<Self::Store<'s>> {
+    fn get_versioned_store<'s>(
+        &'s self,
+        commit: &CommitID,
+        checkout_current: bool,
+    ) -> Result<Self::Store<'s>> {
         if let Some(pending_res) = self.pending.tree.get(commit) {
             Ok(MockOneStore::from_mock_map(&pending_res.store))
         } else if let Some((_, history_res)) = self.history.get(commit) {
@@ -238,7 +242,7 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        self.get_versioned_store(commit)?.get(key)
+        self.get_versioned_store(commit, false)?.get(key)
     }
 }
 
@@ -1011,8 +1015,8 @@ impl<
         commit_id_type: CommitIDType,
         commit: &CommitID,
     ) -> bool {
-        let mock_res = self.mock_store.get_versioned_store(commit);
-        let real_res = self.real_store.get_versioned_store(commit);
+        let mock_res = self.mock_store.get_versioned_store(commit, true);
+        let real_res = self.real_store.get_versioned_store(commit, true);
 
         match commit_id_type {
             CommitIDType::Novel => {
@@ -1094,7 +1098,7 @@ impl<
         commit_id_type: CommitIDType,
         commit: &CommitID,
     ) -> bool {
-        let mock_one_store = self.mock_store.get_versioned_store(commit);
+        let mock_one_store = self.mock_store.get_versioned_store(commit, false);
         let mock_keys = if let Ok(ref mock_store) = mock_one_store {
             mock_store.get_keys()
         } else {

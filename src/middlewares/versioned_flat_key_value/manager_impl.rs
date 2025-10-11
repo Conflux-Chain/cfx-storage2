@@ -256,7 +256,11 @@ impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>
     KeyValueStoreManager<T::Key, T::Value, CommitID, P> for VersionedStore<'cache, 'db, T, P>
 {
     type Store<'a> = SnapshotView<'a, 'db, T, P> where Self: 'a;
-    fn get_versioned_store<'s>(&'s self, commit: &CommitID) -> Result<Self::Store<'s>> {
+    fn get_versioned_store<'s>(
+        &'s self,
+        commit: &CommitID,
+        checkout_current: bool,
+    ) -> Result<Self::Store<'s>> {
         if self.pending_part.contains_commit_id(commit) {
             let latest_history: Option<LatestHistoricalSnapshot<'_, T>> =
                 if let Some(history_commit) = self.pending_part.get_parent_of_root() {
@@ -268,8 +272,9 @@ impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>
                     None
                 };
 
-            // TODO: checkout_current or not?
-            self.pending_part.checkout_current(*commit)?;
+            if checkout_current {
+                self.pending_part.checkout_current(*commit)?;
+            }
 
             Ok(SnapshotView::Pending(PendingSnapshot {
                 pending: PendingUpdates {

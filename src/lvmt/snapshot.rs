@@ -12,8 +12,10 @@ pub struct LvmtSnapshot<'a, 'db, P: DatabaseTrait<PendingTableName>> {
 }
 
 impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
-    pub fn get_state(&self, commit: CommitID) -> Result<LvmtSnapshot<P>> {
-        let key_value_view = self.get_key_value_store().get_versioned_store(&commit)?;
+    pub fn get_state(&self, commit: CommitID, checkout_current: bool) -> Result<LvmtSnapshot<P>> {
+        let key_value_view = self
+            .get_key_value_store()
+            .get_versioned_store(&commit, checkout_current)?;
 
         Ok(LvmtSnapshot { key_value_view })
     }

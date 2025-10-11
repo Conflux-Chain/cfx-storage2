@@ -49,7 +49,7 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
     }
 
     pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
-        self.get_state(commit)?.get(&key)
+        self.get_state(commit, false)?.get(&key)
     }
 
     pub fn iter_range(
@@ -59,7 +59,7 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
         upper_bound_excl: Option<Box<[u8]>>,
     ) -> Result<KeyValueVec> {
         Ok(self
-            .get_state(commit)?
+            .get_state(commit, true)?
             .iter_range(lower_bound_incl, upper_bound_excl)?
             .collect::<Vec<_>>())
     }
@@ -168,9 +168,15 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
         let (amt_node_view, slot_alloc_view, key_value_view) = if let Some(old_commit) = old_commit
         {
             (
-                Some(self.amt_node_store.get_versioned_store(&old_commit)?),
-                Some(self.slot_alloc_store.get_versioned_store(&old_commit)?),
-                Some(self.key_value_store.get_versioned_store(&old_commit)?),
+                Some(self.amt_node_store.get_versioned_store(&old_commit, true)?),
+                Some(
+                    self.slot_alloc_store
+                        .get_versioned_store(&old_commit, true)?,
+                ),
+                Some(
+                    self.key_value_store
+                        .get_versioned_store(&old_commit, true)?,
+                ),
             )
         } else {
             (None, None, None)

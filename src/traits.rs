@@ -34,7 +34,11 @@ where
         Self: 'a;
 
     /// Get the key value store after the commit of given id
-    fn get_versioned_store<'s>(&'s self, commit: &C) -> Result<Self::Store<'s>>;
+    fn get_versioned_store<'s>(
+        &'s self,
+        commit: &C,
+        checkout_current: bool,
+    ) -> Result<Self::Store<'s>>;
 
     /// Start from the given commit, and iter changes backforward
     #[allow(clippy::type_complexity)]
