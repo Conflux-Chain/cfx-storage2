@@ -41,8 +41,8 @@ impl<TN: TableNameTrait> WriteSchemaTrait<TN> for HybridWriteSchemaNoSubkey<TN> 
             .clone()
             .map(|v| <T::Value as Encode>::encode_cow(v).into_owned());
 
-        let operation = TypedWriteOperation::<T> {
-            col: T::NAME.into(),
+        let operation = TypedWriteOperation::<TN, T> {
+            col: T::NAME,
             raw_key,
             raw_value,
             structured_key: Box::new(key.into_owned()),
@@ -60,8 +60,8 @@ impl<TN: TableNameTrait> WriteSchemaTrait<TN> for HybridWriteSchemaNoSubkey<TN> 
             let raw_value = value
                 .as_ref()
                 .map(|v| T::Value::encode_cow(v.clone()).into_owned());
-            let operation = TypedWriteOperation::<T> {
-                col: T::NAME.into(),
+            let operation = TypedWriteOperation::<TN, T> {
+                col: T::NAME,
                 raw_key,
                 raw_value,
                 structured_key: Box::new(key.into_owned()),
@@ -73,7 +73,7 @@ impl<TN: TableNameTrait> WriteSchemaTrait<TN> for HybridWriteSchemaNoSubkey<TN> 
 }
 
 pub trait GenericWriteOperation<TN: TableNameTrait>: Send + Sync {
-    fn col_id(&self) -> u32;
+    fn col_id(&self) -> TN;
 
     fn raw_key(&self) -> &[u8];
 
@@ -90,16 +90,16 @@ pub trait GenericWriteOperation<TN: TableNameTrait>: Send + Sync {
     );
 }
 
-struct TypedWriteOperation<T: TableSchema> {
-    col: u32,
+struct TypedWriteOperation<TN, T: TableSchema> {
+    col: TN,
     raw_key: Vec<u8>,
     raw_value: Option<Vec<u8>>,
     structured_key: Box<T::Key>,
     structured_value: Option<Box<T::Value>>,
 }
 
-impl<TN: TableNameTrait, T: TableSchema<TableName = TN>> GenericWriteOperation<TN> for TypedWriteOperation<T> {
-    fn col_id(&self) -> u32 {
+impl<TN: TableNameTrait, T: TableSchema<TableName = TN>> GenericWriteOperation<TN> for TypedWriteOperation<TN, T> {
+    fn col_id(&self) -> TN {
         self.col
     }
 

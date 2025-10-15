@@ -328,16 +328,16 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
         let mut tx = kvdb::DBTransaction::new();
 
         for op in changes.drain() {
-            let col_id = op.col_id();
+            let col_id = op.col_id().into();
             if let Some(cache_any) = caches_map.get(&col_id) {
                 let metrics = metrics_map.get(&col_id).expect("Metrics should exist if cache exists");
                 TN::apply_cache_update_policy(col_id, &op, cache_any);
             }
 
             if let Some(v) = op.raw_value() {
-                tx.put_vec(op.col_id(), op.raw_key(), v.to_vec());
+                tx.put_vec(col_id, op.raw_key(), v.to_vec());
             } else {
-                tx.delete(op.col_id(), op.raw_key())
+                tx.delete(col_id, op.raw_key())
             }
         }
 
