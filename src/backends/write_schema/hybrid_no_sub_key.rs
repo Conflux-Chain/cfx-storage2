@@ -10,11 +10,11 @@ use crate::backends::{serde::Encode, TableNameTrait, TableSchema};
 
 use super::{TableWriteOp, WriteSchemaTrait};
 
-pub struct HybridWriteSchema<TN: TableNameTrait> {
+pub struct HybridWriteSchemaNoSubkey<TN: TableNameTrait> {
     inner: Mutex<Vec<Box<dyn GenericWriteOperation<TN>>>>,
 }
 
-impl<TN: TableNameTrait> HybridWriteSchema<TN> {
+impl<TN: TableNameTrait> HybridWriteSchemaNoSubkey<TN> {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(Vec::new()),
@@ -26,13 +26,13 @@ impl<TN: TableNameTrait> HybridWriteSchema<TN> {
     }
 }
 
-impl<TN: TableNameTrait> Default for HybridWriteSchema<TN> {
+impl<TN: TableNameTrait> Default for HybridWriteSchemaNoSubkey<TN> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<TN: TableNameTrait> WriteSchemaTrait<TN> for HybridWriteSchema<TN> {
+impl<TN: TableNameTrait> WriteSchemaTrait<TN> for HybridWriteSchemaNoSubkey<TN> {
     fn write<T: TableSchema<TableName = TN>>(&self, op: TableWriteOp<'_, T>) {
         let (key, value) = op;
 

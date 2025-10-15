@@ -11,7 +11,7 @@ use super::super::{
     DatabaseTrait, TableIter, TableRead,
 };
 use crate::{
-    backends::{table_name::TableNameTrait, write_schema::HybridWriteSchema, HistoricalTableName, TableReader},
+    backends::{table_name::TableNameTrait, write_schema::HybridWriteSchemaNoSubkey, HistoricalTableName, TableReader},
     errors::{DatabaseError, Result},
 };
 
@@ -278,10 +278,9 @@ impl<TN: TableNameTrait> WrappedRocksDb<TN> {
 
 impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
     // type TableID = u32;
-    type WriteSchema = HybridWriteSchema<TN>;
+    type WriteSchema = HybridWriteSchemaNoSubkey<TN>;
 
     fn view<T: TableSchema<TableName = TN>>(self: &Arc<Self>) -> Result<TableReader<'static, T>> {
-        const CACHE_CAPACITY: usize = 200_000;
         let col_id: u32 = T::NAME.into();
 
         if let Some(cache_capacity) = TN::get_cache_capacity(col_id) {
