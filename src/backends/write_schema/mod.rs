@@ -14,9 +14,9 @@ pub type TableWriteOp<'a, T> = (
 );
 
 #[auto_impl(&)]
-pub trait WriteSchemaTrait<Name: TableNameTrait>: Send + Sync {
-    fn write<T: TableSchema<TableName = Name>>(&self, op: TableWriteOp<'_, T>);
-    fn write_batch<'a, T: TableSchema<TableName = Name>>(
+pub trait WriteSchemaTrait<TN: TableNameTrait>: Send + Sync {
+    fn write<T: TableSchema<TableName = TN>>(&self, op: TableWriteOp<'_, T>);
+    fn write_batch<'a, T: TableSchema<TableName = TN>>(
         &self,
         changes: impl Iterator<Item = TableWriteOp<'a, T>>,
     );

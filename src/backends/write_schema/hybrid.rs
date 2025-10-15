@@ -10,30 +10,30 @@ use crate::backends::{serde::Encode, TableNameTrait, TableSchema};
 
 use super::{TableWriteOp, WriteSchemaTrait};
 
-pub struct HybridWriteSchema<Name: TableNameTrait> {
-    inner: Mutex<Vec<Box<dyn GenericWriteOperation<Name>>>>,
+pub struct HybridWriteSchema<TN: TableNameTrait> {
+    inner: Mutex<Vec<Box<dyn GenericWriteOperation<TN>>>>,
 }
 
-impl<Name: TableNameTrait> HybridWriteSchema<Name> {
+impl<TN: TableNameTrait> HybridWriteSchema<TN> {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(Vec::new()),
         }
     }
 
-    pub fn drain(self) -> Vec<Box<dyn GenericWriteOperation<Name>>> {
+    pub fn drain(self) -> Vec<Box<dyn GenericWriteOperation<TN>>> {
         self.inner.into_inner()
     }
 }
 
-impl<Name: TableNameTrait> Default for HybridWriteSchema<Name> {
+impl<TN: TableNameTrait> Default for HybridWriteSchema<TN> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<Name: TableNameTrait> WriteSchemaTrait<Name> for HybridWriteSchema<Name> {
-    fn write<T: TableSchema<TableName = Name>>(&self, op: TableWriteOp<'_, T>) {
+impl<TN: TableNameTrait> WriteSchemaTrait<TN> for HybridWriteSchema<TN> {
+    fn write<T: TableSchema<TableName = TN>>(&self, op: TableWriteOp<'_, T>) {
         let (key, value) = op;
 
         let raw_key = <T::Key as Encode>::encode_cow(key.clone()).into_owned();
@@ -52,7 +52,7 @@ impl<Name: TableNameTrait> WriteSchemaTrait<Name> for HybridWriteSchema<Name> {
         self.inner.lock().push(Box::new(operation));
     }
 
-    fn write_batch<'a, T: TableSchema<TableName = Name>>(&self, changes: impl IntoIterator<Item = TableWriteOp<'a, T>>) {
+    fn write_batch<'a, T: TableSchema<TableName = TN>>(&self, changes: impl IntoIterator<Item = TableWriteOp<'a, T>>) {
         let mut inner = self.inner.lock();
         for op in changes {
             let (key, value) = op;
@@ -72,7 +72,7 @@ impl<Name: TableNameTrait> WriteSchemaTrait<Name> for HybridWriteSchema<Name> {
     }
 }
 
-pub trait GenericWriteOperation<Name: TableNameTrait>: Send + Sync {
+pub trait GenericWriteOperation<TN: TableNameTrait>: Send + Sync {
     fn col_id(&self) -> u32;
 
     fn raw_key(&self) -> &[u8];
@@ -98,7 +98,7 @@ struct TypedWriteOperation<T: TableSchema> {
     structured_value: Option<Box<T::Value>>,
 }
 
-impl<Name: TableNameTrait, T: TableSchema<TableName = Name>> GenericWriteOperation<Name> for TypedWriteOperation<T> {
+impl<TN: TableNameTrait, T: TableSchema<TableName = TN>> GenericWriteOperation<TN> for TypedWriteOperation<T> {
     fn col_id(&self) -> u32 {
         self.col
     }
