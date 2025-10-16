@@ -331,7 +331,7 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
             let col_id = op.col_id().into();
             if let Some(cache_any) = caches_map.get(&col_id) {
                 let metrics = metrics_map.get(&col_id).expect("Metrics should exist if cache exists");
-                TN::apply_cache_update_policy(col_id, &op, cache_any);
+                TN::apply_cache_update_policy(col_id, &op, cache_any, metrics);
             }
 
             if let Some(v) = op.raw_value() {
@@ -344,7 +344,7 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
         drop(caches_map);
         drop(metrics_map);
 
-        // self.print_cache_stats();
+        self.print_cache_stats();
 
         Ok(KeyValueDB::write(&*self.inner, tx)?)
     }

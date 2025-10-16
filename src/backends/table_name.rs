@@ -16,6 +16,7 @@ pub trait TableNameTrait: Send + Sync + 'static + Copy + Into<u32> + Into<&'stat
         col_id: u32,
         op: &Box<dyn GenericWriteOperation<Self>>,
         cache_any: &Arc<dyn Any + Send + Sync>,
+        metrics: &Arc<CacheMetrics>,
     ) where
         Self: Sized;
 }
@@ -36,7 +37,7 @@ use VersionedKVName::*;
 
 use crate::{lvmt::table_schema::{AmtNodes, FlatKeyValue}, middlewares::{table_schema::{HistoryIndicesTable, VersionedKeyValueSchema}, CommitIDSchema, HistoryIndexKey}};
 
-use super::{write_schema::GenericWriteOperation, TableSchema};
+use super::{impls::kvdb_rocksdb::CacheMetrics, write_schema::GenericWriteOperation, TableSchema};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum HistoricalTableName {
@@ -82,6 +83,7 @@ impl TableNameTrait for HistoricalTableName {
         col_id: u32,
         op: &Box<dyn GenericWriteOperation<Self>>,
         cache_any: &Arc<dyn Any + Send + Sync>,
+        metrics: &Arc<CacheMetrics>,
     ) where
         Self: Sized
     {
@@ -90,15 +92,15 @@ impl TableNameTrait for HistoricalTableName {
         if col_id == amt_history_index_col_id {
             if let Some(structured_key) = op.structured_key_any().downcast_ref::<Box<AmtHistoryKey>>() {
                 if structured_key.is_latest() {
-                    op.apply_to_cache(cache_any);//, metrics);
+                    op.apply_to_cache(cache_any, metrics);
                 } else {
-                    op.invalidate_in_cache(cache_any);//, metrics);
+                    op.invalidate_in_cache(cache_any, metrics);
                 }
             } else {
                 unreachable!("Type mismatch for AmtNode HistoryIndex key. Expected Box<HistoryIndexKey<<AmtNodes as VersionedKeyValueSchema>::Key>>");
             }
         } else {
-            op.invalidate_in_cache(cache_any);//, metrics);
+            op.invalidate_in_cache(cache_any, metrics);
             // ()
         }
     }
@@ -181,6 +183,7 @@ impl TableNameTrait for PendingTableName {
         _col_id: u32,
         _op: &Box<dyn GenericWriteOperation<Self>>,
         _cache_any: &Arc<dyn Any + Send + Sync>,
+        _metrics: &Arc<CacheMetrics>,
     ) where
         Self: Sized
     {
@@ -264,6 +267,7 @@ impl TableNameTrait for MockTableName {
         _col_id: u32,
         _op: &Box<dyn GenericWriteOperation<Self>>,
         _cache_any: &Arc<dyn Any + Send + Sync>,
+        _metrics: &Arc<CacheMetrics>,
     ) where
         Self: Sized
     {
