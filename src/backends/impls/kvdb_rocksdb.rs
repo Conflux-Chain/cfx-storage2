@@ -55,7 +55,7 @@ type TableCache<T> = LruCache<Box<<T as TableSchema>::Key>, Option<Box<<T as Tab
 pub struct CachedRocksDBColumn<T: TableSchema> {
     col: u32,
     inner: Arc<kvdb_rocksdb::Database>,
-    cache: Arc<Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>>,
+    cache: Arc<Mutex<TableCache<T>>>,
     metrics: Arc<CacheMetrics>,
 }
 
@@ -331,7 +331,7 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
             let col_id = op.col_id().into();
             if let Some(cache_any) = caches_map.get(&col_id) {
                 let metrics = metrics_map.get(&col_id).expect("Metrics should exist if cache exists");
-                TN::apply_cache_update_policy(col_id, &op, cache_any, metrics);
+                TN::apply_cache_update_policy(col_id, op.as_ref(), cache_any, metrics);
             }
 
             if let Some(v) = op.raw_value() {

@@ -14,7 +14,7 @@ pub trait TableNameTrait: Send + Sync + 'static + Copy + Into<u32> + Into<&'stat
     /// Applies the appropriate cache update policy for a given column.
     fn apply_cache_update_policy(
         col_id: u32,
-        op: &Box<dyn GenericWriteOperation<Self>>,
+        op: &dyn GenericWriteOperation<Self>,
         cache_any: &Arc<dyn Any + Send + Sync>,
         metrics: &Arc<CacheMetrics>,
     ) where
@@ -81,7 +81,7 @@ impl TableNameTrait for HistoricalTableName {
 
     fn apply_cache_update_policy(
         col_id: u32,
-        op: &Box<dyn GenericWriteOperation<Self>>,
+        op: &dyn GenericWriteOperation<Self>,
         cache_any: &Arc<dyn Any + Send + Sync>,
         metrics: &Arc<CacheMetrics>,
     ) where
@@ -181,7 +181,7 @@ impl TableNameTrait for PendingTableName {
 
     fn apply_cache_update_policy(
         _col_id: u32,
-        _op: &Box<dyn GenericWriteOperation<Self>>,
+        _op: &dyn GenericWriteOperation<Self>,
         _cache_any: &Arc<dyn Any + Send + Sync>,
         _metrics: &Arc<CacheMetrics>,
     ) where
@@ -265,7 +265,7 @@ impl TableNameTrait for MockTableName {
 
     fn apply_cache_update_policy(
         _col_id: u32,
-        _op: &Box<dyn GenericWriteOperation<Self>>,
+        _op: &dyn GenericWriteOperation<Self>,
         _cache_any: &Arc<dyn Any + Send + Sync>,
         _metrics: &Arc<CacheMetrics>,
     ) where
