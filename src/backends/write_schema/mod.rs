@@ -1,7 +1,7 @@
 mod hybrid_no_sub_key;
 mod no_sub_key;
 
-pub use hybrid_no_sub_key::{HybridWriteSchemaNoSubkey, GenericWriteOperation};
+pub use hybrid_no_sub_key::{GenericWriteOperation, HybridWriteSchemaNoSubkey};
 pub use no_sub_key::WriteSchemaNoSubkey;
 
 use super::{table_name::TableNameTrait, TableSchema};

@@ -1,8 +1,14 @@
 use std::{
-    any::{Any, TypeId}, borrow::{Borrow, Cow}, collections::HashMap, marker::PhantomData, num::NonZeroUsize, path::Path, sync::{
+    any::{Any, TypeId},
+    borrow::{Borrow, Cow},
+    collections::HashMap,
+    marker::PhantomData,
+    num::NonZeroUsize,
+    path::Path,
+    sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
-    }
+    },
 };
 
 use super::super::{
@@ -11,7 +17,10 @@ use super::super::{
     DatabaseTrait, TableIter, TableRead,
 };
 use crate::{
-    backends::{table_name::TableNameTrait, write_schema::HybridWriteSchemaNoSubkey, HistoricalTableName, TableReader},
+    backends::{
+        table_name::TableNameTrait, write_schema::HybridWriteSchemaNoSubkey, HistoricalTableName,
+        TableReader,
+    },
     errors::{DatabaseError, Result},
 };
 
@@ -135,8 +144,7 @@ impl<T: TableSchema> TableRead<T> for CachedRocksDBColumn<T> {
         // 3. write db result to cache
         {
             let mut cache = self.cache.lock();
-            let evicted_item = 
-            cache.put(
+            let evicted_item = cache.put(
                 Box::new(key.clone()),
                 db_result.as_ref().map(|v| Box::new(v.clone())),
             );
@@ -198,7 +206,7 @@ pub struct WrappedRocksDb<TN: TableNameTrait> {
     // This is crucial for the type system to associate WrappedRocksDb<HistoricalTableName>
     // with HistoricalTableName.
     _phantom: PhantomData<TN>,
-    
+
     caches: Mutex<HashMap<u32, Arc<dyn Any + Send + Sync>>>,
     // metrics for each cache
     metrics: Mutex<HashMap<u32, Arc<CacheMetrics>>>,
@@ -220,7 +228,11 @@ impl<TN: TableNameTrait> WrappedRocksDb<TN> {
         const TABLE_WIDTH: usize = 140;
 
         println!("{:-<width$}", "", width = TABLE_WIDTH);
-        println!("{:^width$}", "Cache Performance Statistics", width = TABLE_WIDTH);
+        println!(
+            "{:^width$}",
+            "Cache Performance Statistics",
+            width = TABLE_WIDTH
+        );
         println!("{:-<width$}", "", width = TABLE_WIDTH);
         println!(
             "{:<12} | {:<28} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10}",
@@ -249,14 +261,13 @@ impl<TN: TableNameTrait> WrappedRocksDb<TN> {
                 "N/A".to_string()
             };
 
-            let table_name: String = TN::try_from(*col_id)
-                .map_or_else(
-                    |_| format!("Invalid Col ID ({})", col_id),
-                    |table_instance| {
-                        let static_str: &'static str = table_instance.into();
-                        static_str.to_string()
-                    }
-                );
+            let table_name: String = TN::try_from(*col_id).map_or_else(
+                |_| format!("Invalid Col ID ({})", col_id),
+                |table_instance| {
+                    let static_str: &'static str = table_instance.into();
+                    static_str.to_string()
+                },
+            );
 
             println!(
                 "{:<12} | {:<28} | {:>10} | {:>9.2}% | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10}",
@@ -330,7 +341,9 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
         for op in changes.drain() {
             let col_id = op.col_id().into();
             if let Some(cache_any) = caches_map.get(&col_id) {
-                let metrics = metrics_map.get(&col_id).expect("Metrics should exist if cache exists");
+                let metrics = metrics_map
+                    .get(&col_id)
+                    .expect("Metrics should exist if cache exists");
                 TN::apply_cache_update_policy(col_id, op.as_ref(), cache_any, metrics);
             }
 

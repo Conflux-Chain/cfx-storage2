@@ -6,7 +6,9 @@ use std::{
 use lru::LruCache;
 use parking_lot::Mutex;
 
-use crate::backends::{impls::kvdb_rocksdb::CacheMetrics, serde::Encode, TableNameTrait, TableSchema};
+use crate::backends::{
+    impls::kvdb_rocksdb::CacheMetrics, serde::Encode, TableNameTrait, TableSchema,
+};
 
 use super::{TableWriteOp, WriteSchemaTrait};
 
@@ -52,7 +54,10 @@ impl<TN: TableNameTrait> WriteSchemaTrait<TN> for HybridWriteSchemaNoSubkey<TN> 
         self.inner.lock().push(Box::new(operation));
     }
 
-    fn write_batch<'a, T: TableSchema<TableName = TN>>(&self, changes: impl IntoIterator<Item = TableWriteOp<'a, T>>) {
+    fn write_batch<'a, T: TableSchema<TableName = TN>>(
+        &self,
+        changes: impl IntoIterator<Item = TableWriteOp<'a, T>>,
+    ) {
         let mut inner = self.inner.lock();
         for op in changes {
             let (key, value) = op;
@@ -98,7 +103,9 @@ struct TypedWriteOperation<TN, T: TableSchema> {
     structured_value: Option<Box<T::Value>>,
 }
 
-impl<TN: TableNameTrait, T: TableSchema<TableName = TN>> GenericWriteOperation<TN> for TypedWriteOperation<TN, T> {
+impl<TN: TableNameTrait, T: TableSchema<TableName = TN>> GenericWriteOperation<TN>
+    for TypedWriteOperation<TN, T>
+{
     fn col_id(&self) -> TN {
         self.col
     }
@@ -143,8 +150,7 @@ impl<TN: TableNameTrait, T: TableSchema<TableName = TN>> GenericWriteOperation<T
         {
             let mut cache = typed_cache_arc.lock();
             // Just pop! No clones of the value needed.
-            let popped_item = 
-            cache.pop(&self.structured_key);
+            let popped_item = cache.pop(&self.structured_key);
             if popped_item.is_some() {
                 metrics.pops.fetch_add(1, Ordering::Relaxed);
             } else {

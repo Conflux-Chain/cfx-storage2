@@ -37,9 +37,7 @@ pub trait DatabaseTrait<TN: TableNameTrait>: Sized + Send + Sync {
     /// # Returns
     ///
     /// A `Result` containing an implementation of `TableReader` for the specified schema.
-    fn view<T: TableSchema<TableName = TN>>(
-        self: &Arc<Self>,
-    ) -> Result<TableReader<'static, T>>;
+    fn view<T: TableSchema<TableName = TN>>(self: &Arc<Self>) -> Result<TableReader<'static, T>>;
 
     /// Creates a new WriteSchema instance.
     ///
