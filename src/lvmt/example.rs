@@ -359,11 +359,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         let (_, height_of_pending_root) = Self::get_latest_from_history(&self.historical_db)?;
         // TODO: safety_height_diff should be a parameter
         let safety_height_diff = 5;
-        let durable_height = if height_of_pending_root > safety_height_diff {
-            height_of_pending_root - safety_height_diff
-        } else {
-            0
-        };
+        let durable_height = height_of_pending_root.saturating_sub(safety_height_diff);
         Ok(durable_height)
     }
 

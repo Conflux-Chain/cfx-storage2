@@ -253,7 +253,7 @@ mod tests {
 
         #[test]
         fn test_consistent_len(data in any::<AuthChangeNode>()) {
-            if data.ticks.as_ref().map_or(true, |x|x.is_empty()) {
+            if data.ticks.as_ref().is_none_or(|x|x.is_empty()) {
                 return Ok(());
             }
 

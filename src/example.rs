@@ -58,11 +58,7 @@ impl Storage {
     fn get_durable_height(&self) -> u64 {
         let height_of_pending_root = self.cache.get_height_of_root();
         let safety_height_diff = 5;
-        if height_of_pending_root > safety_height_diff {
-            height_of_pending_root - safety_height_diff
-        } else {
-            0
-        }
+        height_of_pending_root.saturating_sub(safety_height_diff)
     }
 
     /// Performs background garbage collection on the pending persistence layer.

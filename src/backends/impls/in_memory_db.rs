@@ -59,7 +59,10 @@ impl<T: TableSchema> TableRead<T> for InMemoryTable {
         }
     }
 
-    fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
+    fn iter<'a, 'b>(&'a self, key: &T::Key) -> Result<TableIter<'a, 'b, T>>
+    where
+        'a: 'b,
+    {
         let start = (self.col, key.encode().into_owned());
 
         let items: Vec<(Vec<u8>, Vec<u8>)> = {

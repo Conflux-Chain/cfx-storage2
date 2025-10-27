@@ -11,7 +11,7 @@ pub struct LvmtSnapshot<'a, 'db, P: DatabaseTrait<PendingTableName>> {
     key_value_view: SnapshotView<'a, 'db, FlatKeyValue, P>,
 }
 
-impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
+impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
     pub fn get_state(&self, commit: CommitID, checkout_current: bool) -> Result<LvmtSnapshot<P>> {
         let key_value_view = self
             .get_key_value_store()
@@ -21,7 +21,7 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
     }
 }
 
-impl<'a, 'db, P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'a, 'db, P> {
+impl<P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'_, '_, P> {
     pub fn get(
         &self,
         key: &<FlatKeyValue as VersionedKeyValueSchema>::Key,

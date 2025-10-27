@@ -62,8 +62,8 @@ pub struct PreviousHistoricalSnapshot<'db, T: VersionedKeyValueSchema> {
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'a, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    KeyValueStoreIterable<T::Key, T::Value> for SnapshotView<'a, 'db, T, P>
+impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreIterable<T::Key, T::Value> for SnapshotView<'_, '_, T, P>
 {
     fn iter(&self) -> Result<impl Iterator<Item = (T::Key, T::Value)>> {
         let map = match self {
@@ -111,7 +111,7 @@ impl<'a, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 }
 
-impl<'a, 'db, T, P: DatabaseTrait<PendingTableName>> SnapshotView<'a, 'db, T, P>
+impl<T, P: DatabaseTrait<PendingTableName>> SnapshotView<'_, '_, T, P>
 where
     T: VersionedKeyValueSchema,
     T::Key: AsRef<[u8]>,
@@ -174,16 +174,16 @@ where
     }
 }
 
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for LatestHistoricalSnapshot<'db, T>
+impl<T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for LatestHistoricalSnapshot<'_, T>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         get_versioned_key_latest(self.history_number, key, &self.history_index_table)
     }
 }
 
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for PreviousHistoricalSnapshot<'db, T>
+impl<T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for PreviousHistoricalSnapshot<'_, T>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         get_versioned_key_previous(
@@ -195,9 +195,7 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
     }
 }
 
-impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for HistoricalSnapshot<'db, T>
-{
+impl<T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value> for HistoricalSnapshot<'_, T> {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         match self {
             HistoricalSnapshot::Latest(latest_historical_snapshot) => {
@@ -210,8 +208,8 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
     }
 }
 
-impl<'a, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    KeyValueStoreRead<T::Key, T::Value> for PendingSnapshot<'a, 'db, T, P>
+impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreRead<T::Key, T::Value> for PendingSnapshot<'_, '_, T, P>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         let pending_optv = self
@@ -229,8 +227,8 @@ impl<'a, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 }
 
-impl<'a, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    KeyValueStoreRead<T::Key, T::Value> for SnapshotView<'a, 'db, T, P>
+impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreRead<T::Key, T::Value> for SnapshotView<'_, '_, T, P>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         match self {
@@ -240,8 +238,8 @@ impl<'a, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 }
 
-impl<'a, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    KeyValueStoreRead<T::Key, T::Value> for Option<SnapshotView<'a, 'db, T, P>>
+impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreRead<T::Key, T::Value> for Option<SnapshotView<'_, '_, T, P>>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         if let Some(view) = self {
@@ -252,8 +250,8 @@ impl<'a, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    KeyValueStoreManager<T::Key, T::Value, CommitID, P> for VersionedStore<'cache, 'db, T, P>
+impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    KeyValueStoreManager<T::Key, T::Value, CommitID, P> for VersionedStore<'_, 'db, T, P>
 {
     type Store<'a> = SnapshotView<'a, 'db, T, P> where Self: 'a;
     fn get_versioned_store<'s>(
@@ -370,9 +368,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>
 }
 
 // Helper methods used in trait implementations
-impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    VersionedStore<'cache, 'db, T, P>
-{
+impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedStore<'_, '_, T, P> {
     fn iter_historical_changes_one_range(
         &self,
         mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,

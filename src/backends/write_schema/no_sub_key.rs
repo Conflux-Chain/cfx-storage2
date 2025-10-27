@@ -30,10 +30,10 @@ impl<TN: TableNameTrait> WriteSchemaNoSubkey<TN> {
 }
 
 impl<TN: TableNameTrait> WriteSchemaNoSubkey<TN> {
-    fn write_inner<T: TableSchema>(inner: &mut Vec<WriteSchemaOp<TN>>, op: TableWriteOp<T>)
-    where
-        T: TableSchema<TableName = TN>,
-    {
+    fn write_inner<T: TableSchema<TableName = TN>>(
+        inner: &mut Vec<WriteSchemaOp<TN>>,
+        op: TableWriteOp<T>,
+    ) {
         let (key, value) = op;
         let raw_key = <T::Key as Encode>::encode_cow(key).into_owned();
         let raw_value = value.map(|v| <T::Value as Encode>::encode_cow(v).into_owned());

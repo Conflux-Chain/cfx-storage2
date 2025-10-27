@@ -79,8 +79,8 @@ pub struct VersionedStore<
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    VersionedStore<'cache, 'db, T, P>
+impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStore<'cache, '_, T, P>
 {
     pub fn is_in_historical_part(&self, commit: &CommitID) -> Result<bool> {
         if self.commit_id_table.get(commit)?.is_some() {

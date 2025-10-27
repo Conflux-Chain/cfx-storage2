@@ -78,7 +78,10 @@ impl<T: TableSchema> TableRead<T> for UncachedRocksDBColumn {
         }
     }
 
-    fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
+    fn iter<'a, 'b>(&'a self, key: &T::Key) -> Result<TableIter<'a, 'b, T>>
+    where
+        'a: 'b,
+    {
         let iter = self
             .inner
             .iter_from(self.col, &key.encode())
@@ -158,7 +161,10 @@ impl<T: TableSchema> TableRead<T> for CachedRocksDBColumn<T> {
         Ok(db_result.map(Cow::Owned))
     }
 
-    fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
+    fn iter<'a, 'b>(&'a self, key: &T::Key) -> Result<TableIter<'a, 'b, T>>
+    where
+        'a: 'b,
+    {
         let iter = self
             .inner
             .iter_from(self.col, &key.encode())
