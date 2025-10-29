@@ -1,5 +1,5 @@
 mod version_range;
-pub use version_range::PushError;
+pub use version_range::{BitmapValidationError, PushError};
 
 use static_assertions::const_assert;
 pub use version_range::{OffsetBasedVersionRange, U16_VECTOR_CAPACITY, U32_VECTOR_CAPACITY};
@@ -447,7 +447,7 @@ mod tests {
         let start = 1000;
 
         // Test Latest
-        let bitmap = Bitmap::new_from_vec(&[0, 7, 8, 15]);
+        let bitmap = Bitmap::try_new_from_vec(&[0, 7, 8, 15]).unwrap();
         let latest = create_latest(start, OffsetBasedVersionRange::Bitmap(bitmap), None);
         assert_eq!(
             latest.collect_versions_le(start + 16, LATEST).unwrap(),
@@ -518,7 +518,7 @@ pub mod test_utils {
     };
 
     use super::{
-        version_range::{Bitmap, BITMAP_MAX_INDEX},
+        version_range::{Bitmap, ValidBitmap, BITMAP_MAX_INDEX},
         HistoryIndices, OffsetBasedVersionRange, U16_VECTOR_CAPACITY,
     };
 
@@ -640,9 +640,9 @@ pub mod test_utils {
         data
     }
 
-    pub fn get_bitmap_from_binary(existing: &[u8]) -> Bitmap {
+    pub fn get_bitmap_from_binary(existing: &[u8]) -> ValidBitmap {
         let data = get_bitmap_vec_from_binary(existing);
-        Bitmap::new_from_vec(&data)
+        Bitmap::try_new_from_vec(&data).unwrap()
     }
 
     pub fn bitmap_vec_strategy() -> impl Strategy<Value = Vec<u16>> {
@@ -656,7 +656,7 @@ pub mod test_utils {
             .prop_map(|existing| get_bitmap_vec_from_binary(&existing))
     }
 
-    pub fn bitmap_strategy() -> impl Strategy<Value = Bitmap> {
+    pub fn bitmap_strategy() -> impl Strategy<Value = ValidBitmap> {
         let binary = vec(0u8..=1, BITMAP_MAX_INDEX as usize);
         binary
             .prop_filter(

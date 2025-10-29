@@ -218,7 +218,7 @@ impl OffsetBasedVersionRange {
                     let bits = input[start_offset..start_offset + required]
                         .try_into()
                         .map_err(|_| DecodeError::IncorrectLength)?;
-                    (Self::Bitmap(Bitmap::new(bits)), required, false)
+                    (Self::Bitmap(Bitmap::try_new(bits)?), required, false)
                 }
                 0b111101 => {
                     // U16Vector(0) (value_is_none = false)
@@ -275,7 +275,7 @@ impl OffsetBasedVersionRange {
                     let bits = input[start_offset..start_offset + required]
                         .try_into()
                         .map_err(|_| DecodeError::IncorrectLength)?;
-                    (Self::Bitmap(Bitmap::new(bits)), required, true)
+                    (Self::Bitmap(Bitmap::try_new(bits)?), required, true)
                 }
                 len => {
                     // U16Vector (value_is_none = false)
@@ -357,17 +357,16 @@ mod tests {
             ranges.push(OffsetBasedVersionRange::U16Vector(data));
         }
 
-        ranges.push(OffsetBasedVersionRange::Bitmap(Bitmap::new(
-            [0; VERSION_RANGE_BYTES],
-        )));
-        ranges.push(OffsetBasedVersionRange::Bitmap(Bitmap::new(
-            [0xFF; VERSION_RANGE_BYTES],
-        )));
+        ranges.push(OffsetBasedVersionRange::Bitmap(
+            Bitmap::try_new([0xFF; VERSION_RANGE_BYTES]).unwrap(),
+        ));
         let mut bitmap = [0; VERSION_RANGE_BYTES];
         for (i, byte) in bitmap.iter_mut().enumerate().take(VERSION_RANGE_BYTES) {
-            *byte = if i % 2 == 0 { 0xAA } else { 0x55 };
+            *byte = if i % 2 == 0 { 0xAB } else { 0x55 };
         }
-        ranges.push(OffsetBasedVersionRange::Bitmap(Bitmap::new(bitmap)));
+        ranges.push(OffsetBasedVersionRange::Bitmap(
+            Bitmap::try_new(bitmap).unwrap(),
+        ));
 
         ranges
     }

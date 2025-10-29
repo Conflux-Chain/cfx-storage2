@@ -1,5 +1,5 @@
 mod bitmap;
-pub use bitmap::Bitmap;
+pub use bitmap::{Bitmap, BitmapValidationError, ValidBitmap};
 mod error;
 pub use error::PushError;
 
@@ -38,7 +38,7 @@ pub enum OffsetBasedVersionRange {
     OnlyEnd(u64),
     U32Vector(Vec<u32>),
     U16Vector(Vec<u16>),
-    Bitmap(Bitmap),
+    Bitmap(ValidBitmap),
 }
 
 /// Maximum allowed number of u32 entries in an `OffsetBasedVersionRange::U32Vector`
@@ -233,7 +233,7 @@ impl OffsetBasedVersionRange {
                     return Err(PushError::InvalidState);
                 }
 
-                return bits.validate();
+                return Ok(());
             }
         }
 
@@ -310,7 +310,7 @@ impl OffsetBasedVersionRange {
                     } else {
                         let mut old_vec = std::mem::take(vec);
                         old_vec.push(offset as u16);
-                        let bitmap = Bitmap::new_from_vec(&old_vec);
+                        let bitmap = Bitmap::try_new_from_vec(&old_vec)?;
                         *self = OffsetBasedVersionRange::Bitmap(bitmap);
                         Ok(None)
                     }
@@ -461,7 +461,7 @@ mod tests {
 
         // Test Bitmap with various bit configurations
         for bit_index in 0..=BITMAP_MAX_INDEX {
-            let bitmap = Bitmap::new_from_vec(&[0, bit_index]);
+            let bitmap = Bitmap::try_new_from_vec(&[0, bit_index]).unwrap();
             let range = OffsetBasedVersionRange::Bitmap(bitmap);
             assert_eq!(
                 range.max_offset(),
@@ -471,15 +471,15 @@ mod tests {
             );
         }
 
-        let bitmap = Bitmap::new_from_vec(&[0, 50, 100]);
+        let bitmap = Bitmap::try_new_from_vec(&[0, 50, 100]).unwrap();
         let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap);
         assert_eq!(bitmap_range.max_offset(), 100);
 
-        let bitmap = Bitmap::new_from_vec(&[50, 100]);
+        let bitmap = Bitmap::try_new_from_vec(&[50, 100]).unwrap();
         let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap);
         assert_eq!(bitmap_range.max_offset(), 100);
 
-        let bitmap = Bitmap::new_from_vec(&[]);
+        let bitmap = Bitmap::try_new_from_vec(&[]).unwrap();
         let bitmap_range = OffsetBasedVersionRange::Bitmap(bitmap);
         assert_eq!(bitmap_range.max_offset(), 0);
     }
@@ -654,7 +654,7 @@ mod tests {
     }
 
     fn bitmap_cases(input_vec: Vec<u16>, start: u64) -> VersionRangeTestCase {
-        let bitmap = Bitmap::new_from_vec(&input_vec);
+        let bitmap = Bitmap::try_new_from_vec(&input_vec).unwrap();
         let vec = bitmap.to_vec();
 
         let mut targets = vec![start - 1];
@@ -927,15 +927,7 @@ mod tests {
         #[test]
         fn test_bitmap_insufficient_bits() {
             let vec = (0..U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
-            let bitmap = Bitmap::new_from_vec(&vec);
-            let range = OffsetBasedVersionRange::Bitmap(bitmap);
-            assert_eq!(range.validate(), Err(PushError::InvalidState));
-        }
-
-        #[test]
-        fn test_bitmap_valid_bits_invalid_validate() {
-            let vec = (0..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
-            let bitmap = Bitmap::new_invalid_from_vec(&vec);
+            let bitmap = Bitmap::try_new_from_vec(&vec).unwrap();
             let range = OffsetBasedVersionRange::Bitmap(bitmap);
             assert_eq!(range.validate(), Err(PushError::InvalidState));
         }
@@ -943,7 +935,7 @@ mod tests {
         #[test]
         fn test_bitmap_valid() {
             let vec = (0..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
-            let bitmap = Bitmap::new_from_vec(&vec);
+            let bitmap = Bitmap::try_new_from_vec(&vec).unwrap();
             let range = OffsetBasedVersionRange::Bitmap(bitmap);
             assert!(range.validate().is_ok());
         }
@@ -1027,7 +1019,7 @@ mod tests {
 
             // Bitmap
             let vec = (0..BITMAP_MAX_INDEX).collect::<Vec<_>>();
-            let bitmap = Bitmap::new_from_vec(&vec);
+            let bitmap = Bitmap::try_new_from_vec(&vec).unwrap();
             let mut range = OffsetBasedVersionRange::Bitmap(bitmap);
             push_equal_offset(&mut range);
             push_large_offset(&mut range);
@@ -1152,7 +1144,7 @@ mod tests {
             let new_range = range.try_push_or_new(new_offset as u64).unwrap();
 
             vec.push(new_offset);
-            let bitmap = Bitmap::new_from_vec(&vec);
+            let bitmap = Bitmap::try_new_from_vec(&vec).unwrap();
             assert_eq!(range, OffsetBasedVersionRange::Bitmap(bitmap));
             assert!(new_range.is_none());
             range.validate().unwrap();
@@ -1161,14 +1153,14 @@ mod tests {
         #[test]
         fn test_bitmap_push() {
             let mut vec = (0..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
-            let bitmap = Bitmap::new_from_vec(&vec);
+            let bitmap = Bitmap::try_new_from_vec(&vec).unwrap();
             let mut range = OffsetBasedVersionRange::Bitmap(bitmap);
             let new_range = range.try_push_or_new(BITMAP_MAX_INDEX as u64).unwrap();
 
             vec.push(BITMAP_MAX_INDEX);
             assert_eq!(
                 range,
-                OffsetBasedVersionRange::Bitmap(Bitmap::new_from_vec(&vec))
+                OffsetBasedVersionRange::Bitmap(Bitmap::try_new_from_vec(&vec).unwrap())
             );
             assert!(new_range.is_none());
             range.validate().unwrap();
@@ -1177,7 +1169,7 @@ mod tests {
         #[test]
         fn test_bitmap_cannot_push() {
             let vec = (0..=U16_VECTOR_CAPACITY as u16).collect::<Vec<_>>();
-            let bitmap = Bitmap::new_from_vec(&vec);
+            let bitmap = Bitmap::try_new_from_vec(&vec).unwrap();
             let mut range = OffsetBasedVersionRange::Bitmap(bitmap.clone());
             let new_offset = BITMAP_MAX_INDEX as u64 + 1;
             let new_range = range.try_push_or_new(new_offset).unwrap().unwrap();

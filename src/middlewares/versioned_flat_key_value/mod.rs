@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-pub use history_indices::PushError;
+pub use history_indices::{BitmapValidationError, PushError};
 pub use manager_impl::SnapshotView;
 use nonempty::NonEmpty;
 pub use pending_part::TreeWithTracker;

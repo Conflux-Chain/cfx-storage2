@@ -1,72 +1,15 @@
+use thiserror::Error;
+
 use super::{PushError, VERSION_RANGE_BYTES};
 
-/// The bit at index 0 should always be set.
+/// A Bitmap that is guaranteed to be valid (i.e., bit 0 is set).
+/// Operations on this type do not need to perform validation checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Bitmap {
+pub struct ValidBitmap {
     data: [u8; VERSION_RANGE_BYTES],
 }
 
-/// Maximum index represented in [`Bitmap`].
-pub const BITMAP_MAX_INDEX: u16 = VERSION_RANGE_BYTES as u16 * 8 - 1;
-
-impl Bitmap {
-    /// - Will panic if element in vec > BITMAP_MAX_INDEX.
-    /// - The bit at index 0 will be set regardless of whether there is 0 in vec or not.
-    pub fn new_from_vec(vec: &[u16]) -> Self {
-        let mut bitmap = [0u8; VERSION_RANGE_BYTES];
-
-        // Bitmap must have bit 0 set
-        bitmap[0] |= 1;
-
-        for &bit in vec {
-            let byte_idx = (bit / 8) as usize;
-            let bit_pos = bit % 8;
-            bitmap[byte_idx] |= 1 << bit_pos;
-        }
-
-        Bitmap { data: bitmap }
-    }
-
-    #[cfg(test)]
-    /// - Will panic if element in vec > BITMAP_MAX_INDEX.
-    /// - Invalid: the bit at index 0 will not be set regardless of whether there is 0 in vec or not.
-    pub fn new_invalid_from_vec(vec: &[u16]) -> Self {
-        let mut bitmap = [0u8; VERSION_RANGE_BYTES];
-
-        for &bit in vec {
-            if bit > 0 {
-                let byte_idx = (bit / 8) as usize;
-                let bit_pos = bit % 8;
-                bitmap[byte_idx] |= 1 << bit_pos;
-            }
-        }
-
-        Bitmap { data: bitmap }
-    }
-
-    /// Collects the indices of all set bits in increasing order.
-    #[cfg(test)]
-    pub fn to_vec(&self) -> Vec<u16> {
-        let mut indices = Vec::new();
-
-        for (byte_idx, &byte) in self.data.iter().enumerate() {
-            let mut mut_byte = byte;
-            while mut_byte != 0 {
-                let index_in_byte = mut_byte.trailing_zeros();
-                indices.push(byte_idx as u16 * 8 + index_in_byte as u16);
-                mut_byte &= mut_byte - 1;
-            }
-        }
-
-        assert!(!indices.is_empty());
-        assert_eq!(indices[0], 0);
-        assert!(indices[1..].iter().all(|element| *element > 0));
-        assert!(indices.windows(2).all(|window| window[0] < window[1]));
-        assert!(indices.iter().all(|element| *element <= BITMAP_MAX_INDEX));
-
-        indices
-    }
-
+impl ValidBitmap {
     /// Finds the index of the maximum set bit.
     pub fn max_bit(&self) -> u64 {
         for (byte_idx, &byte) in self.data.iter().enumerate().rev() {
@@ -77,7 +20,7 @@ impl Bitmap {
             }
         }
 
-        unreachable!("Bitmap must have bit 0 set");
+        unreachable!("A ValidBitmap is guaranteed to be non-empty, so the loop must find a bit.");
     }
 
     /// Finds the index of the largest set bit that is <= upper_bound.
@@ -105,7 +48,7 @@ impl Bitmap {
             }
         }
 
-        unreachable!("Bitmap must have bit 0 set");
+        unreachable!("A ValidBitmap has bit 0 set, and the search bound is always >= 0. The loop must find a bit.");
     }
 
     /// Collects the indices of all set bits that are <= upper_bound, in increasing order.
@@ -156,15 +99,6 @@ impl Bitmap {
             .sum()
     }
 
-    /// Returns an error if the bit at index 0 is not set.
-    pub fn validate(&self) -> Result<(), PushError> {
-        if (self.data[0] & 1) == 0 {
-            Err(PushError::InvalidState)
-        } else {
-            Ok(())
-        }
-    }
-
     /// Set an index, without checking whether this index has already been set.
     ///
     /// # Behavior
@@ -186,15 +120,123 @@ impl Bitmap {
         self.data[byte] |= 1 << bit;
         true
     }
-}
-
-impl Bitmap {
-    pub fn new(data: [u8; VERSION_RANGE_BYTES]) -> Self {
-        Bitmap { data }
-    }
 
     pub fn as_slice(&self) -> &[u8] {
         &self.data
+    }
+
+    /// Collects the indices of all set bits in increasing order.
+    #[cfg(test)]
+    pub fn to_vec(&self) -> Vec<u16> {
+        let mut indices = Vec::new();
+
+        for (byte_idx, &byte) in self.data.iter().enumerate() {
+            let mut mut_byte = byte;
+            while mut_byte != 0 {
+                let index_in_byte = mut_byte.trailing_zeros();
+                indices.push(byte_idx as u16 * 8 + index_in_byte as u16);
+                mut_byte &= mut_byte - 1;
+            }
+        }
+
+        assert!(!indices.is_empty());
+        assert_eq!(indices[0], 0);
+        assert!(indices[1..].iter().all(|element| *element > 0));
+        assert!(indices.windows(2).all(|window| window[0] < window[1]));
+        assert!(indices.iter().all(|element| *element <= BITMAP_MAX_INDEX));
+
+        indices
+    }
+}
+
+/// A raw representation of a bitmap, which may or may not be valid.
+/// The bit at index 0 should always be set for it to be considered valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bitmap {
+    data: [u8; VERSION_RANGE_BYTES],
+}
+
+/// Maximum index represented in [`Bitmap`].
+pub const BITMAP_MAX_INDEX: u16 = VERSION_RANGE_BYTES as u16 * 8 - 1;
+
+/// Error that can occur during Bitmap creation from a vector of indices.
+#[derive(PartialEq, Eq, Debug, Error)]
+#[error("offset {invalid_offset} is out of bounds for bitmap creation (max is {BITMAP_MAX_INDEX})")]
+pub struct BitmapCreationError {
+    pub invalid_offset: u16,
+}
+
+/// Error that can occur when validating a raw byte array as a ValidBitmap.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum BitmapValidationError {
+    /// The fundamental constraint that bit 0 must be set was violated.
+    #[error("invalid bitmap state: the first bit must be set")]
+    FirstBitNotSet,
+}
+
+impl Bitmap {
+    /// Tries to create a `ValidBitmap` from a vector of indices.
+    /// The resulting ValidBitmap is guaranteed to be valid.
+    /// - Will return BitmapCreationError if element in vec > BITMAP_MAX_INDEX.
+    pub fn try_new_from_vec(vec: &[u16]) -> Result<ValidBitmap, BitmapCreationError> {
+        let mut bitmap = [0u8; VERSION_RANGE_BYTES];
+
+        // Bitmap must have bit 0 set
+        bitmap[0] |= 1;
+
+        for &bit in vec {
+            if bit > BITMAP_MAX_INDEX {
+                return Err(BitmapCreationError {
+                    invalid_offset: bit,
+                });
+            }
+
+            let byte_idx = (bit / 8) as usize;
+            let bit_pos = bit % 8;
+            bitmap[byte_idx] |= 1 << bit_pos;
+        }
+
+        Ok(ValidBitmap { data: bitmap })
+    }
+
+    /// Tries to create a `ValidBitmap` from a byte array.
+    pub fn try_new(data: [u8; VERSION_RANGE_BYTES]) -> Result<ValidBitmap, BitmapValidationError> {
+        if (data[0] & 1) == 0 {
+            Err(BitmapValidationError::FirstBitNotSet)
+        } else {
+            Ok(ValidBitmap { data })
+        }
+    }
+
+    #[cfg(test)]
+    /// - Will panic if element in vec > BITMAP_MAX_INDEX.
+    /// - Invalid: the bit at index 0 will not be set regardless of whether there is 0 in vec or not.
+    pub fn new_invalid_from_vec(vec: &[u16]) -> Self {
+        let mut bitmap = [0u8; VERSION_RANGE_BYTES];
+
+        for &bit in vec {
+            if bit > 0 {
+                let byte_idx = (bit / 8) as usize;
+                let bit_pos = bit % 8;
+                bitmap[byte_idx] |= 1 << bit_pos;
+            }
+        }
+
+        Bitmap { data: bitmap }
+    }
+
+    /// Returns an error if the bit at index 0 is not set.
+    pub fn validate(&self) -> Result<(), PushError> {
+        if (self.data[0] & 1) == 0 {
+            Err(PushError::InvalidState)
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    pub fn from_valid_bitmap(bitmap: ValidBitmap) -> Self {
+        Bitmap { data: bitmap.data }
     }
 }
 
@@ -208,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_new_from_vec_empty() {
-        let bitmap = Bitmap::new_from_vec(&[]);
+        let bitmap = Bitmap::try_new_from_vec(&[]).unwrap();
         assert_eq!(bitmap.data[0], 0b00000001);
         for i in 1..VERSION_RANGE_BYTES {
             assert_eq!(bitmap.data[i], 0);
@@ -219,7 +261,7 @@ mod tests {
     #[test]
     fn test_new_from_vec_with_bits() {
         let vec = vec![0, 1, 8];
-        let bitmap = Bitmap::new_from_vec(&vec);
+        let bitmap = Bitmap::try_new_from_vec(&vec).unwrap();
         assert_eq!(bitmap.data[0], 0b00000011);
         assert_eq!(bitmap.data[1], 0b00000001);
         assert_eq!(bitmap.to_vec(), vec![0, 1, 8]);
@@ -229,20 +271,20 @@ mod tests {
     #[should_panic]
     fn test_new_from_vec_panic() {
         let vec = vec![BITMAP_MAX_INDEX + 1];
-        Bitmap::new_from_vec(&vec);
+        Bitmap::try_new_from_vec(&vec).unwrap();
     }
 
     #[test]
     fn test_to_vec() {
-        let bitmap = Bitmap::new_from_vec(&[0, 3, 7, 8]);
+        let bitmap = Bitmap::try_new_from_vec(&[0, 3, 7, 8]).unwrap();
         assert_eq!(bitmap.to_vec(), vec![0, 3, 7, 8]);
 
-        let bitmap = Bitmap::new_from_vec(&[7, 8, 3, 7]);
+        let bitmap = Bitmap::try_new_from_vec(&[7, 8, 3, 7]).unwrap();
         assert_eq!(bitmap.to_vec(), vec![0, 3, 7, 8]);
     }
 
     fn test_max_bit_method(input: &[u16]) {
-        let bitmap = Bitmap::new_from_vec(input);
+        let bitmap = Bitmap::try_new_from_vec(input).unwrap();
         let max_bit = bitmap.max_bit();
         let vec_from_bitmap = bitmap.to_vec();
         let last_element = *vec_from_bitmap.last().unwrap() as u64;
@@ -255,7 +297,7 @@ mod tests {
     }
 
     fn test_count_ones_method(input: &[u16]) {
-        let bitmap = Bitmap::new_from_vec(input);
+        let bitmap = Bitmap::try_new_from_vec(input).unwrap();
         let vec_from_bitmap = bitmap.to_vec();
         let num_bits = bitmap.count_ones();
         let vec_len = vec_from_bitmap.len();
@@ -269,8 +311,8 @@ mod tests {
 
     fn test_validate_method(input: &[u16]) {
         // valid case
-        let bitmap = Bitmap::new_from_vec(input);
-        bitmap.validate().unwrap();
+        let bitmap = Bitmap::try_new_from_vec(input).unwrap();
+        Bitmap::from_valid_bitmap(bitmap).validate().unwrap();
 
         // invalid case
         let bitmap_without_0 = Bitmap::new_invalid_from_vec(input);
@@ -278,7 +320,7 @@ mod tests {
     }
 
     fn test_set_unchecked_method(input: &[u16]) {
-        let bitmap = Bitmap::new_from_vec(input);
+        let bitmap = Bitmap::try_new_from_vec(input).unwrap();
         let vec_from_bitmap = bitmap.to_vec();
         let last_element = *vec_from_bitmap.last().unwrap() as u64;
 
@@ -311,13 +353,13 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct BitmapTestCase {
-        bitmap: Bitmap,
+        bitmap: ValidBitmap,
         last_le_cases: Vec<(u64, u64)>,
         collect_le_cases: Vec<(u64, Vec<u64>)>,
     }
 
     fn test_le_cases(input_vec: Vec<u16>) -> BitmapTestCase {
-        let bitmap = Bitmap::new_from_vec(&input_vec);
+        let bitmap = Bitmap::try_new_from_vec(&input_vec).unwrap();
         let vec = bitmap.to_vec();
 
         let mut targets = vec![];
@@ -350,9 +392,9 @@ mod tests {
         }
     }
 
-    fn test_le_method<F, R>(bitmap: &Bitmap, cases: &[(u64, R)], method: F)
+    fn test_le_method<F, R>(bitmap: &ValidBitmap, cases: &[(u64, R)], method: F)
     where
-        F: Fn(&Bitmap, u64) -> R,
+        F: Fn(&ValidBitmap, u64) -> R,
         R: PartialEq + std::fmt::Debug,
     {
         for &(target, ref expected) in cases {
@@ -423,7 +465,7 @@ mod tests {
 
             test_bitmap_method(data.clone());
 
-            let bitmap = Bitmap::new_from_vec(&data);
+            let bitmap = Bitmap::try_new_from_vec(&data).unwrap();
             let vec_from_bitmap = bitmap.to_vec();
             prop_assert_eq!(data, vec_from_bitmap);
         }
