@@ -1,4 +1,9 @@
+#[cfg(fuzzing)]
+pub mod version_range;
+
+#[cfg(not(fuzzing))]
 mod version_range;
+
 pub use version_range::{BitmapValidationError, PushError};
 
 use static_assertions::const_assert;

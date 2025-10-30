@@ -1,5 +1,10 @@
 mod commit_id_schema;
 mod key_value_store_bulks;
+
+#[cfg(fuzzing)]
+pub mod versioned_flat_key_value;
+
+#[cfg(not(fuzzing))]
 mod versioned_flat_key_value;
 
 pub use commit_id_schema::{

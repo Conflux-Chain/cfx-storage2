@@ -10,12 +10,14 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
+arbitrary = { version = "1", features = ["derive"] }
+
 [dependencies.cfx-storage2]
 path = ".."
 
 [[bin]]
-name = "fuzz_target_1"
-path = "fuzz_targets/fuzz_target_1.rs"
+name = "fuzz_bitmap_constructors"
+path = "fuzz_targets/fuzz_bitmap_constructors.rs"
 test = false
 doc = false
 bench = false

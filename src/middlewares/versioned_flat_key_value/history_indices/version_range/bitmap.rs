@@ -126,7 +126,7 @@ impl ValidBitmap {
     }
 
     /// Collects the indices of all set bits in increasing order.
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn to_vec(&self) -> Vec<u16> {
         let mut indices = Vec::new();
 

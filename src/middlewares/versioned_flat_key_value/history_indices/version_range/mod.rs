@@ -1,4 +1,9 @@
+#[cfg(fuzzing)]
+pub mod bitmap;
+
+#[cfg(not(fuzzing))]
 mod bitmap;
+
 pub use bitmap::{Bitmap, BitmapValidationError, ValidBitmap};
 mod error;
 pub use error::PushError;

@@ -1,4 +1,9 @@
+#[cfg(fuzzing)]
+pub mod history_indices;
+
+#[cfg(not(fuzzing))]
 mod history_indices;
+
 mod history_indices_cache;
 mod manager_impl;
 mod pending_part;
