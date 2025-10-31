@@ -21,3 +21,10 @@ path = "fuzz_targets/fuzz_bitmap_constructors.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_valid_bitmap_logic"
+path = "fuzz_targets/fuzz_valid_bitmap_logic.rs"
+test = false
+doc = false
+bench = false
