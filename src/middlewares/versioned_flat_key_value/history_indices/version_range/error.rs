@@ -21,3 +21,11 @@ pub enum PushError {
         source: BitmapCreationError,
     },
 }
+
+
+#[derive(Debug, PartialEq, Eq, Error)]
+pub enum VersionError {
+    #[error("overflow")]
+    /// Indicates an arithmetic overflow when calculating a version number.
+    Overflow,
+}

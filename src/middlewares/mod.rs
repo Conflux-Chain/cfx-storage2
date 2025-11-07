@@ -1,3 +1,7 @@
+#[cfg(fuzzing)]
+pub mod commit_id_schema;
+
+#[cfg(not(fuzzing))]
 mod commit_id_schema;
 mod key_value_store_bulks;
 

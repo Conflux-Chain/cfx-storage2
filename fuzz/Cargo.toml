@@ -28,3 +28,17 @@ path = "fuzz_targets/fuzz_valid_bitmap_logic.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_offset_based_version_range_state_transitions"
+path = "fuzz_targets/fuzz_offset_based_version_range_state_transitions.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_offset_based_version_range_queries"
+path = "fuzz_targets/fuzz_offset_based_version_range_queries.rs"
+test = false
+doc = false
+bench = false

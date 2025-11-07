@@ -212,7 +212,10 @@ impl<V: Clone> HistoryIndices<V> {
         let (start_version_number, range_encoding) =
             self.compute_start_version(version_specifier)?;
 
-        Ok(range_encoding.last_le(start_version_number, version_number))
+        match range_encoding.last_le(start_version_number, version_number) {
+            Ok(maybe_version_number) => Ok(maybe_version_number),
+            Err(_) => Err(StorageError::CorruptedHistoryIndices(format!("Version calculation overflow in last_le(): Precondition failed, as the state of `self` is inconsistent with the provided `version_specifier`.")))
+        }
     }
 
     /// Generates a list of existing version numbers in increasing order
@@ -246,7 +249,10 @@ impl<V: Clone> HistoryIndices<V> {
         let (start_version_number, range_encoding) =
             self.compute_start_version(version_specifier)?;
 
-        Ok(range_encoding.collect_versions_le(start_version_number, version_number))
+        match range_encoding.collect_versions_le(start_version_number, version_number) {
+            Ok(version_numbers) => Ok(version_numbers),
+            Err(_) => Err(StorageError::CorruptedHistoryIndices(format!("Version calculation overflow in collect_versions_le(): Precondition failed, as the state of `self` is inconsistent with the provided `version_specifier`.")))
+        }
     }
 
     /// # Preconditions

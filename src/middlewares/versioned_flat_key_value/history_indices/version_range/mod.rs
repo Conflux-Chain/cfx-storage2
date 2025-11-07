@@ -5,8 +5,15 @@ pub mod bitmap;
 mod bitmap;
 
 pub use bitmap::{Bitmap, BitmapValidationError, ValidBitmap};
+
+#[cfg(fuzzing)]
+pub mod error;
+
+#[cfg(not(fuzzing))]
 mod error;
 pub use error::PushError;
+
+use self::error::VersionError;
 
 use super::VERSION_RANGE_BYTES;
 use crate::middlewares::HistoryNumber;
@@ -99,18 +106,28 @@ impl OffsetBasedVersionRange {
 
     /// Finds the largest present version number in this range such that version <= upper_bound.
     /// Note that `upper_bound <= start_version_number` is possible.
+    /// 
+    /// It is the caller's responsibility to ensure that `start_version_number` correctly
+    /// corresponds to `self`. This function only checks for the most obvious mismatch:
+    /// an arithmetic overflow when `start_version_number` is added to `self.max_offset`.
     pub fn last_le(
         &self,
         start_version_number: HistoryNumber,
         upper_bound: HistoryNumber,
-    ) -> Option<HistoryNumber> {
+    ) -> Result<Option<HistoryNumber>, VersionError> {
+        // Check if the maximum version number this range can generate overflows.
+        // Overflow indicates a problem where this function is called.
+        start_version_number
+            .checked_add(self.max_offset())
+            .ok_or(VersionError::Overflow)?;
+
         if upper_bound < start_version_number {
-            return None;
+            return Ok(None);
         }
 
         // The start version is always present
         if upper_bound == start_version_number {
-            return Some(start_version_number);
+            return Ok(Some(start_version_number));
         }
 
         let offset = upper_bound - start_version_number;
@@ -118,33 +135,42 @@ impl OffsetBasedVersionRange {
         match self {
             OffsetBasedVersionRange::OnlyEnd(end_offset) => {
                 if offset >= *end_offset {
-                    Some(start_version_number + end_offset)
+                    Ok(Some(start_version_number + end_offset))
                 } else {
-                    Some(start_version_number)
+                    Ok(Some(start_version_number))
                 }
             }
 
             OffsetBasedVersionRange::U32Vector(vec) => {
-                Some(handle_vec_for_last_le(vec, start_version_number, offset))
+                Ok(Some(handle_vec_for_last_le(vec, start_version_number, offset)))
             }
 
             OffsetBasedVersionRange::U16Vector(vec) => {
-                Some(handle_vec_for_last_le(vec, start_version_number, offset))
+                Ok(Some(handle_vec_for_last_le(vec, start_version_number, offset)))
             }
 
             OffsetBasedVersionRange::Bitmap(bitmap) => {
-                Some(start_version_number + bitmap.last_le(offset))
+                Ok(Some(start_version_number + bitmap.last_le(offset)))
             }
         }
     }
 
     /// Collects the present version numbers in increasing order in this range such that version <= upper_bound.
     /// Note that `upper_bound < start_version_number` is possible.
+    /// 
+    /// It is the caller's responsibility to ensure that `start_version_number` correctly
+    /// corresponds to `self`. This function only checks for the most obvious mismatch:
+    /// an arithmetic overflow when `start_version_number` is added to `self.max_offset`.
     pub fn collect_versions_le(
         &self,
         start_version_number: HistoryNumber,
         upper_bound: HistoryNumber,
-    ) -> Vec<HistoryNumber> {
+    ) -> Result<Vec<HistoryNumber>, VersionError> {// Check if the maximum version number this range can generate overflows.
+        // Overflow indicates a problem where this function is called.
+        start_version_number
+            .checked_add(self.max_offset())
+            .ok_or(VersionError::Overflow)?;
+
         let mut versions = Vec::new();
 
         if start_version_number <= upper_bound {
@@ -187,13 +213,13 @@ impl OffsetBasedVersionRange {
             }
         }
 
-        versions
+        Ok(versions)
     }
 }
 
 impl OffsetBasedVersionRange {
     /// This function will return an error if `self` does not satisfy the constraints of [`OffsetBasedVersionRange`].
-    fn validate(&self) -> Result<(), PushError> {
+    pub fn validate(&self) -> Result<(), PushError> {
         match self {
             OffsetBasedVersionRange::OnlyEnd(existing_offset) => {
                 if *existing_offset <= u32::MAX as u64 {
@@ -700,9 +726,9 @@ mod tests {
             last_le_cases: last_cases,
             collect_le_cases: collect_cases,
         } = test_cases;
-        test_range_method(start, &range, &last_cases, |r, s, t| r.last_le(s, t));
+        test_range_method(start, &range, &last_cases, |r, s, t| r.last_le(s, t).unwrap());
         test_range_method(start, &range, &collect_cases, |r, s, t| {
-            r.collect_versions_le(s, t)
+            r.collect_versions_le(s, t).unwrap()
         });
     }
 
