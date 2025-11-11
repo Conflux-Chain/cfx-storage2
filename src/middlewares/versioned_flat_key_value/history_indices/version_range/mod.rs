@@ -106,7 +106,7 @@ impl OffsetBasedVersionRange {
 
     /// Finds the largest present version number in this range such that version <= upper_bound.
     /// Note that `upper_bound <= start_version_number` is possible.
-    /// 
+    ///
     /// It is the caller's responsibility to ensure that `start_version_number` correctly
     /// corresponds to `self`. This function only checks for the most obvious mismatch:
     /// an arithmetic overflow when `start_version_number` is added to `self.max_offset`.
@@ -141,13 +141,17 @@ impl OffsetBasedVersionRange {
                 }
             }
 
-            OffsetBasedVersionRange::U32Vector(vec) => {
-                Ok(Some(handle_vec_for_last_le(vec, start_version_number, offset)))
-            }
+            OffsetBasedVersionRange::U32Vector(vec) => Ok(Some(handle_vec_for_last_le(
+                vec,
+                start_version_number,
+                offset,
+            ))),
 
-            OffsetBasedVersionRange::U16Vector(vec) => {
-                Ok(Some(handle_vec_for_last_le(vec, start_version_number, offset)))
-            }
+            OffsetBasedVersionRange::U16Vector(vec) => Ok(Some(handle_vec_for_last_le(
+                vec,
+                start_version_number,
+                offset,
+            ))),
 
             OffsetBasedVersionRange::Bitmap(bitmap) => {
                 Ok(Some(start_version_number + bitmap.last_le(offset)))
@@ -157,7 +161,7 @@ impl OffsetBasedVersionRange {
 
     /// Collects the present version numbers in increasing order in this range such that version <= upper_bound.
     /// Note that `upper_bound < start_version_number` is possible.
-    /// 
+    ///
     /// It is the caller's responsibility to ensure that `start_version_number` correctly
     /// corresponds to `self`. This function only checks for the most obvious mismatch:
     /// an arithmetic overflow when `start_version_number` is added to `self.max_offset`.
@@ -165,7 +169,8 @@ impl OffsetBasedVersionRange {
         &self,
         start_version_number: HistoryNumber,
         upper_bound: HistoryNumber,
-    ) -> Result<Vec<HistoryNumber>, VersionError> {// Check if the maximum version number this range can generate overflows.
+    ) -> Result<Vec<HistoryNumber>, VersionError> {
+        // Check if the maximum version number this range can generate overflows.
         // Overflow indicates a problem where this function is called.
         start_version_number
             .checked_add(self.max_offset())
@@ -306,12 +311,24 @@ impl OffsetBasedVersionRange {
             OffsetBasedVersionRange::new_with_offset(new_offset)
         };
 
+        // If `self` is empty, appending `offset` always maintains the constraints of [`OffsetBasedVersionRange`].
+        // Dealing with empty `self` first.
+        if max_offset == 0 {
+            *self = OffsetBasedVersionRange::new_with_offset(offset);
+            return Ok(None);
+        }
+
         match self {
             OffsetBasedVersionRange::OnlyEnd(existing_offset) => {
                 // Can't push to OnlyEnd; must split
                 Ok(Some(new_range()))
             }
             OffsetBasedVersionRange::U32Vector(vec) => {
+                // After pass self.validate(), `U32Vector` should be non-empty.
+                if vec.is_empty() {
+                    return Err(PushError::InvalidState);
+                }
+
                 if (offset <= u32::MAX as u64) && (vec.len() < U32_VECTOR_CAPACITY) {
                     vec.push(offset as u32);
                     Ok(None)
@@ -320,6 +337,11 @@ impl OffsetBasedVersionRange {
                 }
             }
             OffsetBasedVersionRange::U16Vector(vec) => {
+                // We have already dealed with empty `self`, so `vec` should be non-empty.
+                if vec.is_empty() {
+                    return Err(PushError::InvalidState);
+                }
+
                 if offset > u16::MAX as u64 {
                     if (offset > u32::MAX as u64) || (vec.len() + 1 > U32_VECTOR_CAPACITY) {
                         return Ok(Some(new_range()));
@@ -336,6 +358,7 @@ impl OffsetBasedVersionRange {
                 }
 
                 if vec.len() + 1 > U16_VECTOR_CAPACITY {
+                    // Since U16_VECTOR_CAPACITY > U32_VECTOR_CAPACITY, no possibility to use a U32Vector.
                     if offset > BITMAP_MAX_INDEX as u64 {
                         Ok(Some(new_range()))
                     } else {
@@ -726,7 +749,9 @@ mod tests {
             last_le_cases: last_cases,
             collect_le_cases: collect_cases,
         } = test_cases;
-        test_range_method(start, &range, &last_cases, |r, s, t| r.last_le(s, t).unwrap());
+        test_range_method(start, &range, &last_cases, |r, s, t| {
+            r.last_le(s, t).unwrap()
+        });
         test_range_method(start, &range, &collect_cases, |r, s, t| {
             r.collect_versions_le(s, t).unwrap()
         });
@@ -992,6 +1017,7 @@ mod tests {
                         let maybe_new_range = range.try_push_or_new(version - start).unwrap();
                         if let Some(new_range) = maybe_new_range {
                             assert_eq!(range, range_backup);
+                            assert!(range.max_offset() > 0);
                             start += range.max_offset();
                             range = new_range;
                         }
@@ -1010,6 +1036,7 @@ mod tests {
             let new_range = range.try_push_or_new(new_offset).unwrap().unwrap();
 
             assert_eq!(*range, backup_range);
+            assert!(range.max_offset() > 0);
             assert_eq!(
                 new_range,
                 OffsetBasedVersionRange::new_with_offset(new_offset - max_offset)
@@ -1085,6 +1112,7 @@ mod tests {
             let new_range = range.try_push_or_new(new_offset as u64).unwrap().unwrap();
 
             assert_eq!(range, OffsetBasedVersionRange::U32Vector(vec));
+            assert!(range.max_offset() > 0);
             assert_eq!(
                 new_range,
                 OffsetBasedVersionRange::new_with_offset(new_offset as u64 - max_offset as u64)
@@ -1116,6 +1144,7 @@ mod tests {
             let new_range = range.try_push_or_new(new_offset).unwrap().unwrap();
 
             assert_eq!(range, OffsetBasedVersionRange::U16Vector(vec.clone()));
+            assert!(range.max_offset() > 0);
             assert_eq!(
                 new_range,
                 OffsetBasedVersionRange::new_with_offset(new_offset - *vec.last().unwrap() as u64)
@@ -1160,6 +1189,7 @@ mod tests {
             let new_range = range.try_push_or_new(new_offset as u64).unwrap().unwrap();
 
             assert_eq!(range, OffsetBasedVersionRange::U16Vector(vec.clone()));
+            assert!(range.max_offset() > 0);
             assert_eq!(
                 new_range,
                 OffsetBasedVersionRange::U16Vector(vec![new_offset - vec.last().unwrap()])
@@ -1206,11 +1236,61 @@ mod tests {
             let new_range = range.try_push_or_new(new_offset).unwrap().unwrap();
 
             assert_eq!(range, OffsetBasedVersionRange::Bitmap(bitmap));
+            assert!(range.max_offset() > 0);
             assert_eq!(
                 new_range,
                 OffsetBasedVersionRange::new_with_offset(new_offset - *vec.last().unwrap() as u64)
             );
             new_range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_empty_push_u64() {
+            let mut range = OffsetBasedVersionRange::new();
+            let new_offset = u64::MAX;
+            let new_range = range.try_push_or_new(new_offset).unwrap();
+            assert_eq!(range, OffsetBasedVersionRange::OnlyEnd(new_offset));
+            assert!(new_range.is_none());
+            range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_empty_push_u32() {
+            let mut range = OffsetBasedVersionRange::new();
+            let new_offset = u32::MAX as u64;
+            let new_range = range.try_push_or_new(new_offset).unwrap();
+            assert_eq!(
+                range,
+                OffsetBasedVersionRange::U32Vector(vec![new_offset as u32])
+            );
+            assert!(new_range.is_none());
+            range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_empty_push_u16() {
+            let mut range = OffsetBasedVersionRange::new();
+            let new_offset = u16::MAX as u64;
+            let new_range = range.try_push_or_new(new_offset).unwrap();
+            assert_eq!(
+                range,
+                OffsetBasedVersionRange::U16Vector(vec![new_offset as u16])
+            );
+            assert!(new_range.is_none());
+            range.validate().unwrap();
+        }
+
+        #[test]
+        fn test_empty_push_small() {
+            let mut range = OffsetBasedVersionRange::new();
+            let new_offset = 1;
+            let new_range = range.try_push_or_new(new_offset).unwrap();
+            assert_eq!(
+                range,
+                OffsetBasedVersionRange::U16Vector(vec![new_offset as u16])
+            );
+            assert!(new_range.is_none());
+            range.validate().unwrap();
         }
     }
 }

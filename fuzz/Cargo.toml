@@ -42,3 +42,10 @@ path = "fuzz_targets/fuzz_offset_based_version_range_queries.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_history_indices_serde_roundtrip"
+path = "fuzz_targets/fuzz_history_indices_serde_roundtrip.rs"
+test = false
+doc = false
+bench = false

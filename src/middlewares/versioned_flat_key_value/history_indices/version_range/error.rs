@@ -22,7 +22,6 @@ pub enum PushError {
     },
 }
 
-
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum VersionError {
     #[error("overflow")]

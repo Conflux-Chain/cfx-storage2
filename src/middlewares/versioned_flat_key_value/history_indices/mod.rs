@@ -134,6 +134,7 @@ impl<V: Clone> HistoryIndices<V> {
     ///   - Modifies `self` to be the new lastest record, which includes
     ///     - the latest_version_number of the original lastest record as the start_version_number,
     ///     - the `version_number` as the only version except for the start_version_number.
+    /// 如果 self 是 Latest 的 empty 的话，应该可以加进去才对。
     pub fn push(
         &mut self,
         version_number: HistoryNumber,
@@ -159,6 +160,11 @@ impl<V: Clone> HistoryIndices<V> {
                     *latest_value = value;
 
                     if let Some(new_range) = maybe_new_range {
+                        // Original range should be non-empty after split.
+                        if range_encoding.max_offset() == 0 {
+                            return Err(StorageError::PushError(PushError::InvalidState));
+                        }
+
                         *start_version_number = latest_version_number;
 
                         let previous_record = PreviousRecord {

@@ -30,6 +30,7 @@ fuzz_target!(|version_seqs: Vec<HistoryNumber>| {
             Ok(Some(new_range)) => {
                 // Range split occurs.
                 assert!(range.validate().is_ok(), "Original range became invalid after split. Original: {:?}", range);
+                assert!(range.max_offset() > 0, "Original range should be non-empty after split. Original: {:?}", range);
 
                 current_start_version += range.max_offset();
                 range = new_range;
