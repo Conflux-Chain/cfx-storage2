@@ -49,3 +49,10 @@ path = "fuzz_targets/fuzz_history_indices_serde_roundtrip.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_history_indices_push_simulation"
+path = "fuzz_targets/fuzz_history_indices_push_simulation.rs"
+test = false
+doc = false
+bench = false

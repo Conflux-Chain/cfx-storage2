@@ -134,7 +134,6 @@ impl<V: Clone> HistoryIndices<V> {
     ///   - Modifies `self` to be the new lastest record, which includes
     ///     - the latest_version_number of the original lastest record as the start_version_number,
     ///     - the `version_number` as the only version except for the start_version_number.
-    /// 如果 self 是 Latest 的 empty 的话，应该可以加进去才对。
     pub fn push(
         &mut self,
         version_number: HistoryNumber,
