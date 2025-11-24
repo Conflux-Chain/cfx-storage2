@@ -66,7 +66,7 @@ pub struct PreviousRecord {
     pub range_encoding: OffsetBasedVersionRange,
 }
 
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 impl<V: Clone + PartialEq> PartialEq for HistoryIndices<V> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {

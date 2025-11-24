@@ -7,6 +7,10 @@ use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
 use cfx_storage2::middlewares::versioned_flat_key_value::history_indices::HistoryIndices;
 use cfx_storage2::middlewares::commit_id_schema::HistoryNumber;
 
+#[path = "bounded_vec.rs"]
+mod bounded_vec;
+use bounded_vec::BoundedVec;
+
 /// Defines different version stepping strategies, allowing the fuzzer to explore various types of inputs.
 #[derive(Debug, Arbitrary)]
 enum VersionStep {
@@ -36,17 +40,6 @@ impl From<StartVersion> for HistoryNumber {
             StartVersion::Medium(m) => m as HistoryNumber,
             StartVersion::Large(l) => l as HistoryNumber,
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct BoundedVec(pub Vec<u8>);
-
-impl<'a> Arbitrary<'a> for BoundedVec {
-    fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
-        let len = u.int_in_range(0..=32)?;
-        let bytes = u.bytes(len)?.to_vec();
-        Ok(BoundedVec(bytes))
     }
 }
 
