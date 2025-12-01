@@ -330,12 +330,15 @@ impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         }
     }
 
-    fn discard(&mut self, commit: CommitID, write_schema: &P::WriteSchema) -> Result<()> {
+    /// # Atomicity
+    /// To ensure atomicity when writing to multiple schemas, see the main documentation
+    /// on [`VersionedStore`].
+    fn discard(&mut self, commit: CommitID, pending_write_schema: &P::WriteSchema) -> Result<()> {
         if self.commit_id_table.get(&commit)?.is_some() {
             return Ok(());
         }
 
-        Ok(self.pending_part.discard(commit, write_schema)?)
+        Ok(self.pending_part.discard(commit, pending_write_schema)?)
     }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {

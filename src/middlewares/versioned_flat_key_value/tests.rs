@@ -151,7 +151,7 @@ impl<K: 'static + Ord, V: 'static + Clone> KeyValueStoreRead<K, V> for MockOneSt
 }
 
 #[derive(Debug)]
-struct MockVersionedStore<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
+pub struct MockVersionedStore<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
     pending: MockTree<T>,
     history: HashMap<CommitID, (Option<CommitID>, MockStore<T>)>,
     _phantom: PhantomData<P>,
@@ -1242,9 +1242,10 @@ fn test_versioned_store<
     let historical_write_schema = D::write_schema();
     let pending_write_schema = P::write_schema();
     let historical_db_arc = Arc::new(historical_db);
+    let pending_db_arc = Arc::new(pending_db);
     let (history_cids, history_updates, mut pending_part) = gen_init(
         historical_db_arc.clone(),
-        Arc::new(pending_db),
+        pending_db_arc.clone(),
         TestParams {
             num_history,
             max_num_new_keys: num_gen_new_keys,
@@ -1256,6 +1257,7 @@ fn test_versioned_store<
         &pending_write_schema,
     );
 
+    pending_db_arc.commit(pending_write_schema).unwrap();
     historical_db_arc.commit(historical_write_schema).unwrap();
 
     // build proxy
@@ -1281,6 +1283,7 @@ fn test_versioned_store<
         num_gen_previous_keys,
         &pending_write_schema,
     );
+    pending_db_arc.commit(pending_write_schema).unwrap();
 
     let operations = vec![
         Operation::GetVersionedStore,
@@ -1312,31 +1315,42 @@ fn test_versioned_store<
                 versioned_store_proxy.iter_historical_changes(&mut rng, commit_id_type, &commit_id)
             }
             Operation::Discard => {
-                versioned_store_proxy.discard(commit_id_type, commit_id, &pending_write_schema)
+                let pending_write_schema = P::write_schema();
+                let is_ok =
+                    versioned_store_proxy.discard(commit_id_type, commit_id, &pending_write_schema);
+                pending_db_arc.commit(pending_write_schema).unwrap();
+                is_ok
             }
-            Operation::AddToPendingPart => versioned_store_proxy.add_to_pending_part(
-                &mut rng,
-                commit_id_type,
-                commit_id,
-                num_gen_new_keys,
-                num_gen_previous_keys,
-                &pending_write_schema,
-            ),
+            Operation::AddToPendingPart => {
+                let pending_write_schema = P::write_schema();
+                let is_ok = versioned_store_proxy.add_to_pending_part(
+                    &mut rng,
+                    commit_id_type,
+                    commit_id,
+                    num_gen_new_keys,
+                    num_gen_previous_keys,
+                    &pending_write_schema,
+                );
+                pending_db_arc.commit(pending_write_schema).unwrap();
+                is_ok
+            }
             Operation::ConfirmedPendingToHistory => {
                 let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
 
                 drop(real_versioned_store);
 
-                let write_schema = D::write_schema();
+                let pending_write_schema = P::write_schema();
+                let historical_write_schema = D::write_schema();
                 let real_res = confirmed_pending_to_history(
                     historical_db_arc.clone(),
                     &mut pending_part,
                     commit_id,
-                    &write_schema,
+                    &historical_write_schema,
                     &pending_write_schema,
                 );
 
-                historical_db_arc.commit(write_schema).unwrap();
+                pending_db_arc.commit(pending_write_schema).unwrap();
+                historical_db_arc.commit(historical_write_schema).unwrap();
 
                 real_versioned_store =
                     VersionedStore::new(historical_db_arc.clone(), &mut pending_part).unwrap();

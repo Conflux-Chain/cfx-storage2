@@ -12,6 +12,8 @@ libfuzzer-sys = "0.4"
 
 arbitrary = { version = "1", features = ["derive"] }
 
+tempfile = "3"
+
 [dependencies.cfx-storage2]
 path = ".."
 
@@ -53,6 +55,13 @@ bench = false
 [[bin]]
 name = "fuzz_history_indices_push_simulation"
 path = "fuzz_targets/fuzz_history_indices_push_simulation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_storage"
+path = "fuzz_targets/fuzz_storage.rs"
 test = false
 doc = false
 bench = false
