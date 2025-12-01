@@ -78,7 +78,7 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn check_consistency(&self, height_of_root: u64) -> bool {
         if self
             .tree_with_tracker

@@ -34,7 +34,7 @@ use rand_chacha::{
 };
 
 impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedStore<'_, '_, T, P> {
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn check_consistency(&self) -> Result<()> {
         if self.check_consistency_inner().is_err() {
             Err(StorageError::ConsistencyCheckFailure)
@@ -43,7 +43,7 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedSt
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     fn check_consistency_inner(&self) -> Result<()> {
         use crate::middlewares::commit_id_schema::{
             height_to_history_number, history_number_to_height,
@@ -620,7 +620,7 @@ enum Operation {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-enum CommitIDType {
+pub enum CommitIDType {
     History,
     PendingRoot,
     PendingNonRoot,
@@ -628,7 +628,7 @@ enum CommitIDType {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-enum ParentCommitType {
+pub enum ParentCommitType {
     Pending,
     ParentOfPendingRoot,
     NoneButInvalid,

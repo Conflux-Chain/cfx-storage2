@@ -9,7 +9,7 @@ use crate::{
     traits::KeyValueStoreBulksTrait,
 };
 
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 use crate::backends::TableIter;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -22,7 +22,7 @@ impl<'db, T: TableSchema> KeyValueStoreBulks<'db, T> {
         Self(db)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn iter_from_start(&self) -> Result<TableIter<T>> {
         self.0.iter_from_start()
     }

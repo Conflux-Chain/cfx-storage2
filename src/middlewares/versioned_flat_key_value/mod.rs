@@ -6,7 +6,13 @@ mod history_indices;
 
 mod history_indices_cache;
 mod manager_impl;
+
+#[cfg(fuzzing)]
+pub mod pending_part;
+
+#[cfg(not(fuzzing))]
 mod pending_part;
+
 mod serde;
 pub mod table_schema;
 #[cfg(any(test, fuzzing))]

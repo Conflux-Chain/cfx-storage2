@@ -16,6 +16,7 @@ tempfile = "3"
 
 [dependencies.cfx-storage2]
 path = ".."
+features = ["fuzzing"]
 
 [[bin]]
 name = "fuzz_bitmap_constructors"
@@ -62,6 +63,13 @@ bench = false
 [[bin]]
 name = "fuzz_storage"
 path = "fuzz_targets/fuzz_storage.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_lvmt"
+path = "fuzz_targets/fuzz_lvmt.rs"
 test = false
 doc = false
 bench = false

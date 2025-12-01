@@ -3,7 +3,7 @@ use cfx_storage2::backends::serde::{Decode, Encode};
 use cfx_storage2::errors::DecResult;
 use std::borrow::Cow;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, PartialOrd, Eq, Ord)]
 pub struct BoundedVec(pub Vec<u8>);
 
 impl<'a> Arbitrary<'a> for BoundedVec {
@@ -25,3 +25,5 @@ impl Decode for BoundedVec {
         Ok(Cow::Owned(BoundedVec(Vec::<u8>::decode(input)?.into_owned())))
     }
 }
+
+cfx_storage2::subkey_not_support!(BoundedVec);

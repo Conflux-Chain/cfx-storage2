@@ -10,8 +10,8 @@ auto_impl = "1.2"
 #kvdb-rocksdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "3fcd845", version = "0.19.0" }
 #kvdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "3fcd845" }
 
-kvdb-rocksdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "4138407", version = "0.17.0-iter-nochecksum-partitionedindexfilter" }
-kvdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "4138407" }
+kvdb-rocksdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "0e7c37f", version = "0.17.0-iter-nochecksum-partitionedindexfilter" }
+kvdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "0e7c37f" }
 
 parking_lot = "0.12"
 
@@ -47,6 +47,9 @@ log = "0.4"
 
 lru = "0.12"
 
+# for fuzzing
+rand_chacha = { version = "0.2.1", optional = true }
+
 [dev-dependencies]
 rand = "0.8.0"
 rand_distr = "0.4.0"
@@ -57,6 +60,8 @@ env_logger = "0.11"
 [features]
 default = ["parallel-crypto"]
 parallel-crypto = ["ark-poly/parallel", "ark-ec/parallel", "amt/parallel"]
+
+fuzzing = ["dep:rand_chacha"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
