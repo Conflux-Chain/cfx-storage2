@@ -14,6 +14,10 @@ arbitrary = { version = "1", features = ["derive"] }
 
 tempfile = "3"
 
+once_cell = "1.19"
+ethereum-types = "0.9"
+amt = { git = "https://github.com/Conflux-Chain/amt", rev = "387995a", features = ["bls12-381"] }
+
 [dependencies.cfx-storage2]
 path = ".."
 features = ["fuzzing"]

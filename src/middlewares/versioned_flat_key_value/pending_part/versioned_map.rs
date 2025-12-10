@@ -219,7 +219,7 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
         Ok(confirm_path_info)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn change_root_without_persistence(
         &mut self,
         commit_id: S::CommitId,

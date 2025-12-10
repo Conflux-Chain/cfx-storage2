@@ -6,7 +6,7 @@ mod snapshot;
 mod state_root;
 mod storage;
 pub mod table_schema;
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 mod tests;
 pub mod types;
 

@@ -347,12 +347,12 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
         &self.key_value_store
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn get_amt_node_store(&self) -> &VersionedStore<'cache, 'db, AmtNodes, P> {
         &self.amt_node_store
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn get_slot_alloc_store(&self) -> &VersionedStore<'cache, 'db, SlotAllocations, P> {
         &self.slot_alloc_store
     }

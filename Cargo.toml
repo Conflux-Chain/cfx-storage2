@@ -49,6 +49,8 @@ lru = "0.12"
 
 # for fuzzing
 rand_chacha = { version = "0.2.1", optional = true }
+once_cell = { version = "1.19", optional = true }
+env_logger = { version = "0.11", optional = true }
 
 [dev-dependencies]
 rand = "0.8.0"
@@ -61,7 +63,7 @@ env_logger = "0.11"
 default = ["parallel-crypto"]
 parallel-crypto = ["ark-poly/parallel", "ark-ec/parallel", "amt/parallel"]
 
-fuzzing = ["dep:rand_chacha"]
+fuzzing = ["dep:rand_chacha", "dep:once_cell", "dep:env_logger"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }

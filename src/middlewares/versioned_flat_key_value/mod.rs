@@ -33,7 +33,7 @@ pub use pending_part::{
     PendingError, RecoveryError, SnapshotReadError,
 };
 
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 pub use tests::{
     clear_dir, clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test,
 };
