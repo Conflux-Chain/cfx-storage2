@@ -56,15 +56,15 @@ fn gen_novel_commit_id(rng: &mut ChaChaRng, previous: &mut HashSet<CommitID>) ->
 
 /// Holds all the pre-generated data needed for the test.
 #[derive(Clone)]
-struct TestSetup {
-    commit_1: CommitID,
-    commit_2: CommitID,
-    commit_2_1: CommitID,
-    commit_3: CommitID,
-    updates_1: Vec<(u64, Option<u64>)>,
-    updates_2: Vec<(u64, Option<u64>)>,
-    updates_2_1: Vec<(u64, Option<u64>)>,
-    updates_3: Vec<(u64, Option<u64>)>,
+pub struct TestSetup {
+    pub commit_1: CommitID,
+    pub commit_2: CommitID,
+    pub commit_2_1: CommitID,
+    pub commit_3: CommitID,
+    pub updates_1: Vec<(u64, Option<u64>)>,
+    pub updates_2: Vec<(u64, Option<u64>)>,
+    pub updates_2_1: Vec<(u64, Option<u64>)>,
+    pub updates_3: Vec<(u64, Option<u64>)>,
 }
 
 impl TestSetup {
@@ -121,7 +121,7 @@ impl TestSetup {
         m.into_iter().collect()
     }
 
-    fn changes_iter(
+    pub fn changes_iter(
         updates: &[(u64, Option<u64>)],
     ) -> impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)> + '_ {
         updates
@@ -131,7 +131,7 @@ impl TestSetup {
 }
 
 /// Executes the first phase of the test: performing a series of commit operations.
-fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>>(
+pub fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>>(
     db: &mut LvmtStorage<D, P>,
     setup: &TestSetup,
 ) {
@@ -175,7 +175,7 @@ fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTa
 }
 
 /// Verifies the state after a successful root promotion.
-fn run_verification_after_successful_promotion<
+pub fn run_verification_after_successful_promotion<
     D: DatabaseTrait<HistoricalTableName>,
     P: DatabaseTrait<PendingTableName>,
 >(
@@ -203,7 +203,7 @@ fn run_verification_after_successful_promotion<
 }
 
 /// Verifies the state after a failed root promotion (which has been rolled back).
-fn run_verification_after_failed_promotion<
+pub fn run_verification_after_failed_promotion<
     D: DatabaseTrait<HistoricalTableName>,
     P: DatabaseTrait<PendingTableName>,
 >(
@@ -231,7 +231,7 @@ fn run_verification_after_failed_promotion<
 const LARGE_NUM_KEYS: usize = 100000;
 static LARGE_TEST_SETUP: Lazy<TestSetup> = Lazy::new(|| TestSetup::new(LARGE_NUM_KEYS));
 
-fn get_setup(num_keys: usize) -> Cow<'static, TestSetup> {
+pub fn get_setup(num_keys: usize) -> Cow<'static, TestSetup> {
     if num_keys == LARGE_NUM_KEYS {
         println!("--- Using cached LARGE TestSetup. ---");
         Cow::Borrowed(&*LARGE_TEST_SETUP)
@@ -268,7 +268,7 @@ fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
 }
 
 #[derive(Clone)]
-enum ConstructionMethod {
+pub enum ConstructionMethod {
     Split,   // invoke from_empty_pending and from_recovery
     Unified, // invoke new
 }
@@ -947,7 +947,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     /// Simulates a crash that occurs after historical_db is updated but before pending_db is updated.
     /// This executes a part of the logic of `confirmed_pending_to_history_with_commit_id`:
     /// It updates the in-memory state of the pending component and moves the nodes to historical_db, but does not update pending_db.
-    pub(crate) fn make_historical_db_ahead_for_test(
+    pub fn make_historical_db_ahead_for_test(
         &mut self,
         new_root_commit_id: CommitID,
     ) -> Result<()> {

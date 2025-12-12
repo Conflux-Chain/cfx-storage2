@@ -77,3 +77,10 @@ path = "fuzz_targets/fuzz_lvmt.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_crash_recovery"
+path = "fuzz_targets/fuzz_crash_recovery.rs"
+test = false
+doc = false
+bench = false
