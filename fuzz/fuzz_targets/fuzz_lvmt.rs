@@ -14,7 +14,7 @@ use std::sync::Arc;
 //    test. The fuzzer will compare the behavior of the real system against this model.
 //==============================================================================
 
-use cfx_storage2::middlewares::versioned_flat_key_value::tests::{MockVersionedStore, CommitIDType, ParentCommitType, UniqueVec};
+use cfx_storage2::middlewares::versioned_flat_key_value::tests::{MockVersionedStore, CommitIDType, UniqueVec};
 use cfx_storage2::middlewares::CommitID; // H256
 use cfx_storage2::middlewares::table_schema::VersionedKeyValueSchema;
 use cfx_storage2::backends::{VersionedKVName, DatabaseTrait, PendingTableName, HistoricalTableName};
@@ -90,7 +90,7 @@ enum CommitIDSpec {
 enum ParentCommitSpec {
     Pending(#[arbitrary(with = |u: &mut Unstructured| u.int_in_range(0..=MODULO_BOUND))] usize),
     ParentOfPendingRoot,
-    NoneButInvalid,
+    None,
     HistoryButInvalid(#[arbitrary(with = |u: &mut Unstructured| u.int_in_range(0..=MODULO_BOUND))] usize),
     Novel,
 }
@@ -252,12 +252,12 @@ where
     }
 }
 
-/// Resolves a `ParentCommitSpec` into a concrete parent `CommitID` and its `ParentCommitType`.
+/// Resolves a `ParentCommitSpec` into a concrete parent `CommitID`.
 fn resolve_parent_commit_id<T, P>(
     spec: &ParentCommitSpec,
     mock_store: &MockVersionedStore<T, P>,
     commit_counter: &mut u64,
-) -> (Option<CommitID>, ParentCommitType)
+) -> Option<CommitID>
 where
     T: VersionedKeyValueSchema,
     P: DatabaseTrait<PendingTableName>,
@@ -266,36 +266,25 @@ where
         ParentCommitSpec::Pending(idx) => {
             let pending = mock_store.get_pending();
             if pending.is_empty() {
-                (None, ParentCommitType::Pending)
+                None
             } else {
-                (
-                    Some(pending[*idx % pending.len()]),
-                    ParentCommitType::Pending,
-                )
+                Some(pending[*idx % pending.len()])
             }
         }
-        ParentCommitSpec::ParentOfPendingRoot => (
+        ParentCommitSpec::ParentOfPendingRoot =>
             mock_store.get_parent_of_root(),
-            ParentCommitType::ParentOfPendingRoot,
-        ),
-        ParentCommitSpec::NoneButInvalid => (None, ParentCommitType::NoneButInvalid),
+        ParentCommitSpec::None => None,
         ParentCommitSpec::HistoryButInvalid(idx) => {
             let history = mock_store.get_history_but_parent_of_root();
             if history.is_empty() {
-                (None, ParentCommitType::HistoryButInvalid)
+                None
             } else {
-                (
-                    Some(history[*idx % history.len()]),
-                    ParentCommitType::HistoryButInvalid,
-                )
+                Some(history[*idx % history.len()])
             }
         }
         ParentCommitSpec::Novel => {
             *commit_counter += 1;
-            (
-                Some(get_commit_id_from_u64(*commit_counter)),
-                ParentCommitType::Novel,
-            )
+            Some(get_commit_id_from_u64(*commit_counter))
         }
     }
 }
@@ -349,7 +338,7 @@ fuzz_target!(|input: FuzzInput<TestKey, TestValue>| {
     for op in &input.operations {
         match op {
             FuzzOperation::AddToPending { parent_spec, update } => {
-                let (parent_commit, _parent_type) =
+                let parent_commit =
                     resolve_parent_commit_id(parent_spec, &mock_store, &mut commit_counter);
 
                 let updates = resolve_update::<TestSchema>(update, &mut known_keys, &mut fresh_keys);
@@ -423,14 +412,17 @@ fuzz_target!(|input: FuzzInput<TestKey, TestValue>| {
                         
                         match real_res {
                             Ok(opt_lvmt) => {
-                                let lvmt_v = opt_lvmt.expect("real_store.get returned Ok(None), which violates the assumption, see LvmtStore::commit()");
+                                let real_inner = if let Some(lvmt_v) = opt_lvmt {
+                                    // get opt_bytes from LvmtValue
+                                    let opt_bytes = lvmt_v.get_value();
 
-                                // get opt_bytes from LvmtValue
-                                let opt_bytes = lvmt_v.get_value();
+                                    // get Option<T::Value> from opt_bytes
+                                    get_value_from_lvmt_value::<TestSchema>(opt_bytes)
 
-                                // get Option<T::Value> from opt_bytes
-                                let real_inner = get_value_from_lvmt_value::<TestSchema>(opt_bytes);
-
+                                } else { // commit_id exists, but this key is not in the snapshot of this commit_id
+                                    None
+                                };
+                                
                                 match mock_res {
                                     Ok(mock_inner) => {
                                         assert_eq!(
