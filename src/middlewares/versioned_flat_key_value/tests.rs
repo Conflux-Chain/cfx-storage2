@@ -236,7 +236,8 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 
     fn discard(&mut self, commit: CommitID, _pending_write_schema: &P::WriteSchema) -> Result<()> {
-        self.discard_inner(commit)
+        self.discard_inner(commit)?;
+        Ok(())
     }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
@@ -245,13 +246,18 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
 }
 
 impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersionedStore<T, P> {
-    fn discard_inner(&mut self, commit: CommitID) -> Result<()> {
+    fn discard_inner(&mut self, commit: CommitID) -> Result<bool> {
+        // dbg!(commit);
+
         if self.history.contains_key(&commit) {
-            return Ok(());
+            return Ok(false);
         }
 
+        let mut has_removed_nodes = false;
         if self.pending.tree.contains_key(&commit) {
             if let Some(parent) = self.pending.tree.get(&commit).unwrap().parent {
+                // dbg!(parent);
+
                 let mut to_remove = VecDeque::new();
 
                 assert!(self
@@ -267,6 +273,11 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersion
                     }
                 }
 
+                // dbg!(&to_remove);
+                if !to_remove.is_empty() {
+                    has_removed_nodes = true;
+                }
+
                 while !to_remove.is_empty() {
                     let remove_this = to_remove.pop_front().unwrap();
                     let remove_this_node = self.pending.tree.remove(&remove_this).unwrap();
@@ -278,12 +289,44 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersion
                 self.pending.tree.get_mut(&parent).unwrap().children = HashSet::from([commit]);
             }
 
-            Ok(())
+            Ok(has_removed_nodes)
         } else {
             Err(StorageError::PendingError(PendingError::CommitIDNotFound(
                 format!("{:?}", commit),
             )))
         }
+    }
+
+    pub fn make_pivot(&mut self, commit: CommitID) -> Result<bool> {
+        if self.history.contains_key(&commit) {
+            return Ok(false);
+        }
+
+        if !self.pending.tree.contains_key(&commit) {
+            return Err(StorageError::PendingError(PendingError::CommitIDNotFound(
+                format!("{:?}", commit),
+            )));
+        }
+
+        let mut parent_cid = self
+            .pending
+            .tree
+            .get(&commit)
+            .cloned()
+            .unwrap()
+            .parent;
+        let mut commit_id = commit;
+        let mut has_removed_nodes = false;
+        while let Some(parent_commit_id) = parent_cid {
+            if self.discard_inner(commit_id).unwrap() {
+                has_removed_nodes = true;
+            };
+
+            commit_id = parent_commit_id;
+            parent_cid = self.pending.tree.get(&parent_commit_id).unwrap().parent;
+        }
+
+        Ok(has_removed_nodes)
     }
 }
 
@@ -558,6 +601,8 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersion
             )));
         }
 
+        self.make_pivot(new_root_commit_id)?;
+
         let mut parent_cid = self
             .pending
             .tree
@@ -567,8 +612,6 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersion
             .parent;
         let mut commit_id = new_root_commit_id;
         while let Some(parent_commit_id) = parent_cid {
-            self.discard_inner(commit_id).unwrap();
-
             let parent_node = self.pending.tree.remove(&parent_commit_id).unwrap();
 
             let grandparent = if let Some(grandparent) = parent_node.parent {
@@ -576,6 +619,8 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersion
             } else {
                 self.pending.parent_of_root
             };
+
+            // dbg!(parent_commit_id);
             self.history
                 .insert(parent_commit_id, (grandparent, parent_node.store));
 
@@ -1125,7 +1170,7 @@ impl<T: VersionedKeyValueSchema<Key = u64, Value = u64>, P: DatabaseTrait<Pendin
         commit: CommitID,
         pending_write_schema: &P::WriteSchema,
     ) -> bool {
-        let mock_res = self.mock_store.discard_inner(commit);
+        let mock_res = self.mock_store.discard_inner(commit).map(|_| ());
         let real_res = self.real_store.discard(commit, pending_write_schema);
 
         assert_eq!(mock_res, real_res);

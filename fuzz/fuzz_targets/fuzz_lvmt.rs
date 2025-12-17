@@ -356,6 +356,8 @@ fuzz_target!(|input: FuzzInput<TestKey, TestValue>| {
                     &AMT,
                 );
 
+                // dbg!(&parent_commit, &mock_res, &real_res);
+
                 assert_eq!(mock_res.is_ok(), real_res.is_ok(), "AddToPending results must match");
             }
 
@@ -376,6 +378,7 @@ fuzz_target!(|input: FuzzInput<TestKey, TestValue>| {
 
             FuzzOperation::Confirm { commit_spec } => {
                 let (commit_id_opt, _) = resolve_commit_id(commit_spec, &mock_store, &mut commit_counter);
+                // dbg!(&commit_id_opt);
                 if let Some(commit_id) = commit_id_opt {
                     let mock_res = mock_store.confirmed_pending_to_history(commit_id);
 
@@ -387,6 +390,7 @@ fuzz_target!(|input: FuzzInput<TestKey, TestValue>| {
                         real_store.check_consistency(commit_id, &AMT).unwrap();
                     }
                     
+                    // dbg!(&mock_res, &real_res);
                     assert_eq!(mock_res.is_ok(), real_res.is_ok(), "Confirm results must match");
                 }
             }
