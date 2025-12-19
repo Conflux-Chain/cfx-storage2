@@ -363,18 +363,22 @@ fuzz_target!(|input: FuzzInput<TestKey, TestValue>| {
 
             // TODO: make_pivot
             FuzzOperation::Discard { commit_spec } => {
-                ()
-            }
-            //     let (commit_id_opt, _) = resolve_commit_id(commit_spec, &mock_store, &mut commit_counter);
-            //     if let Some(commit_id) = commit_id_opt {
-            //         let pending_ws = WrappedRocksDb::write_schema();
-            //         let mock_res = mock_store.discard(commit_id, &pending_ws);
-            //         let real_res = real_store.discard(commit_id, &pending_ws);
-            //         pending_db.commit(pending_ws).unwrap();
+                let (commit_id_opt, _) = resolve_commit_id(commit_spec, &mock_store, &mut commit_counter);
+                // dbg!(&commit_id_opt);
+
+                if let Some(commit_id) = commit_id_opt {
+                    let mock_res = mock_store.make_pivot(commit_id);
+                    let real_res = real_store.make_pivot(commit_id);
                     
-            //         assert_eq!(mock_res, real_res, "Discard results must match");
-            //     }
-            // }
+                    match (mock_res, real_res) {
+                        (Ok(m), Ok(r)) => assert_eq!(m, r, "Make pivot Ok results must match"),
+                        (Err(_), Err(_)) => {
+                            // Both are errors; considered acceptable without comparing details.
+                        }
+                        (m, r) => panic!("Make pivot result mismatch: mock={:?}, real={:?}", m, r),
+                    }
+                }
+            }
 
             FuzzOperation::Confirm { commit_spec } => {
                 let (commit_id_opt, _) = resolve_commit_id(commit_spec, &mock_store, &mut commit_counter);
