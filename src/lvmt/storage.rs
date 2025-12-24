@@ -55,8 +55,11 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         write_schema: &impl WriteSchemaTrait,
         pp: &AmtParams<PE>,
     ) -> Result<()> {
+        // TODO
+        
         let (amt_node_view, slot_alloc_view, key_value_view) = if let Some(old_commit) = old_commit
         {
+            // dbg!("1");
             (
                 Some(self.amt_node_store.get_versioned_store(&old_commit, true)?),
                 Some(
@@ -71,6 +74,7 @@ impl<'cache, 'db> LvmtStore<'cache, 'db> {
         } else {
             (None, None, None)
         };
+        // dbg!("2");
 
         let mut key_value_changes = vec![];
         let mut allocations = AllocationCacheDb::new(&slot_alloc_view);

@@ -150,6 +150,7 @@ fn get_versioned_key_previous<'db, T: VersionedKeyValueSchema>(
     history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
     change_history_table: &KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 ) -> Result<Option<T::Value>> {
+    // dbg!(query_version_number, key);
     let range_query_key = HistoryIndexKey(key.clone(), query_version_number);
     match history_index_table.iter(&range_query_key)?.next() {
         None => Ok(None),

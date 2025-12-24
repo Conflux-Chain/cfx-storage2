@@ -228,6 +228,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
                     },
                 )))
             } else {
+                // dbg!(&history_number);
                 Ok(SnapshotView::Historical(HistoricalSnapshot::Previous(
                     PreviousHistoricalSnapshot {
                         history_number,
