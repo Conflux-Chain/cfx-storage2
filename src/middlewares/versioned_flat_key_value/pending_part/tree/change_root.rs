@@ -118,7 +118,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         if let Some(last) = to_check_children.last() {
             for (ancester, _) in to_check_children.iter() {
                 if self.discard_inner(*ancester)? {
-                    dbg!(ancester);
+                    // dbg!(ancester);
                     has_discarded_nodes = true;
                 };
             }

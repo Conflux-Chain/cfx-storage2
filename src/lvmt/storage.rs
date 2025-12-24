@@ -49,6 +49,7 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
     }
 
     pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
+        // dbg!(&commit, &key);
         self.get_state(commit, false)?.get(&key)
     }
 
@@ -165,8 +166,11 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
         pp: &AmtParams<PE>,
     ) -> Result<()> {
+        // TODO
+        
         let (amt_node_view, slot_alloc_view, key_value_view) = if let Some(old_commit) = old_commit
         {
+            // dbg!("1");
             (
                 Some(self.amt_node_store.get_versioned_store(&old_commit, true)?),
                 Some(
@@ -181,6 +185,7 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         } else {
             (None, None, None)
         };
+        // dbg!("2");
 
         let mut key_value_changes = vec![];
         let mut allocations = AllocationCacheDb::new(&slot_alloc_view);
@@ -234,6 +239,8 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         // TODO: Write to the history part is beyond the range of LvmtStore.
         let pending_write_schema = P::write_schema();
 
+        // dbg!("3");
+
         // write amt_node schema
         let amt_node_updates: HashMap<_, _> =
             amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
@@ -244,11 +251,14 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
             &pending_write_schema,
         )?;
 
+        // dbg!("4");
+
         // write key_value schema
         let key_value_updates: HashMap<_, _> = key_value_changes
             .into_iter()
             .map(|(k, v)| (k, Some(v)))
             .collect();
+        // dbg!(&old_commit, &new_commit, &key_value_updates);
         self.key_value_store.add_to_pending_part(
             old_commit,
             new_commit,
