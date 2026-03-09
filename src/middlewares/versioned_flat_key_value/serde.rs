@@ -120,8 +120,7 @@ mod tests_history_index_order {
     use std::borrow::Cow;
     use std::sync::Arc;
 
-    use crate::backends::MockTableName;
-    use crate::backends::{DatabaseTrait, TableRead, WrappedInMemoryDb, WriteSchemaTrait, TableSchema};
+    use crate::backends::{DatabaseTrait, TableName, TableRead, TableSchema, InMemoryDatabase, WriteSchemaTrait};
     use crate::errors::{DatabaseError, Result, DecResult};
     use crate::backends::serde::{Encode, Decode, FixedLengthEncoded};
 
@@ -147,8 +146,7 @@ mod tests_history_index_order {
     #[derive(Clone, Copy)]
     struct MockHistoryTable;
     impl TableSchema for MockHistoryTable {
-        type TableName = MockTableName;
-        const NAME: MockTableName = MockTableName::MockTable1;
+        const NAME: TableName = TableName::CommitID;
         type Key = HistoryIndexKey<BoundedVec>;
         type Value = Vec<u8>;
     }
@@ -177,7 +175,7 @@ mod tests_history_index_order {
         ]
     }
 
-    fn seed<DB: DatabaseTrait<MockTableName>>(db: &DB) -> Result<()> {
+    fn seed<DB: DatabaseTrait>(db: &mut DB) -> Result<()> {
         let schema = DB::write_schema();
         for (k, v) in test_data() {
             schema.write::<MockHistoryTable>((Cow::Owned(k), Some(Cow::Owned(v))));
@@ -186,9 +184,9 @@ mod tests_history_index_order {
         Ok(())
     }
 
-    fn run_read_assertions<DB: DatabaseTrait<MockTableName>>(db: DB) -> Result<()> {
-        seed(&db)?;
-        let reader = Arc::new(db).view::<MockHistoryTable>()?;
+    fn run_read_assertions<DB: DatabaseTrait>(mut db: DB) -> Result<()> {
+        seed(&mut db)?;
+        let reader = db.view::<MockHistoryTable>()?;
 
         let range_query_key = hk_bytes(vec![], 0);
         println!("Querying with key: {:?}", range_query_key);
@@ -219,17 +217,28 @@ mod tests_history_index_order {
 
     #[test]
     fn test_history_index_key_order_in_memory() {
-        let db = WrappedInMemoryDb::empty();
+        let db = InMemoryDatabase::empty();
         run_read_assertions(db).unwrap();
+    }
+
+    pub fn clear_dir(dir_path: &str) {
+        if std::path::Path::new(dir_path).exists() {
+            std::fs::remove_dir_all(dir_path).unwrap();
+        }
+    }
+
+    pub fn clear_dir_then_create(dir_path: &str) {
+        clear_dir(dir_path);
+
+        std::fs::create_dir_all(dir_path).unwrap();
     }
 
     #[test]
     fn test_history_index_key_order_rocksdb() {
-        use crate::middlewares::{clear_dir, clear_dir_then_create};
-        use crate::backends::impls::kvdb_rocksdb::WrappedRocksDb;
+        use crate::backends::impls::kvdb_rocksdb::CachedDB;
         let temp_dir = "__test_rocksdb_history_index_key_order_custom";
         clear_dir_then_create(temp_dir);
-        let db = WrappedRocksDb::open(temp_dir).unwrap();
+        let db = CachedDB::open(TableName::max_index() + 1, temp_dir).unwrap();
         run_read_assertions(db).unwrap();
         clear_dir(temp_dir);
     }
