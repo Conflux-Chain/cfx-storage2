@@ -38,7 +38,7 @@ fn count<T: TableSchema>(view: Box<dyn '_ + TableRead<T>>) {
 }
 
 fn main() {
-    let db_dir = "__lvmt_40m_size100w_warmup/LVMT_4e7/";
+    let db_dir = "__bench2fixed_lvmt_40m_warmup/LVMT_4e7/";
     let backend = CachedDB::open(TableName::max_index() + 1, db_dir).unwrap();
 
     count(backend.view::<CommitIDSchema>().unwrap());

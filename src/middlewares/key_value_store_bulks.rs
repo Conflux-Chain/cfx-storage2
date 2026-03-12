@@ -13,7 +13,7 @@ use crate::{
 use crate::backends::TableIter;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-pub struct ChangeKey<C: Copy, K: Clone>(C, K);
+pub struct ChangeKey<C: Copy, K: Clone>(C, pub K);
 
 pub struct KeyValueStoreBulks<'db, T: TableSchema>(TableReader<'db, T>);
 

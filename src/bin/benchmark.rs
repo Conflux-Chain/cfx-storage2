@@ -14,11 +14,12 @@ use fs_extra::dir::CopyOptions;
 
 use cfx_storage2::{
     backends::{impls::kvdb_rocksdb::CachedDB, DatabaseTrait, InMemoryDatabase, TableName},
-    lvmt::{crypto::PE, example::LvmtStorage},
-    middlewares::CommitID,
+    lvmt::{crypto::PE, example::LvmtStorage, AmtNodes, FlatKeyValue},
+    middlewares::{table_schema::{HistoryChangeTable, HistoryIndicesTable}, ChangeKey, CommitID, CommitIDSchema},
 };
 
 use once_cell::sync::Lazy;
+use ark_std::rand::{rngs::StdRng, Rng, SeedableRng, seq::SliceRandom};
 
 pub const TEST_LEVEL: usize = 16;
 
@@ -137,13 +138,12 @@ fn get_commit_id_from_epoch_id(epoch_id: usize) -> CommitID {
     H256::from_low_u64_be(epoch_id as u64)
 }
 
-pub fn run_tasks<D: DatabaseTrait>(
+pub fn run_warmup<D: DatabaseTrait>(
     db: &mut LvmtStorage<D>,
     // _backend_any: Arc<dyn Any>,
     tasks: Arc<dyn TaskTrait>,
-    mut reporter: Reporter,
     opts: &Options,
-) {
+) -> Option<(Option<CommitID>, usize)> {
     println!("Start warming up");
     let (mut old_commit, num_warmup_epochs) = if opts.warmup_from.is_none() && !opts.no_warmup {
         let old_commit = warmup(db, tasks.warmup(), opts);
@@ -171,7 +171,7 @@ pub fn run_tasks<D: DatabaseTrait>(
                     retry_cnt += 1;
                 } else {
                     println!("Writing done");
-                    return;
+                    return None;
                 }
             }
 
@@ -190,6 +190,20 @@ pub fn run_tasks<D: DatabaseTrait>(
         (None, 0)
     };
     println!("Warm up done");
+
+    Some((old_commit, num_warmup_epochs))
+}
+
+pub fn run_tasks<D: DatabaseTrait>(
+    db: &mut LvmtStorage<D>,
+    // _backend_any: Arc<dyn Any>,
+    tasks: Arc<dyn TaskTrait>,
+    mut reporter: Reporter,
+    opts: &Options,
+    init_old_commit: Option<CommitID>, 
+    num_warmup_epochs: usize,
+) {
+    let mut old_commit = init_old_commit;
 
     let frequency = if opts.report_dir.is_none() { -1 } else { 250 };
     let mut profiler = Profiler::new(frequency);
@@ -336,15 +350,58 @@ fn main() {
 
     match options.backend {
         asb_options::Backend::RocksDB => {
+            let warmup_keys = {
+                let backend = CachedDB::open(TableName::max_index() + 1, db_dir).unwrap();
+
+                let mut warmup_keys = Vec::with_capacity(500_000);
+                let flat_kv_change_view = backend.view::<HistoryChangeTable<FlatKeyValue>>().unwrap();
+                let mut rng = StdRng::seed_from_u64(42);
+                for item in flat_kv_change_view.iter_from_start().unwrap() {
+                    if rng.gen_ratio(1, 60) {
+                        let (change_key, _) = item.unwrap();
+                        let key = change_key.into_owned().1.to_vec();
+                        warmup_keys.push(key);
+                    }
+                }
+
+                warmup_keys.shuffle(&mut rng);
+
+                warmup_keys.truncate(500_000);
+
+                drop(flat_kv_change_view);
+                drop(backend);
+
+                warmup_keys
+            };
+
             let backend = CachedDB::open(TableName::max_index() + 1, db_dir).unwrap();
+            
+            backend.warmup_latest_amt_nodes().unwrap();
+
             let (mut db, reporter) = initialize_lvmt(backend, &options);
-            run_tasks(&mut db, tasks, reporter, &options);
+
+            if let Some((old_commit, num_warmup_epochs)) = run_warmup(&mut db, tasks.clone(), &options) {
+                let lvmt = db.as_manager().unwrap();
+                let maybe_view = old_commit.map(|old_commit| lvmt.get_state(old_commit, false).unwrap());
+                let mut num_some = 0;
+                for key in warmup_keys {
+                    let ans = if let Some(ref view) = maybe_view {
+                        view.get(&key.into_boxed_slice()).unwrap()
+                    } else {
+                        None
+                    };
+
+                    if ans.is_some() {
+                        num_some += 1;
+                    }
+                }
+                drop(maybe_view);
+                drop(lvmt);
+                println!("Number of warmup_keys {}", num_some);
+
+                run_tasks(&mut db, tasks, reporter, &options, old_commit, num_warmup_epochs);
+            }
         }
-        asb_options::Backend::InMemoryDB => {
-            let backend = InMemoryDatabase::empty();
-            let (mut db, reporter) = initialize_lvmt(backend, &options);
-            run_tasks(&mut db, tasks, reporter, &options);
-        }
-        asb_options::Backend::MDBX => panic!("Only support backend of RocksDB or InMemoryDatabase"),
+        _ => panic!("Only support backend of RocksDB"),
     };
 }
