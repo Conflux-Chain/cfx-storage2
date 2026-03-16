@@ -21,7 +21,9 @@ pub type TableReader<'a, T> = Arc<dyn 'a + TableRead<T>>;
 pub trait TableRead<T: TableSchema> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>>;
 
-    fn iter<'a>(&'a self, key: &T::Key) -> Result<TableIter<'a, '_, T>>;
+    fn iter<'a, 'b>(&'a self, key: &T::Key) -> Result<TableIter<'a, 'b, T>>
+    where
+        'a: 'b;
 
     fn iter_from_start(&self) -> Result<TableIter<T>>;
 }

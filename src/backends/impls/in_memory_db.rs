@@ -20,7 +20,7 @@ impl InMemoryDatabase {
     }
 }
 
-impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
+impl<'db, T: TableSchema> TableRead<T> for InMemoryTable<'db> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
         let key = (self.col, key.encode().into_owned());
         if let Some(v) = self.inner.0.get(&key) {
@@ -30,7 +30,10 @@ impl<'b, T: TableSchema> TableRead<T> for InMemoryTable<'b> {
         }
     }
 
-    fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
+    fn iter<'a, 'b>(&'a self, key: &T::Key) -> Result<TableIter<'a, 'b, T>>
+    where
+        'a: 'b,
+    {
         let range = self.inner.0.range((self.col, key.encode().into_owned())..);
         let iter = range
             //.filter(|((col, _), _)| *col == self.col)

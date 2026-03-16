@@ -147,34 +147,35 @@ impl CachedDB {
 }
 
 impl CachedDB {
-    /// 精准预热 AmtNode 的最新历史索引数据，目的是预热写操作表，因为预热不可以进行写操作
+    /// Precisely warm up the latest history index data for AmtNode. 
+    /// The goal is to warm up the write operation table, since write operations cannot be performed during the warmup phase.
     pub fn warmup_latest_amt_nodes(&self) -> Result<()> {
-        // 1. 定义强类型，与你 print_cache_stats 里的 downcast 严格保持一致
+        // 1. Define strong types, strictly consistent with the downcast in your print_cache_stats
         type AmtTable = HistoryIndicesTable<AmtNodes>;
         type AmtKey = <AmtTable as TableSchema>::Key;
         type AmtValue = <AmtTable as TableSchema>::Value;
         
         let col_id: u32 = TableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into();
 
-        println!("开始预热 AmtNode (Column {}) ...", col_id);
+        println!("Starting to warm up HistoryIndex(AmtNode) ...");
         let start_time = std::time::Instant::now();
 
-        // 2. 【极其关键的一步】：调用 view() 强制触发 LruCache 和 Metrics 的懒加载初始化
-        // 如果不调这个，下面去 caches_map 里 get 绝对是 None
+        // 2. [Extremely critical step]: Call view() to force the lazy initialization of LruCache and Metrics.
+        // If this is not called, getting from caches_map below will definitely return None.
         let table_view = self.view::<AmtTable>()?;
 
-        // 3. 使用你封装好的强类型迭代器，直接拿到解码后的 Key 和 Value
+        // 3. Use the encapsulated strongly-typed iterator to directly get the decoded Key and Value
         let iter = table_view.iter_from_start()?;
 
-        // 4. 获取缓存和指标的锁
+        // 4. Acquire locks for caches and metrics
         let caches_map = self.caches.lock();
         let metrics_map = self.metrics.lock();
 
-        // 此时 cache 和 metrics 必定存在，因为第 2 步已经初始化了
+        // At this point, cache and metrics must exist because they were initialized in step 2
         let cache_any = caches_map.get(&col_id).expect("Cache should be initialized by view()");
         let metrics = metrics_map.get(&col_id).expect("Metrics should be initialized by view()");
 
-        // 5. 严格按照你架构的类型进行 downcast
+        // 5. Downcast strictly according to the architecture's types
         let cache_mutex = cache_any
             .downcast_ref::<Mutex<LruCache<Box<AmtKey>, Option<Box<AmtValue>>>>>()
             .expect("Type mismatch for AmtNode cache");
@@ -182,18 +183,18 @@ impl CachedDB {
         let mut cache = cache_mutex.lock();
         let mut loaded_count = 0;
 
-        // 6. 遍历、过滤、写入内存
+        // 6. Iterate, filter, and write to memory
         for item in iter {
             let (key_cow, value_cow) = item?;
             let key = key_cow.into_owned();
             let value = value_cow.into_owned();
 
-            // 抄你 commit 里的核心业务逻辑：只缓存 latest
+            // According to the core business logic in the commit: only cache the latest
             if key.is_latest() {
-                // 写入 LruCache，注意你的 Cache Value 签名是 Option<Box<Value>>
+                // Write to LruCache
                 cache.put(Box::new(key), Some(Box::new(value)));
                 
-                // 同步更新 metrics，保证 print_cache_stats 统计准确
+                // Synchronously update metrics to ensure accurate statistics in print_cache_stats
                 metrics.puts.fetch_add(1, Ordering::Relaxed);
                 
                 loaded_count += 1;
@@ -201,7 +202,7 @@ impl CachedDB {
         }
 
         println!(
-            "预热完成！耗时: {:?}, 共加载 {} 条 latest 数据进入缓存。",
+            "Warmup completed! Time elapsed: {:?}, loaded {} latest records into the cache.",
             start_time.elapsed(),
             loaded_count
         );
@@ -237,7 +238,7 @@ pub struct CachedRocksDBColumn<'a, T: TableSchema> {
     metrics: Arc<CacheMetrics>,
 }
 
-impl<'b, T: TableSchema> TableRead<T> for UncachedRocksDBColumn<'b> {
+impl<'db, T: TableSchema> TableRead<T> for UncachedRocksDBColumn<'db> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
         if let Some(v) = KeyValueDB::get(self.inner, self.col, key.encode().borrow())? {
             let owned = <T::Value>::decode_owned(v)?;
@@ -247,7 +248,10 @@ impl<'b, T: TableSchema> TableRead<T> for UncachedRocksDBColumn<'b> {
         }
     }
 
-    fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
+    fn iter<'a, 'b>(&'a self, key: &T::Key) -> Result<TableIter<'a, 'b, T>>
+    where
+        'a: 'b,
+    {
         let iter = self
             .inner
             .iter_from(self.col, &key.encode())
@@ -275,7 +279,7 @@ impl<'b, T: TableSchema> TableRead<T> for UncachedRocksDBColumn<'b> {
     }
 }
 
-impl<'b, T: TableSchema> TableRead<T> for CachedRocksDBColumn<'b, T> {
+impl<'db, T: TableSchema> TableRead<T> for CachedRocksDBColumn<'db, T> {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
         // 1. get from cache
         {
@@ -312,7 +316,10 @@ impl<'b, T: TableSchema> TableRead<T> for CachedRocksDBColumn<'b, T> {
         Ok(db_result.map(Cow::Owned))
     }
 
-    fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
+    fn iter<'a, 'b>(&'a self, key: &T::Key) -> Result<TableIter<'a, 'b, T>>
+    where
+        'a: 'b,
+    {
         let iter = self
             .inner
             .iter_from(self.col, &key.encode())
