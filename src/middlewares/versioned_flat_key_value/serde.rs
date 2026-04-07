@@ -1,57 +1,97 @@
 use std::borrow::Cow;
 
 use super::HistoryIndexKey;
-use crate::backends::serde::{Decode, Encode, EncodeSubKey, FixedLengthEncoded};
+use crate::backends::serde::{Decode, Encode, EncodeSubKey};
 use crate::errors::{DecResult, DecodeError};
 use crate::middlewares::HistoryNumber;
+
+/// Byte-stuffing: encode raw key bytes into an order-preserving, self-terminating form.
+///
+/// Escaping rule: every `0x00` in the input becomes `[0x00, 0xFF]`.
+/// A `[0x00, 0x00]` terminator is appended at the end.
+///
+/// Properties:
+/// - **Order-preserving**: non-zero bytes compare directly; when one key is a prefix of
+///   another, the shorter key's terminator `0x00 0x00` is less than the longer key's next
+///   byte (either non-zero, or the escaped `0x00 0xFF`).
+/// - **Self-terminating**: `0x00 0x00` never appears inside the escaped body because all
+///   original `0x00` bytes are escaped to `0x00 0xFF`.
+fn byte_stuff(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(raw.len() + 2);
+    for &b in raw {
+        out.push(b);
+        if b == 0x00 {
+            out.push(0xFF);
+        }
+    }
+    // Terminator
+    out.push(0x00);
+    out.push(0x00);
+    out
+}
+
+/// Reverse byte-stuffing.
+///
+/// Returns `(decoded_key_bytes, bytes_consumed)` where `bytes_consumed` includes the
+/// terminator. Returns `Err` on malformed input.
+fn byte_unstuff(input: &[u8]) -> DecResult<(Vec<u8>, usize)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    loop {
+        if i >= input.len() {
+            return Err(DecodeError::IncorrectLength);
+        }
+        if input[i] == 0x00 {
+            if i + 1 >= input.len() {
+                return Err(DecodeError::IncorrectLength);
+            }
+            match input[i + 1] {
+                0x00 => {
+                    // Terminator
+                    i += 2;
+                    break;
+                }
+                0xFF => {
+                    // Escaped 0x00
+                    out.push(0x00);
+                    i += 2;
+                }
+                _ => return Err(DecodeError::IncorrectLength),
+            }
+        } else {
+            out.push(input[i]);
+            i += 1;
+        }
+    }
+    Ok((out, i))
+}
 
 impl<K: Clone + Encode> Encode for HistoryIndexKey<K> {
     fn encode(&self) -> Cow<[u8]> {
         let encoded_key = self.0.encode();
         let encoded_version = self.1.encode();
-        
-        // Assumption: The number of bytes of Key is not larger than u32::MAX.
-        let key_len = (encoded_key.len() as u32).to_be_bytes();
 
-        // [Key_LEN] + [Key] + [Version]
-        let mut out = Vec::with_capacity(4 + encoded_key.len() + encoded_version.len());
-        out.extend_from_slice(&key_len);
-        out.extend_from_slice(encoded_key.as_ref());
+        // [escaped_key + terminator] + [version]
+        let mut out = byte_stuff(encoded_key.as_ref());
         out.extend_from_slice(encoded_version.as_ref());
 
         Cow::Owned(out)
     }
 }
 
-impl<K: Clone + FixedLengthEncoded> FixedLengthEncoded for HistoryIndexKey<K> {
-    const LENGTH: usize = 4 + K::LENGTH + std::mem::size_of::<HistoryNumber>();
-}
-
 impl<K: Clone + Encode + ToOwned<Owned = K>> EncodeSubKey for HistoryIndexKey<K> {
     const HAVE_SUBKEY: bool = true;
 
     fn encode_subkey(&self) -> (Cow<[u8]>, Cow<[u8]>) {
-        // Prefix: [KeyLen + Key]; Suffix: [Version]
+        // Prefix: [escaped_key + terminator]; Suffix: [version]
         let encoded_key = self.0.encode();
-        let key_len = (encoded_key.len() as u32).to_be_bytes();
-        
-        let mut prefix = Vec::with_capacity(4 + encoded_key.len());
-        prefix.extend_from_slice(&key_len);
-        prefix.extend_from_slice(encoded_key.as_ref());
-
-        (Cow::Owned(prefix), self.1.encode())
+        (Cow::Owned(byte_stuff(encoded_key.as_ref())), self.1.encode())
     }
 
     fn encode_subkey_owned(input: <Self as ToOwned>::Owned) -> (Vec<u8>, Vec<u8>) {
         let encoded_key = K::encode_owned(input.0);
-        let key_len = (encoded_key.len() as u32).to_be_bytes();
-        
-        let mut prefix = Vec::with_capacity(4 + encoded_key.len());
-        prefix.extend_from_slice(&key_len);
-        prefix.extend_from_slice(&encoded_key);
-
         (
-            prefix,
+            byte_stuff(&encoded_key),
             HistoryNumber::encode_owned(input.1),
         )
     }
@@ -59,62 +99,91 @@ impl<K: Clone + Encode + ToOwned<Owned = K>> EncodeSubKey for HistoryIndexKey<K>
 
 impl<K: Clone + Decode + ToOwned<Owned = K>> Decode for HistoryIndexKey<K> {
     fn decode(input: &[u8]) -> DecResult<Cow<Self>> {
-        const LEN_SIZE: usize = 4;
         const VER_SIZE: usize = std::mem::size_of::<HistoryNumber>();
-        
-        if input.len() < LEN_SIZE + VER_SIZE {
+
+        let (key_bytes, consumed) = byte_unstuff(input)?;
+
+        if input.len() - consumed != VER_SIZE {
             return Err(DecodeError::IncorrectLength);
         }
 
-        // Safe after the above length check.
-        let len_bytes: [u8; 4] = input[0..4].try_into().unwrap();
-
-        let key_len = u32::from_be_bytes(len_bytes) as usize;
-
-        if input.len() != LEN_SIZE + key_len + VER_SIZE {
-             return Err(DecodeError::IncorrectLength);
-        }
-
-        // Safe after the above length check.
-        let key_raw = &input[LEN_SIZE .. LEN_SIZE + key_len];
-        let version_raw = &input[LEN_SIZE + key_len ..];
-
-        let (key, version) = (K::decode(key_raw)?, HistoryNumber::decode(version_raw)?);
+        let version_raw = &input[consumed..];
+        let key = K::decode(&key_bytes)?;
+        let version = HistoryNumber::decode(version_raw)?;
         Ok(Cow::Owned(HistoryIndexKey(
             key.into_owned(),
             version.into_owned(),
         )))
     }
 
-    fn decode_owned(mut input: Vec<u8>) -> DecResult<Self> {
-        const LEN_SIZE: usize = 4;
+    fn decode_owned(input: Vec<u8>) -> DecResult<Self> {
         const VER_SIZE: usize = std::mem::size_of::<HistoryNumber>();
 
-        if input.len() < LEN_SIZE + VER_SIZE {
+        let (key_bytes, consumed) = byte_unstuff(&input)?;
+
+        if input.len() - consumed != VER_SIZE {
             return Err(DecodeError::IncorrectLength);
         }
 
-        // Safe after the above length check.
-        let len_bytes: [u8; 4] = input[0..4].try_into().unwrap();
-
-        let key_len = u32::from_be_bytes(len_bytes) as usize;
-
-        if input.len() != LEN_SIZE + key_len + VER_SIZE {
-             return Err(DecodeError::IncorrectLength);
-        }
-
-        // Safe after the above length check.
-        let version_raw = input.split_off(input.len() - VER_SIZE);
-        let key_raw = input.split_off(LEN_SIZE);
-
-        let key = K::decode_owned(key_raw)?;
+        let version_raw = input[consumed..].to_vec();
+        let key = K::decode_owned(key_bytes)?;
         let version = HistoryNumber::decode_owned(version_raw)?;
         Ok(HistoryIndexKey(key, version))
     }
 }
 
-// Test cases used to prevent errors related to the encoding method of `HistoryIndexKey` from recurring.
-// See the `Encode` code for error details.
+#[cfg(test)]
+mod tests_byte_stuff {
+    use super::{byte_stuff, byte_unstuff};
+
+    #[test]
+    fn test_roundtrip() {
+        let cases: Vec<Vec<u8>> = vec![
+            vec![],
+            vec![1, 2, 3],
+            vec![0],
+            vec![0, 0],
+            vec![0, 0xFF],
+            vec![0xFF, 0, 0, 0xFF],
+            vec![0; 64],
+        ];
+        for raw in cases {
+            let stuffed = byte_stuff(&raw);
+            let (decoded, consumed) = byte_unstuff(&stuffed).unwrap();
+            assert_eq!(decoded, raw);
+            assert_eq!(consumed, stuffed.len());
+        }
+    }
+
+    #[test]
+    fn test_order_different_lengths() {
+        // [2] > [1, 3] lexicographically, encoding must agree
+        let a = byte_stuff(&[2]);
+        let b = byte_stuff(&[1, 3]);
+        assert!(a > b, "expected {:?} > {:?}", a, b);
+    }
+
+    #[test]
+    fn test_order_prefix_relation() {
+        // [1] < [1, 0] lexicographically
+        let a = byte_stuff(&[1]);
+        let b = byte_stuff(&[1, 0]);
+        assert!(a < b, "expected {:?} < {:?}", a, b);
+    }
+
+    #[test]
+    fn test_order_with_zeros() {
+        // [0] < [0, 0]
+        let a = byte_stuff(&[0]);
+        let b = byte_stuff(&[0, 0]);
+        assert!(a < b, "expected {:?} < {:?}", a, b);
+
+        // [0, 0] < [0, 1]
+        let c = byte_stuff(&[0, 1]);
+        assert!(b < c, "expected {:?} < {:?}", b, c);
+    }
+}
+
 #[cfg(test)]
 mod tests_history_index_order {
     use std::borrow::Cow;
@@ -123,7 +192,7 @@ mod tests_history_index_order {
     use crate::backends::MockTableName;
     use crate::backends::{DatabaseTrait, TableRead, WrappedInMemoryDb, WriteSchemaTrait, TableSchema};
     use crate::errors::{DatabaseError, Result, DecResult};
-    use crate::backends::serde::{Encode, Decode, FixedLengthEncoded};
+    use crate::backends::serde::{Encode, Decode};
 
     use super::{HistoryIndexKey, HistoryNumber};
 
@@ -153,27 +222,37 @@ mod tests_history_index_order {
         type Value = Vec<u8>;
     }
 
-    fn hk_bytes(bytes: Vec<u8>, n: HistoryNumber) -> HistoryIndexKey<BoundedVec> {
+    fn hk(bytes: Vec<u8>, n: HistoryNumber) -> HistoryIndexKey<BoundedVec> {
         HistoryIndexKey(BoundedVec(bytes), n)
+    }
+
+    const LATEST: u64 = u64::MAX;
+
+    /// Encode-decode roundtrip for HistoryIndexKey
+    #[test]
+    fn test_encode_decode_roundtrip() {
+        let cases = vec![
+            hk(vec![], 0),
+            hk(vec![], LATEST),
+            hk(vec![0], 42),
+            hk(vec![0, 0, 0], LATEST),
+            hk(vec![1, 2, 3], 100),
+            hk(vec![0xFF; 8], 0),
+        ];
+        for original in cases {
+            let encoded = original.encode();
+            let decoded = HistoryIndexKey::<BoundedVec>::decode(&encoded)
+                .unwrap()
+                .into_owned();
+            assert_eq!(decoded, original);
+        }
     }
 
     fn test_data() -> Vec<(HistoryIndexKey<BoundedVec>, Vec<u8>)> {
         vec![
-            // Key 1: [82, 81, 4, 81, 249, 4], u64::MAX
-            (
-                hk_bytes(vec![82, 81, 4, 81, 249, 4], 18446744073709551615), 
-                b"value_for_82".to_vec()
-            ),
-            // Key 2: [171, 171, 171, 171, 171, 171], u64::MAX
-            (
-                hk_bytes(vec![171, 171, 171, 171, 171, 171], 18446744073709551615), 
-                b"value_for_171".to_vec()
-            ),
-            // Key 3: [], u64::MAX
-            (
-                hk_bytes(vec![], 18446744073709551615), 
-                b"value_for_empty".to_vec()
-            ),
+            (hk(vec![82, 81, 4, 81, 249, 4], LATEST), b"v_82".to_vec()),
+            (hk(vec![171; 6], LATEST), b"v_171".to_vec()),
+            (hk(vec![], LATEST), b"v_empty".to_vec()),
         ]
     }
 
@@ -186,51 +265,84 @@ mod tests_history_index_order {
         Ok(())
     }
 
-    fn run_read_assertions<DB: DatabaseTrait<MockTableName>>(db: DB) -> Result<()> {
+    /// Same-length keys and empty key: verify order matches logical Ord
+    fn run_basic_order_assertions<DB: DatabaseTrait<MockTableName>>(db: DB) -> Result<()> {
         seed(&db)?;
         let reader = Arc::new(db).view::<MockHistoryTable>()?;
 
-        let range_query_key = hk_bytes(vec![], 0);
-        println!("Querying with key: {:?}", range_query_key);
-
         let iter_result: Vec<_> = reader
-            .iter(&range_query_key)?
-            .map(|kv| kv.map(|(k, v)| (k.into_owned(), v.into_owned())))
+            .iter(&hk(vec![], 0))?
+            .map(|kv| kv.map(|(k, _)| k.into_owned()))
             .collect::<std::result::Result<Vec<_>, DatabaseError>>()?;
 
-        println!("Iter result count: {}", iter_result.len());
-        for (i, (k, _)) in iter_result.iter().enumerate() {
-            println!("Result [{}]: {:?}", i, k);
-        }
-
-        let expected_order = vec![
-            hk_bytes(vec![], 18446744073709551615),
-            hk_bytes(vec![82, 81, 4, 81, 249, 4], 18446744073709551615), 
-            hk_bytes(vec![171, 171, 171, 171, 171, 171], 18446744073709551615),
-        ];
-
         assert_eq!(iter_result.len(), 3);
-        assert_eq!(iter_result[0].0, expected_order[0]);
-        assert_eq!(iter_result[1].0, expected_order[1]);
-        assert_eq!(iter_result[2].0, expected_order[2]);
+        assert_eq!(iter_result[0], hk(vec![], LATEST));
+        assert_eq!(iter_result[1], hk(vec![82, 81, 4, 81, 249, 4], LATEST));
+        assert_eq!(iter_result[2], hk(vec![171; 6], LATEST));
+        Ok(())
+    }
 
+    /// Variable-length keys: the previous encoding (length-prefix) got this wrong.
+    fn run_variable_length_order_assertions<DB: DatabaseTrait<MockTableName>>(db: DB) -> Result<()> {
+        let schema = DB::write_schema();
+        // Insert keys of different lengths whose ordering is swapped by length-prefix encoding
+        let entries = vec![
+            (hk(vec![2], LATEST), b"v2".to_vec()),       // logically > [1,3]
+            (hk(vec![1, 3], LATEST), b"v13".to_vec()),    // logically < [2]
+            (hk(vec![1], LATEST), b"v1".to_vec()),        // logically < [1,3]
+            (hk(vec![1, 0], LATEST), b"v10".to_vec()),    // logically < [1,3], > [1]
+        ];
+        for (k, v) in &entries {
+            schema.write::<MockHistoryTable>((Cow::Owned(k.clone()), Some(Cow::Owned(v.clone()))));
+        }
+        db.commit(schema)?;
+
+        let reader = Arc::new(db).view::<MockHistoryTable>()?;
+
+        let iter_result: Vec<_> = reader
+            .iter(&hk(vec![], 0))?
+            .map(|kv| kv.map(|(k, _)| k.into_owned()))
+            .collect::<std::result::Result<Vec<_>, DatabaseError>>()?;
+
+        let expected = vec![
+            hk(vec![1], LATEST),
+            hk(vec![1, 0], LATEST),
+            hk(vec![1, 3], LATEST),
+            hk(vec![2], LATEST),
+        ];
+        assert_eq!(iter_result, expected);
         Ok(())
     }
 
     #[test]
-    fn test_history_index_key_order_in_memory() {
-        let db = WrappedInMemoryDb::empty();
-        run_read_assertions(db).unwrap();
+    fn test_basic_order_in_memory() {
+        run_basic_order_assertions(WrappedInMemoryDb::empty()).unwrap();
     }
 
     #[test]
-    fn test_history_index_key_order_rocksdb() {
+    fn test_variable_length_order_in_memory() {
+        run_variable_length_order_assertions(WrappedInMemoryDb::empty()).unwrap();
+    }
+
+    #[test]
+    fn test_basic_order_rocksdb() {
         use crate::middlewares::{clear_dir, clear_dir_then_create};
         use crate::backends::impls::kvdb_rocksdb::WrappedRocksDb;
-        let temp_dir = "__test_rocksdb_history_index_key_order_custom";
+        let temp_dir = "__test_rocksdb_hik_basic_order";
         clear_dir_then_create(temp_dir);
         let db = WrappedRocksDb::open(temp_dir).unwrap();
-        run_read_assertions(db).unwrap();
+        run_basic_order_assertions(db).unwrap();
+        clear_dir(temp_dir);
+    }
+
+    #[test]
+    fn test_variable_length_order_rocksdb() {
+        use crate::middlewares::{clear_dir, clear_dir_then_create};
+        use crate::backends::impls::kvdb_rocksdb::WrappedRocksDb;
+        let temp_dir = "__test_rocksdb_hik_varlen_order";
+        clear_dir_then_create(temp_dir);
+        let db = WrappedRocksDb::open(temp_dir).unwrap();
+        run_variable_length_order_assertions(db).unwrap();
         clear_dir(temp_dir);
     }
 }
