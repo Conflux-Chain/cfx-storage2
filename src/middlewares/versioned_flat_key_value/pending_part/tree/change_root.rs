@@ -111,19 +111,17 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
         // old_root..=new_root's parent
-        let to_check_children = self.find_path(slab_index);
+        let to_check_children = self.find_path_ids_only(slab_index);
 
         let mut has_discarded_nodes = false;
 
         if let Some(last) = to_check_children.last() {
-            for (ancester, _) in to_check_children.iter() {
+            for ancester in to_check_children.iter() {
                 if self.discard_inner(*ancester)? {
-                    // dbg!(ancester);
                     has_discarded_nodes = true;
                 };
             }
             if self.discard_inner(commit_id)? {
-                // dbg!(commit_id);
                 has_discarded_nodes = true;
             };
         }
@@ -138,6 +136,17 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         while let Some(parent_slab_index) = target_node.get_parent() {
             target_node = self.get_node_by_slab_index(parent_slab_index);
             path.push_front((target_node.get_commit_id(), target_node.get_updates()));
+        }
+        path.into()
+    }
+
+    // excluding target, returns only commit IDs without cloning KeyValueMaps
+    fn find_path_ids_only(&self, target_slab_index: SlabIndex) -> Vec<S::CommitId> {
+        let mut target_node = self.get_node_by_slab_index(target_slab_index);
+        let mut path = VecDeque::new();
+        while let Some(parent_slab_index) = target_node.get_parent() {
+            target_node = self.get_node_by_slab_index(parent_slab_index);
+            path.push_front(target_node.get_commit_id());
         }
         path.into()
     }
