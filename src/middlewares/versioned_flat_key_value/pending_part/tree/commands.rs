@@ -59,9 +59,18 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         commit_id: &S::CommitId,
         key: &S::Key,
+        // (current_commit_id, value of key at current_commit_id)
+        // If current_commit_id is an ancestor of commit_id,
+        // the traversal can stop early and use the cached value.
+        ancestor_cache: Option<&(S::CommitId, Option<ValueEntry<S::Value>>)>,
     ) -> PendResult<Option<ValueEntry<S::Value>>> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
         while let Some(node) = node_option {
+            if let Some((cached_commit_id, cached_value)) = ancestor_cache {
+                if node.get_commit_id() == *cached_commit_id {
+                    return Ok(cached_value.clone());
+                }
+            }
             if let Some(value) = node.get_modified_value(key) {
                 return Ok(Some(value));
             }
