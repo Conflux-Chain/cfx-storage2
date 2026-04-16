@@ -91,7 +91,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let slab_index = *self
             .index_map
             .get(&commit_id)
-            .ok_or(PendingError::CommitIDNotFound(commit_id))?;
+            .ok_or_else(|| PendingError::CommitIDNotFound(commit_id))?;
         Ok(slab_index)
     }
 
