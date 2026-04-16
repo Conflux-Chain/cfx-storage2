@@ -12,14 +12,14 @@ use crate::{
         primitives_initialize_empty_schema, primitives_recover_schema,
         primitives_verify_no_newer_records, primitives_verify_schema_is_empty, CommitID,
         HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig, TreeWithTracker,
-        VersionedStore, VersionedStoreCache,
+        VersionedStore, VersionedStoreCache, VersionedStoreReader,
     },
     StorageError,
 };
 
 use super::{
     auth_changes::AuthChangeTable,
-    storage::LvmtStore,
+    storage::{LvmtStore, LvmtStoreReader},
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
 };
 
@@ -437,6 +437,22 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         self.last_gc_height = durable_height;
 
         Ok(())
+    }
+}
+
+impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
+    /// Creates a read-only view of the storage.
+    ///
+    /// Unlike [`as_manager`], this only requires `&self`, enabling concurrent
+    /// read access when the storage is protected by an `RwLock`.
+    pub fn as_reader(&self) -> Result<LvmtStoreReader<'_, '_, P>> {
+        let key_value_reader =
+            VersionedStoreReader::new(self.historical_db.clone(), &self.key_value_cache)?;
+
+        Ok(LvmtStoreReader::new(
+            self.pending_db.clone(),
+            key_value_reader,
+        ))
     }
 }
 

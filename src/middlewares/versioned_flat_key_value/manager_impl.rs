@@ -17,7 +17,7 @@ use super::{
     iter_history, iter_history_range,
     pending_part::{pending_schema::PendingKeyValueConfig, VersionedMap},
     table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema},
-    HistoryIndexKey, PendingError, VersionedStore,
+    HistoryIndexKey, PendingError, VersionedStore, VersionedStoreReader,
 };
 
 use crate::types::ValueEntry;
@@ -373,6 +373,240 @@ impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
 
 // Helper methods used in trait implementations
 impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedStore<'_, '_, T, P> {
+    fn iter_historical_changes_one_range(
+        &self,
+        mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,
+        maybe_version_number: Option<HistoryNumber>,
+        key: &T::Key,
+        history_indices: HistoryIndices<T::Value>,
+        end_version_number: HistoryNumber,
+    ) -> Result<(IsCompleted, Option<HistoryNumber>)> {
+        let version_numbers = if let Some(version_number) = maybe_version_number {
+            history_indices.collect_versions_le(version_number, end_version_number)?
+        } else {
+            let mut all_version_numbers =
+                history_indices.collect_versions_le(end_version_number, end_version_number)?;
+
+            match all_version_numbers.pop() {
+                None => {
+                    return Err(StorageError::CorruptedHistoryIndices(
+                        ("A record's all_version_numbers should contain at least one element.")
+                            .to_string(),
+                    ))
+                }
+                Some(largest_version_number) => {
+                    if largest_version_number != end_version_number {
+                        return Err(StorageError::CorruptedHistoryIndices(format!("A record's all_version_numbers's largest_version_number should be the end_version_number {} instead of {}", end_version_number, largest_version_number)));
+                    }
+                }
+            }
+
+            all_version_numbers
+        };
+
+        let start_version_number = version_numbers.first().cloned();
+
+        for found_version_number in version_numbers.into_iter().rev() {
+            let found_value = self
+                .change_history_table
+                .get_versioned_key(&found_version_number, key)?;
+            let found_commit_id = self.history_number_table.get(&found_version_number)?;
+
+            if let Some(found_commit_id) = found_commit_id {
+                let need_next = accept(found_commit_id.borrow(), key, found_value.as_ref());
+                if !need_next {
+                    return Ok((false, None));
+                }
+            } else {
+                return Err(StorageError::VersionNotFound);
+            }
+        }
+
+        Ok((true, start_version_number))
+    }
+
+    fn iter_historical_changes_history_part(
+        &self,
+        mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,
+        commit_id: &CommitID,
+        key: &T::Key,
+    ) -> Result<IsCompleted> {
+        let query_number = self.get_history_number_by_commit_id(*commit_id)?;
+
+        let range_query_key = HistoryIndexKey(key.clone(), query_number);
+        let mut prev_end_version_number =
+            match self.history_index_table.iter(&range_query_key)?.next() {
+                None => return Ok(true),
+                Some(item) => {
+                    let (history_index_k, history_indices) = item?;
+                    let HistoryIndexKey(k, end_version_number) = history_index_k.as_ref().clone();
+                    if &k != key {
+                        return Ok(true);
+                    }
+
+                    let (this_range_is_completed, maybe_start_version_number) = self
+                        .iter_historical_changes_one_range(
+                            &mut accept,
+                            Some(query_number),
+                            key,
+                            history_indices.into_owned(),
+                            end_version_number,
+                        )?;
+                    if !this_range_is_completed {
+                        return Ok(false);
+                    }
+                    if let Some(start_version_number) = maybe_start_version_number {
+                        start_version_number
+                    } else {
+                        return Ok(true);
+                    }
+                }
+            };
+
+        loop {
+            let this_end_version_number = prev_end_version_number;
+
+            let history_index_k = HistoryIndexKey(key.clone(), this_end_version_number);
+            prev_end_version_number = match self.history_index_table.get(&history_index_k)? {
+                None => return Ok(true),
+                Some(history_indices) => {
+                    let (this_range_is_completed, maybe_start_version_number) = self
+                        .iter_historical_changes_one_range(
+                            &mut accept,
+                            None,
+                            key,
+                            history_indices.into_owned(),
+                            this_end_version_number,
+                        )?;
+                    if !this_range_is_completed {
+                        return Ok(false);
+                    }
+                    if let Some(start_version_number) = maybe_start_version_number {
+                        start_version_number
+                    } else {
+                        return Ok(true);
+                    }
+                }
+            };
+
+            assert!(prev_end_version_number < this_end_version_number);
+        }
+    }
+}
+
+// Read-only methods for VersionedStoreReader
+impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStoreReader<'_, 'db, T, P>
+{
+    pub fn get_versioned_store<'s>(
+        &'s self,
+        commit: &CommitID,
+        checkout_current: bool,
+    ) -> Result<SnapshotView<'s, 'db, T, P>> {
+        if self.pending_part.contains_commit_id(commit) {
+            let latest_history: Option<LatestHistoricalSnapshot<'_, T>> =
+                if let Some(history_commit) = self.pending_part.get_parent_of_root() {
+                    Some(LatestHistoricalSnapshot {
+                        history_number: self.get_history_number_by_commit_id(history_commit)?,
+                        history_index_table: self.history_index_table.clone(),
+                    })
+                } else {
+                    None
+                };
+
+            if checkout_current {
+                self.pending_part.checkout_current(*commit)?;
+            }
+
+            Ok(SnapshotView::Pending(PendingSnapshot {
+                pending: PendingUpdates {
+                    commit_id: *commit,
+                    inner: &*self.pending_part,
+                },
+                latest: latest_history,
+            }))
+        } else {
+            let history_number = self.get_history_number_by_commit_id(*commit)?;
+            let latest_history_commit = self.pending_part.get_parent_of_root().expect("The parent of pending root should exists when there is at least one commit in the historical part.");
+
+            if commit == &latest_history_commit {
+                Ok(SnapshotView::Historical(HistoricalSnapshot::Latest(
+                    LatestHistoricalSnapshot {
+                        history_number,
+                        history_index_table: self.history_index_table.clone(),
+                    },
+                )))
+            } else {
+                Ok(SnapshotView::Historical(HistoricalSnapshot::Previous(
+                    PreviousHistoricalSnapshot {
+                        history_number,
+                        history_index_table: self.history_index_table.clone(),
+                        change_history_table: self.change_history_table.clone(),
+                    },
+                )))
+            }
+        }
+    }
+
+    pub fn iter_historical_changes(
+        &self,
+        mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,
+        commit_id: &CommitID,
+        key: &T::Key,
+    ) -> Result<IsCompleted> {
+        let pending_res = self
+            .pending_part
+            .iter_historical_changes(&mut accept, commit_id, key);
+        match pending_res {
+            Ok(false) => Ok(false),
+            Ok(true) => {
+                if let Some(history_commit) = self.pending_part.get_parent_of_root() {
+                    self.iter_historical_changes_history_part(&mut accept, &history_commit, key)
+                } else {
+                    Ok(true)
+                }
+            }
+            Err(PendingError::CommitIDNotFound(target_commit)) => {
+                assert_eq!(target_commit, format!("{:?}", commit_id));
+                self.iter_historical_changes_history_part(&mut accept, commit_id, key)
+            }
+            Err(other_err) => Err(StorageError::PendingError(other_err)),
+        }
+    }
+
+    pub fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
+        let pending_res = self.pending_part.get_versioned_key(commit, key);
+        let history_commit = match pending_res {
+            Ok(Some(value)) => {
+                return Ok(value.into_option());
+            }
+            Ok(None) => {
+                if let Some(commit) = self.pending_part.get_parent_of_root() {
+                    commit
+                } else {
+                    return Ok(None);
+                }
+            }
+            Err(PendingError::CommitIDNotFound(target_commit)) => {
+                assert_eq!(target_commit, format!("{:?}", commit));
+                *commit
+            }
+            Err(other_err) => {
+                return Err(StorageError::PendingError(other_err));
+            }
+        };
+
+        let history_number = self.get_history_number_by_commit_id(history_commit)?;
+        let latest_history_commit = self.pending_part.get_parent_of_root().expect("The parent of pending root should exists when there is at least one commit in the historical part.");
+
+        self.get_historical_part(history_number, key, latest_history_commit == history_commit)
+    }
+}
+
+// Helper methods for VersionedStoreReader
+impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStoreReader<'_, '_, T, P>
+{
     fn iter_historical_changes_one_range(
         &self,
         mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,

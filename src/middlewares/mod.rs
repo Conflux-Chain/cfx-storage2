@@ -21,7 +21,7 @@ pub use versioned_flat_key_value::{
     primitives_verify_no_newer_records, primitives_verify_schema_is_empty, table_schema,
     BitmapValidationError, BootstrapError, HistoryIndexKey, PendingError, PendingKeyValueConfig,
     PushError, RecoveryError, SnapshotReadError, SnapshotView, TreeWithTracker, VersionedStore,
-    VersionedStoreCache,
+    VersionedStoreCache, VersionedStoreReader,
 };
 
 #[cfg(any(test, fuzzing))]

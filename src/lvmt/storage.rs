@@ -23,7 +23,7 @@ use crate::{
 };
 use crate::{
     lvmt::types::LvmtValue,
-    middlewares::{KeyValueStoreBulks, VersionedStore},
+    middlewares::{KeyValueStoreBulks, VersionedStore, VersionedStoreReader},
     traits::{KeyValueStoreManager, KeyValueStoreRead},
     utils::hash::blake2s,
 };
@@ -365,5 +365,63 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
     #[cfg(any(test, fuzzing))]
     pub fn get_slot_alloc_store(&self) -> &VersionedStore<'cache, 'db, SlotAllocations, P> {
         &self.slot_alloc_store
+    }
+}
+
+/// Read-only variant of [`LvmtStore`] that holds shared references to the caches.
+///
+/// This enables concurrent read access when `LvmtStorage` is protected by an `RwLock`.
+pub struct LvmtStoreReader<'cache, 'db, P: DatabaseTrait<PendingTableName>> {
+    pending_persistence_backend: Arc<P>,
+    key_value_reader: VersionedStoreReader<'cache, 'db, FlatKeyValue, P>,
+}
+
+impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'db, P> {
+    pub fn new(
+        pending_persistence_backend: Arc<P>,
+        key_value_reader: VersionedStoreReader<'cache, 'db, FlatKeyValue, P>,
+    ) -> Self {
+        Self {
+            pending_persistence_backend,
+            key_value_reader,
+        }
+    }
+
+    pub fn get_state_root(&self, commit: CommitID) -> Result<Option<StateRoot>> {
+        let state_root_view = Arc::new(self.pending_persistence_backend.view::<StateRootTable>()?);
+        Ok(state_root_view.get(&commit)?.map(|x| x.into_owned()))
+    }
+
+    pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
+        self.get_state(commit, false)?.get(&key)
+    }
+
+    pub fn iter_range(
+        &self,
+        commit: CommitID,
+        lower_bound_incl: Box<[u8]>,
+        upper_bound_excl: Option<Box<[u8]>>,
+    ) -> Result<KeyValueVec> {
+        Ok(self
+            .get_state(commit, true)?
+            .iter_range(lower_bound_incl, upper_bound_excl)?
+            .collect::<Vec<_>>())
+    }
+
+    pub fn is_newer_than_pending_root(&self, height: u64) -> bool {
+        let height_of_root = self.key_value_reader.get_height_of_root();
+        height > height_of_root
+    }
+
+    pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
+        self.key_value_reader.query_commit_existence(commit)
+    }
+
+    pub fn checkout_current(&self, commit: CommitID) -> Result<()> {
+        self.key_value_reader.checkout_current(commit)
+    }
+
+    pub fn get_key_value_reader(&self) -> &VersionedStoreReader<'cache, 'db, FlatKeyValue, P> {
+        &self.key_value_reader
     }
 }

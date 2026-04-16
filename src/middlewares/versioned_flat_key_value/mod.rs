@@ -41,7 +41,7 @@ pub use tests::{
 use self::history_indices::LATEST;
 use self::history_indices_cache::HistoryIndexCache;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
-use pending_part::VersionedMap;
+pub use pending_part::VersionedMap;
 
 use super::commit_id_schema::HistoryNumberSchema;
 use super::ChangeKey;
@@ -92,6 +92,22 @@ pub struct VersionedStore<
     P: DatabaseTrait<PendingTableName>,
 > {
     pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>, P>,
+    history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
+    commit_id_table: TableReader<'db, CommitIDSchema>,
+    history_number_table: TableReader<'db, HistoryNumberSchema>,
+    change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
+}
+
+/// Read-only variant of [`VersionedStore`] that holds a shared reference to the pending part.
+///
+/// This enables concurrent read access when the outer storage is protected by an `RwLock`.
+pub struct VersionedStoreReader<
+    'cache,
+    'db,
+    T: VersionedKeyValueSchema,
+    P: DatabaseTrait<PendingTableName>,
+> {
+    pending_part: &'cache VersionedMap<PendingKeyValueConfig<T, CommitID>, P>,
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     history_number_table: TableReader<'db, HistoryNumberSchema>,
@@ -186,6 +202,81 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 
     fn get_historical_part(
+        &self,
+        query_version_number: HistoryNumber,
+        key: &T::Key,
+        is_latest: bool,
+    ) -> Result<Option<T::Value>> {
+        if is_latest {
+            get_versioned_key_latest(query_version_number, key, &self.history_index_table)
+        } else {
+            get_versioned_key_previous(
+                query_version_number,
+                key,
+                &self.history_index_table,
+                &self.change_history_table,
+            )
+        }
+    }
+}
+
+impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStoreReader<'cache, '_, T, P>
+{
+    pub fn is_in_historical_part(&self, commit: &CommitID) -> Result<bool> {
+        if self.commit_id_table.get(commit)?.is_some() {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
+        if self.pending_part.contains_commit_id(commit) {
+            return Ok(true);
+        }
+
+        self.is_in_historical_part(commit)
+    }
+
+    pub fn get_height_of_root(&self) -> u64 {
+        self.pending_part.get_height_of_root()
+    }
+
+    pub fn checkout_current(&self, commit: CommitID) -> Result<()> {
+        Ok(self.pending_part.checkout_current(commit)?)
+    }
+
+    pub fn new<D: DatabaseTrait<HistoricalTableName>>(
+        db: Arc<D>,
+        pending_part: &'cache VersionedMap<PendingKeyValueConfig<T, CommitID>, P>,
+    ) -> Result<Self> {
+        let history_index_table = db.view::<HistoryIndicesTable<T>>()?;
+        let commit_id_table = db.view::<CommitIDSchema>()?;
+        let history_number_table = db.view::<HistoryNumberSchema>()?;
+        let change_history_table = KeyValueStoreBulks::new(db.view::<HistoryChangeTable<T>>()?);
+
+        Ok(VersionedStoreReader {
+            pending_part,
+            history_index_table,
+            commit_id_table,
+            history_number_table,
+            change_history_table,
+        })
+    }
+
+    pub(crate) fn get_history_number_by_commit_id(
+        &self,
+        commit: CommitID,
+    ) -> Result<HistoryNumber> {
+        if let Some(value) = self.commit_id_table.get(&commit)? {
+            Ok(value.into_owned())
+        } else {
+            Err(StorageError::CommitIDNotFound)
+        }
+    }
+
+    pub(crate) fn get_historical_part(
         &self,
         query_version_number: HistoryNumber,
         key: &T::Key,

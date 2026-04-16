@@ -18,5 +18,5 @@ pub mod types;
 
 pub use example::LvmtStorage;
 pub use snapshot::LvmtSnapshot;
-pub use storage::LvmtStore;
+pub use storage::{LvmtStore, LvmtStoreReader};
 pub use types::LvmtValue;
