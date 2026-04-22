@@ -32,7 +32,7 @@ pub struct HistoryIndicesTable<T: VersionedKeyValueSchema>(T);
 impl<T: VersionedKeyValueSchema> TableSchema for HistoryIndicesTable<T> {
     const NAME: TableName = TableName::HistoryIndex(T::NAME);
     type Key = HistoryIndexKey<T::Key>;
-    type Value = HistoryIndices<T::Value>;
+    type Value = HistoryIndices;
 }
 
 pub type KeyValueSnapshotRead<'a, T> = dyn 'a

@@ -1,7 +1,7 @@
 use ark_serialize::SerializationError;
 use thiserror::Error;
 
-use crate::middlewares::{CommitID, PendingError, PushError};
+use crate::middlewares::{CommitID, PendingError};
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -22,12 +22,6 @@ pub enum StorageError {
 
     #[error("pending error {0:?}")]
     PendingError(#[from] PendingError<CommitID>),
-
-    #[error("corrupted history indices")]
-    CorruptedHistoryIndices,
-
-    #[error("push error {0:?}")]
-    PushError(#[from] PushError),
 }
 
 impl From<DecodeError> for StorageError {
@@ -89,8 +83,6 @@ impl PartialEq for StorageError {
             (ConsistencyCheckFailure, ConsistencyCheckFailure) => true,
             (DatabaseError(e1), DatabaseError(e2)) => e1 == e2,
             (PendingError(e1), PendingError(e2)) => e1 == e2,
-            (CorruptedHistoryIndices, CorruptedHistoryIndices) => true,
-            (PushError(e1), PushError(e2)) => e1 == e2,
 
             (VersionNotFound, _) => false,
             (CommitIDNotFound, _) => false,
@@ -98,8 +90,6 @@ impl PartialEq for StorageError {
             (ConsistencyCheckFailure, _) => false,
             (DatabaseError(_), _) => false,
             (PendingError(_), _) => false,
-            (CorruptedHistoryIndices, _) => false,
-            (PushError(_), _) => false,
         }
     }
 }

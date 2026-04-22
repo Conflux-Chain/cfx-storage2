@@ -1,5 +1,4 @@
 mod history_indices;
-mod history_indices_cache;
 mod manager_impl;
 mod pending_part;
 mod serde;
@@ -11,14 +10,12 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub use history_indices::PushError;
 pub use pending_part::PendingError;
 
 #[cfg(test)]
 pub use tests::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test};
 
-use self::history_indices::LATEST;
-use self::history_indices_cache::HistoryIndexCache;
+use self::history_indices::HistoryIndices;
 use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 use pending_part::VersionedMap;
@@ -26,7 +23,7 @@ use pending_part::VersionedMap;
 use super::commit_id_schema::HistoryNumberSchema;
 use super::ChangeKey;
 use super::CommitIDSchema;
-use crate::backends::{DatabaseTrait, TableRead, TableReader, WriteSchemaTrait};
+use crate::backends::{DatabaseTrait, TableReader, WriteSchemaTrait};
 use crate::errors::Result;
 use crate::middlewares::commit_id_schema::height_to_history_number;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
@@ -40,23 +37,17 @@ use crate::types::ValueEntry;
 #[cfg(test)]
 use std::collections::BTreeMap;
 
-/// Key for accessing version history records in storage.
-///
-/// Consists of two components:
-/// 1. The database `key` being tracked
-/// 2. A version specifier which is either:
-///    - `LATEST` for the latest (mutable) record
-///    - An `end_version_number` for a previous (immutable) record
-///
-/// Used in conjunction with [`history_indices::HistoryIndices`] to maintain version history through chained records.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 
 pub type HistoryChangeKey<K> = ChangeKey<HistoryNumber, K>;
 
 impl<K: Clone> HistoryIndexKey<K> {
+    /// Naive scheme has no "latest" sentinel record — every record is a plain
+    /// `(key, version)`. Kept so callers depending on the old API (e.g. the
+    /// AmtNode cache-path warmup) compile without needing to be rewritten.
     pub fn is_latest(&self) -> bool {
-        self.1 == LATEST
+        false
     }
 }
 
@@ -115,106 +106,67 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
         &self,
         query_version_number: HistoryNumber,
         key: &T::Key,
-        is_latest: bool,
     ) -> Result<Option<T::Value>> {
-        if is_latest {
-            get_versioned_key_latest(query_version_number, key, &self.history_index_table)
-        } else {
-            get_versioned_key_previous(
-                query_version_number,
-                key,
-                &self.history_index_table,
-                &self.change_history_table,
-            )
-        }
+        get_versioned_key(
+            query_version_number,
+            key,
+            &self.history_index_table,
+            &self.change_history_table,
+        )
     }
 }
 
-fn get_versioned_key_latest<T: VersionedKeyValueSchema>(
-    query_version_number: HistoryNumber,
-    key: &T::Key,
-    history_index_table: &TableReader<'_, HistoryIndicesTable<T>>,
-) -> Result<Option<T::Value>> {
-    let range_query_key = HistoryIndexKey(key.clone(), LATEST);
-    match history_index_table.get(&range_query_key)? {
-        Some(history_indices) => history_indices
-            .into_owned()
-            .get_latest_value(query_version_number),
-        None => Ok(None),
-    }
-}
-
-fn get_versioned_key_previous<'db, T: VersionedKeyValueSchema>(
+fn get_versioned_key<'db, T: VersionedKeyValueSchema>(
     query_version_number: HistoryNumber,
     key: &T::Key,
     history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
     change_history_table: &KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 ) -> Result<Option<T::Value>> {
-    // dbg!(query_version_number, key);
     let range_query_key = HistoryIndexKey(key.clone(), query_version_number);
-    match history_index_table.iter(&range_query_key)?.next() {
-        None => Ok(None),
-        Some(Err(e)) => Err(e.into()),
-        Some(Ok((k, _))) if &k.as_ref().0 != key => Ok(None),
-        Some(Ok((k, indices))) => {
-            let HistoryIndexKey(_, end_history_number) = k.as_ref();
-            if let Some(found_version_number) = indices
-                .as_ref()
-                .last_le(query_version_number, *end_history_number)?
-            {
-                change_history_table.get_versioned_key(&found_version_number, key)
-            } else {
-                Ok(None)
-            }
+
+    let found_version_number = match history_index_table.iter(&range_query_key)?.next() {
+        None => {
+            return Ok(None);
         }
-    }
+        Some(Err(e)) => {
+            return Err(e.into());
+        }
+        Some(Ok((k, _))) if &k.as_ref().0 != key => {
+            return Ok(None);
+        }
+        Some(Ok((k, _))) => {
+            let HistoryIndexKey(_, history_number) = k.as_ref();
+            *history_number
+        }
+    };
+
+    change_history_table.get_versioned_key(&found_version_number, key)
 }
 
 #[cfg(test)]
 fn iter_history<'db, T: VersionedKeyValueSchema>(
     query_version_number: HistoryNumber,
     history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
-    maybe_change_history_table: Option<&KeyValueStoreBulks<'db, HistoryChangeTable<T>>>,
+    change_history_table: &KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 ) -> Result<BTreeMap<T::Key, ValueEntry<T::Value>>> {
-    let (history_index_key, _) = match history_index_table.iter_from_start()?.next() {
-        Some(item) => item.unwrap(),
-        None => return Ok(BTreeMap::new()),
-    };
+    // Walk every distinct key in `history_index_table` and, for each, compute
+    // the value visible at `query_version_number` via `get_versioned_key`.
+    let mut history_map: BTreeMap<T::Key, ValueEntry<T::Value>> = BTreeMap::new();
 
-    let HistoryIndexKey(mut key, _) = history_index_key.as_ref().clone();
-
-    let mut history_map = BTreeMap::new();
-
-    loop {
-        let value = if let Some(change_history_table) = maybe_change_history_table {
-            get_versioned_key_previous(
-                query_version_number,
-                &key,
-                history_index_table,
-                change_history_table,
-            )?
-        } else {
-            get_versioned_key_latest(query_version_number, &key, history_index_table)?
-        };
-
+    let iter = history_index_table.iter_from_start()?;
+    for item in iter {
+        let (k, _) = item?;
+        let HistoryIndexKey(key, _) = k.as_ref();
+        if history_map.contains_key(key) {
+            continue;
+        }
+        let value = get_versioned_key(
+            query_version_number,
+            key,
+            history_index_table,
+            change_history_table,
+        )?;
         history_map.insert(key.clone(), ValueEntry::from_option(value));
-
-        let range_query_key = HistoryIndexKey(key.clone(), LATEST);
-        let mut find_next_key_iter = history_index_table.iter(&range_query_key)?;
-
-        let this_key = match find_next_key_iter.next().transpose()? {
-            Some((this_historical_index_key, _)) => this_historical_index_key.as_ref().0.clone(),
-            None => break,
-        };
-        assert_eq!(this_key, key, "The latest record of a key should exist when there is at least one record of that key.");
-
-        let next_key = match find_next_key_iter.next().transpose()? {
-            Some((next_historical_index_key, _)) => next_historical_index_key.0.clone(),
-            None => break,
-        };
-        assert_ne!(next_key, key, "Iterator should have moved to a different key after processing the lastest record for the current key.");
-
-        key = next_key;
     }
 
     Ok(history_map)
@@ -246,40 +198,32 @@ pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema
 }
 
 pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
-    db: &D,
+    _db: &D,
     to_confirm_start_height: usize,
     to_confirm_maps: Vec<HashMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    let history_index_table: Box<dyn TableRead<HistoryIndicesTable<T>>> =
-        db.view::<HistoryIndicesTable<T>>()?;
     let change_history_table =
-        KeyValueStoreBulks::new(Arc::from(db.view::<HistoryChangeTable<T>>()?));
+        KeyValueStoreBulks::new(Arc::from(_db.view::<HistoryChangeTable<T>>()?));
 
-    let mut history_index_cache = HistoryIndexCache::new();
     for (delta_height, updates) in to_confirm_maps.into_iter().enumerate() {
         let height = to_confirm_start_height + delta_height;
         let history_number = height_to_history_number(height);
 
-        let commit_data = updates
-            .into_iter()
-            .map(|(k, v)| {
-                let value = v.into();
-                history_index_cache.insert(
-                    k.clone(),
-                    value.clone(),
-                    history_number,
-                    &*history_index_table,
-                )?;
-                Ok((k, value))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let history_indices_table_op = updates.keys().map(|key| {
+            (
+                Cow::Owned(HistoryIndexKey(key.clone(), history_number)),
+                Some(Cow::Owned(HistoryIndices)),
+            )
+        });
+        write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op);
 
-        change_history_table.commit(history_number, commit_data.into_iter(), &write_schema)?;
+        change_history_table.commit(
+            history_number,
+            updates.into_iter().map(|(key, value)| (key, value.into())),
+            write_schema,
+        )?;
     }
-
-    let history_indices_table_op = history_index_cache.into_write_batch();
-    write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op.into_iter());
 
     Ok(())
 }
