@@ -97,7 +97,9 @@ pub fn run_tasks<D: DatabaseTrait>(
 
         old_commit = Some(current_commit);
 
-        reporter.notify_epoch(epoch, read_count, write_count, opts);
+        // Report windows are aligned to benchmark epochs (delta_epoch), so that every
+        // benchmark commit falls into exactly one report window.
+        reporter.notify_epoch(delta_epoch, read_count, write_count, opts);
 
         if reporter.start_time.elapsed().as_secs() >= opts.max_time.unwrap_or(u64::MAX)
             || delta_epoch + 1 >= opts.max_epoch.unwrap_or(usize::MAX)
