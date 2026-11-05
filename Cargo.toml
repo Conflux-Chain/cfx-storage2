@@ -57,6 +57,7 @@ rand_chacha = "0.2.1"
 [features]
 default = ["parallel-crypto"]
 parallel-crypto = ["ark-poly/parallel", "ark-ec/parallel", "amt/parallel"]
+system-alloc = []  # 仅影响 benchmark_lvmt：关闭 jemalloc，改用系统默认分配器
 
 [profile.release]
 lto = "fat"       # 或者 "thin"

@@ -1,3 +1,5 @@
+// 默认用 jemalloc；以 `--features system-alloc` 编译时改用系统默认分配器（分配器对照实验用）
+#[cfg(not(feature = "system-alloc"))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
