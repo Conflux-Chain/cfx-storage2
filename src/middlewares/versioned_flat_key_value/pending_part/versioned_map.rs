@@ -153,14 +153,16 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
         write_schema: &P::WriteSchema,
     ) -> PendResult<()> {
         // let parent to be self.current
-        // this step is necessary for computing modifications' last_commit_id
-        let mut guard = self.current.write();
+        // this step is necessary for computing modifications' last_commit_id.
+        // `&mut self` already rules out concurrent readers, so access the
+        // cache through `get_mut` instead of taking the lock.
+        let current = self.current.get_mut();
         self.tree_with_tracker
             .tree
-            .checkout_current(parent_commit_id, &mut guard)?;
+            .checkout_current(parent_commit_id, current)?;
 
         // add node to tree
-        let current = guard.as_ref().unwrap();
+        let current = current.as_ref().unwrap();
         let mut modifications = HashMap::new();
         for (key, value) in updates {
             let last_commit_id = current.get(&key).map(|s| s.commit_id);
