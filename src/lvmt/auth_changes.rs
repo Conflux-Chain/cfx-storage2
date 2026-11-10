@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use blake2::Blake2s;
 use ethereum_types::H256;
+use tinyvec::ArrayVec;
 
 use crate::{
     backends::{serde::Encode, PendingTableName, TableSchema},
@@ -63,11 +64,13 @@ fn process_subtree(
     } // else { leave btree as empty }
 }
 
+/// Builds the subtree rooted at `key` into `btree` and returns the hash of its
+/// root node (the only thing the parent node needs).
 fn process_subtree_nonempty(
     items: &[H256],
     key: AuthChangeKey,
     btree: &mut BTreeMap<AuthChangeKey, AuthChangeNode>,
-) -> AuthChangeNode {
+) -> H256 {
     let size = items.len();
     assert!(size > 0);
 
@@ -81,16 +84,18 @@ fn process_subtree_nonempty(
         };
         if top_size_log == size_log {
             let node = AuthChangeNode::from_leaves(items);
-            btree.insert(key, node.clone());
-            return node;
+            let hash = node.hash();
+            btree.insert(key, node);
+            return hash;
         } // else { assert!(top_size_log < size_log); assert!(top_size_log >= 1); }
         top_size_log
     } else {
         assert!(size_log >= MAX_NODE_SIZE_LOG - 1);
         if size <= MAX_NODE_SIZE {
             let node = AuthChangeNode::from_leaves(items);
-            btree.insert(key, node.clone());
-            return node;
+            let hash = node.hash();
+            btree.insert(key, node);
+            return hash;
         } // else { assert!(size_log > MAX_NODE_SIZE_LOG) }
         MAX_NODE_SIZE_LOG
     };
@@ -107,7 +112,7 @@ fn process_subtree_nonempty(
     let min_subtree_size = 1usize << (subtree_size_log - 1); // >= 1
 
     let mut items = items;
-    let mut processed_nodes = vec![];
+    let mut child_hashes = ArrayVec::<[H256; MAX_NODE_SIZE]>::new();
     let mut ticks = vec![];
     let mut max_shared_prefix_len = 0;
 
@@ -131,14 +136,13 @@ fn process_subtree_nonempty(
         }
 
         assert!(!subtree.is_empty());
-        let node = process_subtree_nonempty(subtree, key.child(i), btree);
-        processed_nodes.push(node);
+        child_hashes.push(process_subtree_nonempty(subtree, key.child(i), btree));
     }
 
-    let node = AuthChangeNode::from_nodes(&processed_nodes, ticks, max_shared_prefix_len);
-
-    btree.insert(key, node.clone());
-    node
+    let node = AuthChangeNode::from_child_hashes(&child_hashes, ticks, max_shared_prefix_len);
+    let hash = node.hash();
+    btree.insert(key, node);
+    hash
 }
 
 fn shared_prefix_len<T: PartialEq>(a: &[T], b: &[T]) -> usize {

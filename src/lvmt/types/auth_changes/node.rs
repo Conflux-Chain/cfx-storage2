@@ -34,13 +34,24 @@ impl AuthChangeNode {
     }
 
     pub fn from_nodes(nodes: &[Self], ticks: Vec<H256>, shared_prefix_len: usize) -> Self {
-        let size = nodes.len();
+        assert!(nodes.len() <= MAX_NODE_SIZE);
+        let hashes: ArrayVec<[H256; MAX_NODE_SIZE]> = nodes.iter().map(Self::hash).collect();
+        Self::from_child_hashes(&hashes, ticks, shared_prefix_len)
+    }
+
+    /// Same as [`Self::from_nodes`], given the children's [`Self::hash`] values.
+    pub fn from_child_hashes(
+        child_hashes: &[H256],
+        ticks: Vec<H256>,
+        shared_prefix_len: usize,
+    ) -> Self {
+        let size = child_hashes.len();
 
         assert!(size > 0);
         assert!(size <= MAX_NODE_SIZE);
         assert_eq!(size - 1, ticks.len());
 
-        let hashes: ArrayVec<_> = nodes.iter().map(Self::hash).collect();
+        let hashes = ArrayVec::try_from(child_hashes).unwrap();
         let avail_bitmap = bit_ones(size);
         let ticks = ticks
             .into_iter()
