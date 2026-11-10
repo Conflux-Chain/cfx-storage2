@@ -100,11 +100,10 @@ pub struct CurvePointWithVersion {
 
 impl Encode for CurvePointWithVersion {
     fn encode(&self) -> Cow<[u8]> {
-        let mut writer = self.version.to_be_bytes()[3..].to_vec();
-        self.point
-            .affine()
-            .serialize_uncompressed(&mut writer)
-            .unwrap();
+        let affine = self.point.affine();
+        let mut writer = Vec::with_capacity(5 + affine.uncompressed_size());
+        writer.extend_from_slice(&self.version.to_be_bytes()[3..]);
+        affine.serialize_uncompressed(&mut writer).unwrap();
         Cow::Owned(writer)
     }
 }
