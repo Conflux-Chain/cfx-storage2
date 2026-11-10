@@ -181,7 +181,7 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         &mut self,
         parent_commit: Option<CommitID>,
         commit: CommitID,
-        updates: HashMap<T::Key, Option<T::Value>>,
+        updates: impl IntoIterator<Item = (T::Key, Option<T::Value>)>,
         pending_write_schema: &P::WriteSchema,
     ) -> Result<()> {
         if self.commit_id_table.get(&commit)?.is_some() {

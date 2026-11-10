@@ -242,8 +242,7 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         // dbg!("3");
 
         // write amt_node schema
-        let amt_node_updates: HashMap<_, _> =
-            amt_changes.into_iter().map(|(k, v)| (k, Some(v))).collect();
+        let amt_node_updates = amt_changes.into_iter().map(|(k, v)| (k, Some(v)));
         self.amt_node_store.add_to_pending_part(
             old_commit,
             new_commit,
@@ -254,10 +253,9 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         // dbg!("4");
 
         // write key_value schema
-        let key_value_updates: HashMap<_, _> = key_value_changes
+        let key_value_updates = key_value_changes
             .into_iter()
-            .map(|(k, v)| (k, Some(v)))
-            .collect();
+            .map(|(k, v)| (k, Some(v)));
         // dbg!(&old_commit, &new_commit, &key_value_updates);
         self.key_value_store.add_to_pending_part(
             old_commit,
@@ -267,11 +265,10 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         )?;
 
         // write slot_alloc schema
-        let slot_alloc_updates: HashMap<_, _> = allocations
+        let slot_alloc_updates = allocations
             .into_changes()
             .into_iter()
-            .map(|(k, v)| (k, Some(v)))
-            .collect();
+            .map(|(k, v)| (k, Some(v)));
         self.slot_alloc_store.add_to_pending_part(
             old_commit,
             new_commit,
