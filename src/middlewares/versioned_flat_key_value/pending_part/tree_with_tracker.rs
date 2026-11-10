@@ -27,9 +27,9 @@ impl<S: PendingKeyValueSchema> TreeWithTracker<S> {
         modifications: RecoverMap<S>,
         write_schema: &P::WriteSchema,
     ) -> PendResult<()> {
-        self.tree.add_root(commit_id, modifications.clone())?;
+        let modifications = self.tree.add_root(commit_id, modifications)?;
 
-        log_add_root(write_schema, &mut self.tracker, commit_id, &modifications);
+        log_add_root(write_schema, &mut self.tracker, commit_id, modifications);
 
         Ok(())
     }
@@ -41,15 +41,16 @@ impl<S: PendingKeyValueSchema> TreeWithTracker<S> {
         modifications: RecoverMap<S>,
         write_schema: &P::WriteSchema,
     ) -> PendResult<()> {
-        self.tree
-            .add_non_root_node(commit_id, parent_commit_id, modifications.clone())?;
+        let modifications =
+            self.tree
+                .add_non_root_node(commit_id, parent_commit_id, modifications)?;
 
         log_add_non_root_node(
             write_schema,
             &mut self.tracker,
             commit_id,
             parent_commit_id,
-            &modifications,
+            modifications,
         );
 
         Ok(())

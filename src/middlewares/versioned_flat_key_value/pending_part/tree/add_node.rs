@@ -8,13 +8,16 @@ use crate::middlewares::{
 use super::{node::TreeNode, Tree};
 
 // methods to support VersionedMap::add_node()
+//
+// Both methods return the modifications as stored in the new node, so that
+// callers can log them without keeping their own copy.
 impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn add_root(
         // TODO: Tree's &mut fn should only be invoked by tree_with_tracker
         &mut self,
         commit_id: S::CommitId,
         modifications: RecoverMap<S>,
-    ) -> PendResult<()> {
+    ) -> PendResult<&RecoverMap<S>> {
         // return error if there is root
         if self.has_root() {
             return Err(PendingError::MultipleRootsNotAllowed);
@@ -28,7 +31,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         let slab_index = self.nodes.insert(root);
         self.index_map.insert(commit_id, slab_index);
 
-        Ok(())
+        Ok(self.nodes[slab_index].get_modifications())
     }
 
     pub fn add_non_root_node(
@@ -36,7 +39,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         commit_id: S::CommitId,
         parent_commit_id: S::CommitId,
         modifications: RecoverMap<S>,
-    ) -> PendResult<()> {
+    ) -> PendResult<&RecoverMap<S>> {
         // return error if parent_commit_id does not exist
         let parent_slab_index = self.get_slab_index_by_commit_id(parent_commit_id)?;
 
@@ -62,6 +65,6 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         self.index_map.insert(commit_id, slab_index);
         self.nodes[parent_slab_index].insert_child(slab_index);
 
-        Ok(())
+        Ok(self.nodes[slab_index].get_modifications())
     }
 }

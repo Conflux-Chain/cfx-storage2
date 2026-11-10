@@ -80,7 +80,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
                     }
                 }
                 std::cmp::Ordering::Equal => {
-                    tree.add_root(node.node_commit_id, node.modifications)?
+                    tree.add_root(node.node_commit_id, node.modifications)?;
                 }
                 std::cmp::Ordering::Less => return Err(PendingError::InconsistentSnapshotState),
             }
