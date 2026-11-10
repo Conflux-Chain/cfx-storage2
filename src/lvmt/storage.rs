@@ -253,9 +253,7 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         // dbg!("4");
 
         // write key_value schema
-        let key_value_updates = key_value_changes
-            .into_iter()
-            .map(|(k, v)| (k, Some(v)));
+        let key_value_updates = key_value_changes.into_iter().map(|(k, v)| (k, Some(v)));
         // dbg!(&old_commit, &new_commit, &key_value_updates);
         self.key_value_store.add_to_pending_part(
             old_commit,

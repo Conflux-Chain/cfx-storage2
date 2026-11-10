@@ -128,9 +128,7 @@ impl<T: TableSchema> TableRead<T> for CachedRocksDBColumn<T> {
             let mut cache = self.cache.lock();
             if let Some(cached_result) = cache.get(key) {
                 self.metrics.hits.fetch_add(1, Ordering::Relaxed);
-                return Ok(cached_result
-                    .as_ref()
-                    .map(|v| Cow::Owned((**v).to_owned())));
+                return Ok(cached_result.as_ref().map(|v| Cow::Owned((**v).to_owned())));
             }
         } // unlock
 
