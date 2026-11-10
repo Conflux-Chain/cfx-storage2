@@ -6,7 +6,7 @@ mod node_id;
 
 pub use allocation::{AllocatePosition, AllocationKeyInfo, KEY_SLOT_SIZE, SLOT_SIZE};
 pub use auth_changes::{AuthChangeKey, AuthChangeNode};
-pub use curve_point::{batch_normalize, CurvePointWithVersion};
+pub use curve_point::{CurvePoint, CurvePointWithVersion};
 pub use lvmt_value::LvmtValue;
 pub use node_id::{compute_amt_node_id, AmtId, AmtNodeId};
 

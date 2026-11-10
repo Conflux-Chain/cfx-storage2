@@ -64,32 +64,19 @@ impl CurvePoint {
         blake2s(&writer)
     }
 
+    pub fn projective(&self) -> G1 {
+        match self {
+            CurvePoint::Projective(proj) => *proj,
+            CurvePoint::Affine(affine) => (*affine).into(),
+        }
+    }
+
     pub fn affine(&self) -> Cow<G1Aff> {
         match &self {
             CurvePoint::Projective(proj) => Cow::Owned(proj.into_affine()),
             CurvePoint::Affine(affine) => Cow::Borrowed(affine),
         }
     }
-}
-
-pub fn batch_normalize<'a>(
-    curve_point_iter_mut: impl ExactSizeIterator<Item = &'a mut CurvePoint>,
-) {
-    let mut pointers = Vec::with_capacity(curve_point_iter_mut.len());
-    let mut proj_points = Vec::with_capacity(curve_point_iter_mut.len());
-
-    for curve_point in curve_point_iter_mut {
-        if let CurvePoint::Projective(proj_point) = curve_point {
-            proj_points.push(*proj_point);
-            pointers.push(curve_point);
-        }
-    }
-
-    let affine_points = G1::normalize_batch(&proj_points);
-    pointers
-        .into_iter()
-        .zip(affine_points)
-        .for_each(|(pointer, affine)| *pointer = CurvePoint::Affine(affine))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -135,7 +122,6 @@ mod tests {
     use ark_ec::AffineRepr;
     use ark_ff::{BigInt, BigInteger, PrimeField};
     use proptest::array::uniform;
-    use proptest::collection::vec;
     use proptest::prelude::*;
 
     fn fq_strategy() -> impl Strategy<Value = Fq> {
@@ -198,18 +184,6 @@ mod tests {
         #[test]
         fn test_serde(point in any::<CurvePointWithVersion>()) {
             test_utils::test_serde(point)
-        }
-
-        #[test]
-        fn test_normalize(input in vec(any::<CurvePoint>(), 0..100)) {
-            let mut output = input.clone();
-            batch_normalize(output.iter_mut());
-
-            let all_affine = output.iter().all(|x|matches!(x, CurvePoint::Affine(_)));
-            prop_assert!(all_affine);
-
-            let all_equal = input.into_iter().zip(output.into_iter()).all(|(a, b)| a.hash() == b.hash() && a == b);
-            prop_assert!(all_equal);
         }
     }
 }

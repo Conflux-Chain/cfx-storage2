@@ -1,16 +1,18 @@
 use std::collections::BTreeMap;
 
-use amt::AmtParams;
-use ark_ff::Zero;
+use amt::{AmtParams, SlotChanges};
 
 use super::{
-    crypto::{G1, PE},
+    crypto::PE,
     table_schema::AmtNodes,
-    types::{batch_normalize, AllocatePosition, AmtId, CurvePointWithVersion, SLOT_SIZE},
+    types::{AllocatePosition, AmtId, CurvePoint, CurvePointWithVersion, SLOT_SIZE},
 };
 use crate::{errors::Result, middlewares::table_schema::KeyValueSnapshotRead};
 
-pub type AmtChange = BTreeMap<u16, [bool; SLOT_SIZE]>;
+// Slot indices recorded here are used directly as amt's slot indices.
+const _: () = assert!(SLOT_SIZE == amt::SLOT_SIZE);
+
+pub type AmtChange = BTreeMap<u16, SlotChanges>;
 
 #[derive(Default)]
 pub struct AmtChangeManager(BTreeMap<AmtId, AmtChange>);
@@ -51,33 +53,32 @@ impl AmtChangeManager {
         db: &KeyValueSnapshotRead<'_, AmtNodes>,
         pp: &AmtParams<PE>,
     ) -> Result<Vec<(AmtId, CurvePointWithVersion)>> {
-        let mut result = vec![];
+        let mut versions = Vec::with_capacity(self.0.len());
+        let mut updates = Vec::with_capacity(self.0.len());
 
-        for (key, value) in self.0.iter() {
-            let mut curve_point = db.get(key)?.unwrap_or_default();
-            curve_point.point += commitment_diff(value, pp);
-            curve_point.version += 1;
-            result.push((*key, curve_point));
+        for (key, change) in self.0.iter() {
+            let old = db.get(key)?.unwrap_or_default();
+            versions.push((*key, old.version + 1));
+            let changes = change.iter().map(|(idx, slots)| (*idx as usize, slots));
+            updates.push((old.point.projective(), changes));
         }
 
-        let curve_point_iter_mut = result.iter_mut().map(|(_, value)| &mut value.point);
-        batch_normalize(curve_point_iter_mut);
+        // Adds the slot diffs to each commitment and normalizes the results
+        // with one batched inversion.
+        let points = pp.apply_diffs(updates);
 
-        Ok(result)
+        Ok(versions
+            .into_iter()
+            .zip(points)
+            .map(|((key, version), point)| {
+                (
+                    key,
+                    CurvePointWithVersion {
+                        version,
+                        point: CurvePoint::Affine(point),
+                    },
+                )
+            })
+            .collect())
     }
-}
-
-pub fn commitment_diff(change: &AmtChange, pp: &AmtParams<PE>) -> G1 {
-    let mut diff_sum = G1::zero();
-
-    for (idx, diff) in change.iter() {
-        let basis_power = pp.get_basis_power_at(*idx as usize);
-        for (i_diff, i_basis_power) in diff.iter().zip(basis_power.into_iter()) {
-            if *i_diff {
-                diff_sum += i_basis_power;
-            }
-        }
-    }
-
-    diff_sum
 }
