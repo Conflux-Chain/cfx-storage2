@@ -201,6 +201,18 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         }
     }
 
+    /// All `(key, value)` changes written by `commit`, which must be in the
+    /// historical part. Deletions are not included (the change table keeps no row
+    /// for them). `from` is a key encoding no greater than any key of the schema.
+    pub(crate) fn get_historical_commit_changes(
+        &self,
+        commit: &CommitID,
+        from: T::Key,
+    ) -> Result<Vec<(T::Key, T::Value)>> {
+        let history_number = self.get_history_number_by_commit_id(*commit)?;
+        self.change_history_table.iter_commit(history_number, from)
+    }
+
     /// See [`get_last_modified`].
     pub fn get_with_last_modified(
         &self,

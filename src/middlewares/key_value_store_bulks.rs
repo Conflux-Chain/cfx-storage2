@@ -28,6 +28,30 @@ impl<'db, T: TableSchema> KeyValueStoreBulks<'db, T> {
     }
 }
 
+impl<C, K, V, T> KeyValueStoreBulks<'_, T>
+where
+    T: TableSchema<Key = ChangeKey<C, K>, Value = V>,
+    C: Copy + PartialEq,
+    K: Clone,
+    V: Clone,
+{
+    /// All `(key, value)` rows written under `commit`, in table order, starting
+    /// from `from`. Pass a key that encodes no greater than any key of the table
+    /// (e.g. an empty one) to get all rows of the commit.
+    pub(crate) fn iter_commit(&self, commit: C, from: K) -> Result<Vec<(K, V)>> {
+        let mut rows = Vec::new();
+        for item in self.0.iter(&ChangeKey(commit, from))? {
+            let (key, value) = item?;
+            let ChangeKey(row_commit, key) = key.as_ref().clone();
+            if row_commit != commit {
+                break;
+            }
+            rows.push((key, value.as_ref().clone()));
+        }
+        Ok(rows)
+    }
+}
+
 impl<T: TableSchema> Clone for KeyValueStoreBulks<'_, T> {
     fn clone(&self) -> Self {
         KeyValueStoreBulks(self.0.clone())

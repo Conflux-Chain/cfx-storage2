@@ -28,6 +28,9 @@ use super::{compute_state_root, crypto::PE, example::LvmtStorage, storage::LvmtS
 
 pub const TEST_LEVEL: usize = 16;
 
+#[cfg(test)]
+mod bench_proof_reads;
+
 pub static AMT: Lazy<AmtParams<PE>> = Lazy::new(|| {
     AmtParams::from_dir_mont("./pp", TEST_LEVEL, TEST_LEVEL, CreateMode::Neither, None)
 });
@@ -971,6 +974,23 @@ fn test_lvmt_last_modified() {
         assert_eq!(last(&lvmt, c2, &k_none), None);
         assert_eq!(amt_last(&lvmt, c3, &AmtId::root()), Some(c2));
         assert_eq!(amt_last(&lvmt, c1, &AmtId::root()), Some(c1));
+
+        // Scanning the changes of a historical commit: every AMT it updated, each
+        // last modified at that very commit; the root AMT comes first.
+        for c in [c1, c2] {
+            let changes = lvmt.get_historical_amt_changes(c).unwrap();
+            assert_eq!(changes.first().map(|(id, _)| *id), Some(AmtId::root()));
+            assert!(changes.windows(2).all(|w| w[0].0 < w[1].0));
+            for (amt_id, point) in changes {
+                assert_eq!(
+                    lvmt.get_amt_last_modified(c, &amt_id).unwrap(),
+                    Some((c, point))
+                );
+            }
+        }
+        // c1 wrote two keys, c2 one: at least one non-root AMT each.
+        assert!(lvmt.get_historical_amt_changes(c1).unwrap().len() >= 2);
+        assert!(lvmt.get_historical_amt_changes(c3).is_err()); // still pending
 
         // A new pending commit on top of the confirmed history.
         lvmt.commit(

@@ -134,6 +134,16 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
             .collect())
     }
 
+    /// All AMT commitments updated by `commit`, which must be in the historical
+    /// part, in increasing `AmtId` order (the root AMT first, if updated).
+    pub(crate) fn get_historical_amt_changes(
+        &self,
+        commit: CommitID,
+    ) -> Result<Vec<(AmtId, CurvePointWithVersion)>> {
+        self.amt_node_store
+            .get_historical_commit_changes(&commit, AmtId::root())
+    }
+
     /// Get the commit at which the commitment of AMT `amt_id` was last updated as of
     /// `commit`, together with the commitment written there.
     ///
