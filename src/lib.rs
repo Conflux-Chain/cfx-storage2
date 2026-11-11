@@ -23,4 +23,9 @@ pub mod types;
 mod utils;
 
 pub use errors::{Result, StorageError};
-pub use lvmt::{LvmtSnapshot, LvmtStorage, LvmtStore, LvmtStoreReader, LvmtValue};
+pub use lvmt::{
+    compute_state_root,
+    types::{AuthChangeKey, AuthChangeNode, CurvePointWithVersion},
+    LvmtSnapshot, LvmtStorage, LvmtStore, LvmtStoreReader, LvmtValue, StateRoot,
+    EMPTY_AUTH_CHANGE_ROOT,
+};

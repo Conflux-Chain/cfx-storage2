@@ -17,7 +17,6 @@ use cfx_storage2::middlewares::CommitID;
 use cfx_storage2::LvmtStorage;
 
 use amt::{AmtParams, CreateMode};
-use ethereum_types::H256;
 
 // 直接复用被测代码中现成的逻辑（请确保这些路径与您的 crate 一致）
 use cfx_storage2::lvmt::tests::{
@@ -208,7 +207,6 @@ fuzz_target!(|input: CrashFuzzInput| {
                         lvmt.commit(
                             Some(setup.commit_1),
                             setup.commit_2,
-                            H256::zero(),
                             TestSetup::changes_iter(&setup.updates_2),
                             &AMT,
                         ).unwrap();
@@ -241,7 +239,6 @@ fuzz_target!(|input: CrashFuzzInput| {
                                         lvmt.commit(
                                             Some(setup.commit_1),
                                             setup.commit_2,
-                                            H256::zero(),
                                             TestSetup::changes_iter(&setup.updates_2),
                                             &AMT,
                                         ).unwrap();

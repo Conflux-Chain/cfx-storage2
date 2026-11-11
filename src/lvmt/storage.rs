@@ -10,9 +10,11 @@ use super::{
     amt_change_manager::AmtChangeManager,
     auth_changes::{amt_change_hash, key_value_hash, process_dump_items, AuthChangeTable},
     crypto::PE,
-    state_root::{StateRoot, StateRootTable},
+    state_root::{compute_state_root, StateRoot, StateRootTable, EMPTY_AUTH_CHANGE_ROOT},
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
-    types::{AllocatePosition, AmtNodeId},
+    types::{
+        AllocatePosition, AmtId, AmtNodeId, AuthChangeKey, AuthChangeNode, CurvePointWithVersion,
+    },
 };
 use crate::{
     backends::{DatabaseTrait, PendingTableName, TableRead, WriteSchemaTrait},
@@ -27,6 +29,7 @@ use crate::{
     traits::{KeyValueStoreManager, KeyValueStoreRead},
     utils::hash::blake2s,
 };
+use ethereum_types::H256;
 
 pub struct LvmtStore<'cache, 'db, P: DatabaseTrait<PendingTableName>> {
     pending_persistence_backend: Arc<P>,
@@ -46,6 +49,39 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
     pub fn get_state_root(&self, commit: CommitID) -> Result<Option<StateRoot>> {
         let state_root_view = Arc::new(self.pending_persistence_backend.view::<StateRootTable>()?);
         Ok(state_root_view.get(&commit)?.map(|x| x.into_owned()))
+    }
+
+    /// Get the commitment of the root AMT at the given commit.
+    ///
+    /// Returns the default (identity point, version 0) if the root AMT has never
+    /// been changed up to this commit.
+    pub fn get_root_commitment(&self, commit: CommitID) -> Result<CurvePointWithVersion> {
+        let amt_node_view = self.amt_node_store.get_versioned_store(&commit, false)?;
+        Ok(amt_node_view.get(&AmtId::root())?.unwrap_or_default())
+    }
+
+    /// Get a node of the auth-change tree written by the given commit.
+    pub fn get_auth_change_node(
+        &self,
+        commit: CommitID,
+        key: &AuthChangeKey,
+    ) -> Result<Option<AuthChangeNode>> {
+        self.auth_changes.get_versioned_key(&commit, key)
+    }
+
+    /// Get the root hash of the auth-change tree written by the given commit.
+    ///
+    /// Returns [`EMPTY_AUTH_CHANGE_ROOT`] for a commit without any change, and
+    /// `None` if the commit is unknown to the pending persistence db (i.e. its
+    /// state root is not recorded).
+    pub fn get_auth_change_root(&self, commit: CommitID) -> Result<Option<H256>> {
+        if self.get_state_root(commit)?.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(
+            self.get_auth_change_node(commit, &AuthChangeKey::root())?
+                .map_or(EMPTY_AUTH_CHANGE_ROOT, |node| node.hash()),
+        ))
     }
 
     pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
@@ -149,11 +185,13 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
     /// frequent confirmation cycle of the historical database. This architectural change
     /// allows all related data for a commit to be written within a single `pending_write_schema`.
     ///
-    /// To ensure that all five data components (`key-values`, `AMT nodes`, `slot allocations`,
-    /// `auth changes`, and the `state root`) are written atomically, the `state_root` is
-    /// passed in as a parameter. This enables the function to create and manage the
-    /// `pending_write_schema` internally, rather than delegating that responsibility to
-    /// the caller.
+    /// All five data components (`key-values`, `AMT nodes`, `slot allocations`,
+    /// `auth changes`, and the `state root`) are written atomically in one
+    /// `pending_write_schema` created and managed here.
+    ///
+    /// The state root is computed here by [`compute_state_root`] from the new root AMT
+    /// commitment and the root of this commit's auth-change tree, written to the
+    /// `StateRoot` table, and returned to the caller.
     ///
     /// TODO: If the historical database ever needs this information, a process can be added
     /// to copy the `AuthChange` and `StateRoot` data from the pending DB to the historical DB
@@ -162,10 +200,9 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         &mut self,
         old_commit: Option<CommitID>,
         new_commit: CommitID,
-        state_root: StateRoot,
         changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
         pp: &AmtParams<PE>,
-    ) -> Result<()> {
+    ) -> Result<StateRoot> {
         // TODO
         
         let (amt_node_view, slot_alloc_view, key_value_view) = if let Some(old_commit) = old_commit
@@ -235,6 +272,20 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
             process_dump_items(hashes)
         };
 
+        // Compute the state root. Any change propagates to the root AMT, so the root
+        // commitment is in `amt_changes` unless this commit changes nothing; then it
+        // is inherited from the parent.
+        let state_root = {
+            let root_commitment = match amt_changes.iter().find(|(id, _)| id.is_empty()) {
+                Some((_, point)) => point.clone(),
+                None => amt_node_view.get(&AmtId::root())?.unwrap_or_default(),
+            };
+            let auth_change_root = auth_changes
+                .get(&AuthChangeKey::root())
+                .map_or(EMPTY_AUTH_CHANGE_ROOT, |node| node.hash());
+            compute_state_root(&root_commitment, &auth_change_root)
+        };
+
         // Write to the pending part of db.
         // TODO: Write to the history part is beyond the range of LvmtStore.
         let pending_write_schema = P::write_schema();
@@ -286,7 +337,7 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
 
         self.commit_to_pending_db(pending_write_schema)?;
 
-        Ok(())
+        Ok(state_root)
     }
 }
 

@@ -23,6 +23,13 @@ impl DerefMut for AmtId {
     }
 }
 
+impl AmtId {
+    /// The id of the root AMT (empty path).
+    pub fn root() -> Self {
+        AmtId(ArrayVec::new())
+    }
+}
+
 pub type AmtNodeId = AmtId;
 
 pub fn compute_amt_node_id(digest: H256, depth: usize) -> AmtNodeId {

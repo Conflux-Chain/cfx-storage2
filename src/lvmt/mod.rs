@@ -18,5 +18,6 @@ pub mod types;
 
 pub use example::LvmtStorage;
 pub use snapshot::LvmtSnapshot;
+pub use state_root::{compute_state_root, StateRoot, EMPTY_AUTH_CHANGE_ROOT};
 pub use storage::{LvmtStore, LvmtStoreReader};
 pub use types::LvmtValue;

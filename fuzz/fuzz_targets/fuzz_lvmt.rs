@@ -23,7 +23,6 @@ use cfx_storage2::traits::KeyValueStoreManager;
 use cfx_storage2::backends::serde::{Encode, Decode};
 use once_cell::sync::Lazy;
 use amt::{AmtParams, CreateMode};
-use ethereum_types::H256;
 use cfx_storage2::lvmt::crypto::PE;
 use cfx_storage2::LvmtStorage;
 
@@ -351,7 +350,6 @@ fuzz_target!(|input: FuzzInput<TestKey, TestValue>| {
                 let real_res = real_store.commit(
                     parent_commit,
                     new_commit_id,
-                    H256::zero(), // state_root is not used in the test case, so just provide a toy
                     resolve_changes::<TestSchema>(updates),
                     &AMT,
                 );

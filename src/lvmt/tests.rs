@@ -4,7 +4,6 @@ use std::{
     sync::Arc,
 };
 
-use ethereum_types::H256;
 use once_cell::sync::Lazy;
 use rand_chacha::ChaChaRng;
 
@@ -25,7 +24,7 @@ use crate::{
     StorageError,
 };
 
-use super::{crypto::PE, example::LvmtStorage, storage::LvmtStore};
+use super::{compute_state_root, crypto::PE, example::LvmtStorage, storage::LvmtStore};
 
 pub const TEST_LEVEL: usize = 16;
 
@@ -142,7 +141,6 @@ pub fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     lvmt.commit(
         None,
         setup.commit_1,
-        H256::zero(), // state_root is not used in the test case, so just provide a toy
         TestSetup::changes_iter(&setup.updates_1),
         &AMT,
     )
@@ -152,7 +150,6 @@ pub fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     lvmt.commit(
         Some(setup.commit_1),
         setup.commit_2,
-        H256::zero(),
         TestSetup::changes_iter(&setup.updates_2),
         &AMT,
     )
@@ -163,7 +160,6 @@ pub fn run_phase_1<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<Pendi
     lvmt.commit(
         Some(setup.commit_1),
         setup.commit_2_1,
-        H256::zero(),
         TestSetup::changes_iter(&setup.updates_2_1),
         &AMT,
     )
@@ -188,7 +184,6 @@ pub fn run_verification_after_successful_promotion<
     lvmt.commit(
         Some(setup.commit_2),
         setup.commit_3,
-        H256::zero(),
         TestSetup::changes_iter(&setup.updates_3),
         &AMT,
     )
@@ -418,7 +413,6 @@ fn test_lvmt_recovery_historical_ahead<
     lvmt.commit(
         Some(setup.commit_1),
         setup.commit_2,
-        H256::zero(),
         TestSetup::changes_iter(&setup.updates_2),
         &AMT,
     )
@@ -759,11 +753,91 @@ fn test_lvmt_commit_with_empty_changes() {
     let commit_id = gen_novel_commit_id(&mut rng, &mut previous_commits);
 
     // Perform a commit with an empty set of updates.
-    lvmt.commit(None, commit_id, H256::zero(), std::iter::empty(), &AMT)
+    lvmt.commit(None, commit_id, std::iter::empty(), &AMT)
         .unwrap();
 
     lvmt.check_consistency(commit_id, &AMT).unwrap();
 
+    clear_dir(historical_path);
+    clear_dir(pending_path);
+}
+
+#[test]
+fn test_lvmt_state_root() {
+    use super::{types::CurvePointWithVersion, EMPTY_AUTH_CHANGE_ROOT};
+
+    let historical_path = "__test_lvmt_state_root_historical";
+    let pending_path = "__test_lvmt_state_root_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+
+    let historical_db = Arc::new(WrappedRocksDb::open(historical_path).unwrap());
+    let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
+    let mut db =
+        LvmtStorage::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>::new(
+            historical_db,
+            pending_db,
+        )
+        .unwrap();
+    let mut lvmt = db.as_manager().unwrap();
+
+    let mut rng = get_rng_for_test();
+    let mut previous_commits = HashSet::new();
+    let mut novel = || gen_novel_commit_id(&mut rng, &mut previous_commits);
+    let (c0, c1, c2, c3) = (novel(), novel(), novel(), novel());
+    let updates = [(1u64, Some(10u64)), (2, Some(20)), (3, None)];
+
+    // Empty commit from scratch: default root commitment, empty auth-change tree.
+    let r0 = lvmt.commit(None, c0, std::iter::empty(), &AMT).unwrap();
+    assert_eq!(lvmt.get_state_root(c0).unwrap(), Some(r0));
+    assert_eq!(
+        lvmt.get_root_commitment(c0).unwrap(),
+        CurvePointWithVersion::default()
+    );
+    assert_eq!(
+        lvmt.get_auth_change_root(c0).unwrap(),
+        Some(EMPTY_AUTH_CHANGE_ROOT)
+    );
+    lvmt.check_consistency(c0, &AMT).unwrap();
+
+    // A commit with changes: the returned state root is the recorded one.
+    let r1 = lvmt
+        .commit(Some(c0), c1, TestSetup::changes_iter(&updates), &AMT)
+        .unwrap();
+    assert_eq!(lvmt.get_state_root(c1).unwrap(), Some(r1));
+    assert_ne!(r1, r0);
+    assert_ne!(
+        lvmt.get_auth_change_root(c1).unwrap(),
+        Some(EMPTY_AUTH_CHANGE_ROOT)
+    );
+    lvmt.check_consistency(c1, &AMT).unwrap();
+
+    // An empty child inherits the root commitment, but its auth-change root is empty,
+    // so its state root differs from the parent's.
+    let r2 = lvmt.commit(Some(c1), c2, std::iter::empty(), &AMT).unwrap();
+    assert_eq!(
+        lvmt.get_root_commitment(c2).unwrap(),
+        lvmt.get_root_commitment(c1).unwrap()
+    );
+    assert_eq!(
+        lvmt.get_auth_change_root(c2).unwrap(),
+        Some(EMPTY_AUTH_CHANGE_ROOT)
+    );
+    assert_ne!(r2, r1);
+    lvmt.check_consistency(c2, &AMT).unwrap();
+
+    // Re-applying the same changes bumps the versions, hence a different state root.
+    let r3 = lvmt
+        .commit(Some(c1), c3, TestSetup::changes_iter(&updates), &AMT)
+        .unwrap();
+    assert_ne!(r3, r1);
+    lvmt.check_consistency(c3, &AMT).unwrap();
+
+    // Unknown commit.
+    assert_eq!(lvmt.get_auth_change_root(novel()).unwrap(), None);
+
+    drop(lvmt);
+    drop(db);
     clear_dir(historical_path);
     clear_dir(pending_path);
 }
@@ -896,6 +970,16 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
 
             assert_eq!(commitment, stored_commitment, "Inconsitent commitments");
         }
+
+        // The recorded state root must be recomputable from the read-only interfaces.
+        let state_root = self.get_state_root(commit)?.unwrap();
+        let root_commitment = self.get_root_commitment(commit)?;
+        let auth_change_root = self.get_auth_change_root(commit)?.unwrap();
+        assert_eq!(
+            state_root,
+            compute_state_root(&root_commitment, &auth_change_root),
+            "Inconsistent state root"
+        );
         Ok(())
     }
 }
