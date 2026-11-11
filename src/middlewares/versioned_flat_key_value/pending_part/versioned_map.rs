@@ -4,6 +4,7 @@ use std::ops::Bound;
 
 use crate::backends::{DatabaseTrait, PendingTableName};
 use crate::traits::{IsCompleted, NeedNext};
+use crate::middlewares::table_schema::EncodingOrderedKey;
 use crate::types::ValueEntry;
 
 use super::pending_schema::{ConfirmedPathInfo, KeyValueMap};
@@ -420,7 +421,7 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
 impl<S, P: DatabaseTrait<PendingTableName>> VersionedMap<S, P>
 where
     S: PendingKeyValueSchema,
-    S::Key: AsRef<[u8]>,
+    S::Key: EncodingOrderedKey,
 {
     pub fn get_versioned_store_range(
         &self,

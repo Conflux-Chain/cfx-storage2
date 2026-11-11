@@ -16,7 +16,9 @@ use super::{
     history_indices::HistoryIndices,
     iter_history, iter_history_range,
     pending_part::{pending_schema::PendingKeyValueConfig, VersionedMap},
-    table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema},
+    table_schema::{
+        EncodingOrderedKey, HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema,
+    },
     HistoryIndexKey, PendingError, VersionedStore, VersionedStoreReader,
 };
 
@@ -114,7 +116,7 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
 impl<T, P: DatabaseTrait<PendingTableName>> SnapshotView<'_, '_, T, P>
 where
     T: VersionedKeyValueSchema,
-    T::Key: AsRef<[u8]>,
+    T::Key: EncodingOrderedKey,
 {
     pub fn iter_range(
         &self,

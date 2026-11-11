@@ -103,6 +103,37 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
             .and_then(|(modified_at, value)| value.map(|value| (modified_at, value))))
     }
 
+    /// Get the keys allocated to the key slots of leaf `node_index` of AMT `amt_id`
+    /// at `commit` (`keys()[i]` is in slot `i`), or `None` if no slot is allocated.
+    pub fn get_leaf_keys(
+        &self,
+        commit: CommitID,
+        amt_id: &AmtId,
+        node_index: u16,
+    ) -> Result<Option<AllocationKeyInfo>> {
+        let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit, false)?;
+        slot_alloc_view.get(&amt_id.child(node_index))
+    }
+
+    /// Get the allocated key slots of every leaf of AMT `amt_id` at `commit`, as
+    /// `(node_index, keys)` in increasing `node_index`. Leaves without an allocated
+    /// slot are omitted.
+    pub fn get_amt_slot_keys(
+        &self,
+        commit: CommitID,
+        amt_id: &AmtId,
+    ) -> Result<Vec<(u16, AllocationKeyInfo)>> {
+        let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit, false)?;
+        // Leaf ids of `amt_id` are `amt_id ‖ index`; the range also covers deeper ids
+        // (leaves of its descendant AMTs), which are filtered out.
+        let leaf_len = amt_id.len() + 1;
+        Ok(slot_alloc_view
+            .iter_range(amt_id.child(0), amt_id.prefix_successor())?
+            .filter(|(node_id, _)| node_id.len() == leaf_len)
+            .map(|(node_id, info)| (node_id[leaf_len - 1], info))
+            .collect())
+    }
+
     /// Get the commit at which the commitment of AMT `amt_id` was last updated as of
     /// `commit`, together with the commitment written there.
     ///
@@ -416,16 +447,17 @@ fn allocate_version_slot(
     loop {
         let amt_node_id = compute_amt_node_id(key_digest, depth);
         let slot_alloc = allocation_cache_db.get(&amt_node_id)?;
-        let next_index = match slot_alloc {
-            None => 0,
-            Some(x) if (x.index as usize) < KEY_SLOT_SIZE - 1 => x.index + 1,
+        let alloc_info = match slot_alloc {
+            None => AllocationKeyInfo::first(key.into()),
+            Some(x) if (x.index as usize) < KEY_SLOT_SIZE - 1 => x.with_next(key.into()),
             _ => {
                 depth += 1;
                 continue;
             }
         };
+        let next_index = alloc_info.index;
 
-        allocation_cache_db.set(amt_node_id, AllocationKeyInfo::new(next_index, key.into()));
+        allocation_cache_db.set(amt_node_id, alloc_info);
 
         return Ok(AllocatePosition {
             depth: depth as u8,

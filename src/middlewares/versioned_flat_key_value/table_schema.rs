@@ -20,6 +20,15 @@ where
     type Value: TableValue + ToOwned<Owned = Self::Value> + Clone + Eq + Encode + Decode;
 }
 
+/// Marker for keys whose `Ord` agrees with the byte order of their `Encode` output.
+///
+/// Range scans merge the pending part (a `BTreeMap` ordered by `Ord`) with the
+/// historical part (a database ordered by encoded bytes), so the two orders must
+/// coincide; in particular a key must sort before every key it is a proper prefix of.
+pub trait EncodingOrderedKey {}
+
+impl EncodingOrderedKey for Box<[u8]> {}
+
 #[derive(Clone, Copy)]
 pub struct HistoryChangeTable<T: VersionedKeyValueSchema>(T);
 

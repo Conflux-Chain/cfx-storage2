@@ -28,9 +28,34 @@ impl AmtId {
     pub fn root() -> Self {
         AmtId(ArrayVec::new())
     }
+
+    /// The id of leaf node `index` of this AMT (also the id of the child AMT
+    /// hanging below that leaf).
+    pub fn child(&self, index: u16) -> Self {
+        let mut id = *self;
+        id.0.push(index);
+        id
+    }
+
+    /// The smallest id greater than every id having `self` as a prefix, or `None`
+    /// if there is none (e.g. for the root).
+    pub fn prefix_successor(&self) -> Option<Self> {
+        let mut id = *self;
+        while let Some(last) = id.0.pop() {
+            if last < u16::MAX {
+                id.0.push(last + 1);
+                return Some(id);
+            }
+        }
+        None
+    }
 }
 
 pub type AmtNodeId = AmtId;
+
+// `Ord` (lexicographic over u16 elements, a prefix sorts first) agrees with the
+// byte order of the big-endian encoding below.
+impl crate::middlewares::table_schema::EncodingOrderedKey for AmtId {}
 
 pub fn compute_amt_node_id(digest: H256, depth: usize) -> AmtNodeId {
     let length = depth + 1;
@@ -95,6 +120,29 @@ pub mod tests {
         #[test]
         fn test_serde_keep_order((a, b) in (any::<AmtId>(), any::<AmtId>())) {
             test_utils::test_serde_keep_order(a, b)
+        }
+
+        // `[a.child(0), a.prefix_successor())` is exactly the set of ids that extend `a`.
+        #[test]
+        fn test_prefix_range(
+            a in vec(prop_oneof![Just(u16::MAX), Just(0u16), any::<u16>()], 0..=8),
+            suffix in vec(prop_oneof![Just(u16::MAX), Just(0u16), any::<u16>()], 0..=7),
+            other in vec(prop_oneof![Just(u16::MAX), Just(0u16), any::<u16>()], 0..=16),
+        ) {
+            let a = AmtId(a.as_slice().try_into().unwrap());
+            let in_range = |b: &AmtId| {
+                *b >= a.child(0) && a.prefix_successor().map_or(true, |s| *b < s)
+            };
+            let extends = |b: &AmtId| b.len() > a.len() && b[..a.len()] == a[..];
+
+            let mut b = a;
+            for x in &suffix {
+                b.0.push(*x);
+            }
+            prop_assert_eq!(in_range(&b), extends(&b));
+
+            let other = AmtId(other.as_slice().try_into().unwrap());
+            prop_assert_eq!(in_range(&other), extends(&other));
         }
 
         #[test]

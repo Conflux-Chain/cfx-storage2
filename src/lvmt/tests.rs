@@ -763,6 +763,110 @@ fn test_lvmt_commit_with_empty_changes() {
 }
 
 #[test]
+fn test_lvmt_leaf_with_multiple_keys() {
+    use crate::utils::hash::blake2s;
+
+    // Random keys almost never share a leaf (2^32 leaves at depth 1), so search for
+    // two keys whose digests share the first 4 bytes (= the depth-1 leaf id).
+    let (k_a, k_b) = {
+        let mut seen = HashMap::new();
+        (0u64..)
+            .find_map(|i| {
+                let key = u64_to_boxed_u8(i);
+                let leaf: [u8; 4] = blake2s(&key)[..4].try_into().unwrap();
+                seen.insert(leaf, key.clone()).map(|prev| (prev, key))
+            })
+            .unwrap()
+    };
+
+    let historical_path = "__test_lvmt_leaf_with_multiple_keys_historical";
+    let pending_path = "__test_lvmt_leaf_with_multiple_keys_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+
+    let historical_db = Arc::new(WrappedRocksDb::open(historical_path).unwrap());
+    let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
+    let mut db =
+        LvmtStorage::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>::new(
+            historical_db,
+            pending_db,
+        )
+        .unwrap();
+
+    let mut rng = get_rng_for_test();
+    let mut previous_commits = HashSet::new();
+    let mut novel = || gen_novel_commit_id(&mut rng, &mut previous_commits);
+    let (c1, c2, c3) = (novel(), novel(), novel());
+    let change =
+        |k: &[u8]| std::iter::once((Box::<[u8]>::from(k), Some(Box::<[u8]>::from(&b"v"[..]))));
+
+    {
+        let mut lvmt = db.as_manager().unwrap();
+        lvmt.commit(None, c1, change(&k_a), &AMT).unwrap();
+        lvmt.commit(Some(c1), c2, change(&k_b), &AMT).unwrap();
+        lvmt.commit(Some(c2), c3, std::iter::empty(), &AMT).unwrap();
+
+        let (amt_id, node_index, _) = lvmt
+            .get(c2, k_a.clone())
+            .unwrap()
+            .unwrap()
+            .allocation
+            .amt_info(&k_a);
+        assert_eq!(
+            lvmt.get_leaf_keys(c1, &amt_id, node_index)
+                .unwrap()
+                .unwrap()
+                .keys(),
+            &[k_a.clone()]
+        );
+        assert_eq!(
+            lvmt.get_leaf_keys(c2, &amt_id, node_index)
+                .unwrap()
+                .unwrap()
+                .keys(),
+            &[k_a.clone(), k_b.clone()]
+        );
+        let scanned = lvmt.get_amt_slot_keys(c2, &amt_id).unwrap();
+        assert_eq!(scanned.len(), 1);
+        assert_eq!(scanned[0].0, node_index);
+        assert_eq!(scanned[0].1.keys(), &[k_a.clone(), k_b.clone()]);
+        for c in [c1, c2, c3] {
+            lvmt.check_consistency(c, &AMT).unwrap();
+        }
+    }
+
+    // The same lookups through the historical part.
+    db.confirmed_pending_to_history_with_commit_id(c3).unwrap();
+    {
+        let lvmt = db.as_manager().unwrap();
+        let (amt_id, node_index, _) = lvmt
+            .get(c2, k_a.clone())
+            .unwrap()
+            .unwrap()
+            .allocation
+            .amt_info(&k_a);
+        assert_eq!(
+            lvmt.get_leaf_keys(c1, &amt_id, node_index)
+                .unwrap()
+                .unwrap()
+                .keys(),
+            &[k_a.clone()]
+        );
+        assert_eq!(
+            lvmt.get_amt_slot_keys(c2, &amt_id).unwrap()[0].1.keys(),
+            &[k_a.clone(), k_b.clone()]
+        );
+        for c in [c1, c2, c3] {
+            lvmt.check_consistency(c, &AMT).unwrap();
+        }
+    }
+
+    drop(db);
+    clear_dir(historical_path);
+    clear_dir(pending_path);
+}
+
+#[test]
 fn test_lvmt_last_modified() {
     use super::types::AmtId;
 
@@ -1024,6 +1128,48 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
             let node_map = slot_versions.entry(amt_id).or_insert_with(BTreeMap::new);
             let slot_map = node_map.entry(node_index).or_insert_with(BTreeMap::new);
             slot_map.insert(slot_index, version);
+        }
+
+        // G1: every key is recorded in the slot it is allocated to ...
+        for (key, lvmt_value) in key_value_view.iter()? {
+            let (amt_id, node_index, slot_index) = lvmt_value.allocation.amt_info(&key);
+            let info = self.get_leaf_keys(commit, &amt_id, node_index)?.unwrap();
+            assert_eq!(
+                info.keys()[slot_index as usize],
+                key,
+                "Key missing from its slot"
+            );
+        }
+        // ... and every recorded key is allocated to that slot.
+        let mut leaves_by_amt: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (amt_node_id, alloc_key_info) in slot_alloc_view.iter()? {
+            assert_eq!(
+                alloc_key_info.keys().len(),
+                alloc_key_info.index as usize + 1
+            );
+            let mut amt_id = amt_node_id;
+            let node_index = amt_id.pop().unwrap();
+            for (slot_index, key) in alloc_key_info.keys().iter().enumerate() {
+                let lvmt_value = key_value_view.get(key)?.unwrap();
+                assert_eq!(
+                    lvmt_value.allocation.amt_info(key),
+                    (amt_id, node_index, slot_index as u8),
+                    "Recorded key not allocated to its slot"
+                );
+            }
+            leaves_by_amt
+                .entry(amt_id)
+                .or_default()
+                .push((node_index, alloc_key_info));
+        }
+        // The prefix scan of an AMT returns exactly its leaves.
+        for (amt_id, mut leaves) in leaves_by_amt {
+            leaves.sort_by_key(|(node_index, _)| *node_index);
+            assert_eq!(
+                self.get_amt_slot_keys(commit, &amt_id)?,
+                leaves,
+                "Prefix scan mismatch"
+            );
         }
 
         // Gather allocated slots for keys, in another way
