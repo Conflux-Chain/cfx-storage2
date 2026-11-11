@@ -763,6 +763,136 @@ fn test_lvmt_commit_with_empty_changes() {
 }
 
 #[test]
+fn test_lvmt_last_modified() {
+    use super::types::AmtId;
+
+    let historical_path = "__test_lvmt_last_modified_historical";
+    let pending_path = "__test_lvmt_last_modified_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+
+    let historical_db = Arc::new(WrappedRocksDb::open(historical_path).unwrap());
+    let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
+    let mut db =
+        LvmtStorage::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>::new(
+            historical_db,
+            pending_db,
+        )
+        .unwrap();
+
+    let mut rng = get_rng_for_test();
+    let mut previous_commits = HashSet::new();
+    let mut novel = || gen_novel_commit_id(&mut rng, &mut previous_commits);
+    let (c1, c2, c3, c2b, c4) = (novel(), novel(), novel(), novel(), novel());
+    let (k1, k2, k_none) = (u64_to_boxed_u8(1), u64_to_boxed_u8(2), u64_to_boxed_u8(99));
+
+    // c1 -> c2 -> c3 (empty), and a fork c1 -> c2b
+    {
+        let mut lvmt = db.as_manager().unwrap();
+        lvmt.commit(
+            None,
+            c1,
+            TestSetup::changes_iter(&[(1, Some(10)), (2, Some(20))]),
+            &AMT,
+        )
+        .unwrap();
+        lvmt.commit(
+            Some(c1),
+            c2,
+            TestSetup::changes_iter(&[(1, Some(11))]),
+            &AMT,
+        )
+        .unwrap();
+        lvmt.commit(Some(c2), c3, std::iter::empty(), &AMT).unwrap();
+        lvmt.commit(
+            Some(c1),
+            c2b,
+            TestSetup::changes_iter(&[(2, Some(21))]),
+            &AMT,
+        )
+        .unwrap();
+    }
+
+    let last = |lvmt: &LvmtStore<'_, '_, _>, commit, key: &[u8]| {
+        lvmt.get_key_last_modified(commit, key)
+            .unwrap()
+            .map(|(c, v)| {
+                assert_eq!(Some(v.clone()), lvmt.get(commit, key.into()).unwrap());
+                (c, v.get_value())
+            })
+    };
+    let amt_last = |lvmt: &LvmtStore<'_, '_, _>, commit, amt_id: &AmtId| {
+        lvmt.get_amt_last_modified(commit, amt_id)
+            .unwrap()
+            .map(|(c, _)| c)
+    };
+
+    // Pending part, with the current map placed at different commits: none,
+    // an ancestor of the query (c2 for c3), the query itself, and a sibling (c2b).
+    for checkout in [None, Some(c2), Some(c3), Some(c2b)] {
+        let lvmt = db.as_manager().unwrap();
+        if let Some(c) = checkout {
+            lvmt.get_state(c, true).unwrap();
+        }
+        let b = |x: u64| Some(u64_to_boxed_u8(x));
+        assert_eq!(last(&lvmt, c3, &k1), Some((c2, b(11))));
+        assert_eq!(last(&lvmt, c3, &k2), Some((c1, b(20))));
+        assert_eq!(last(&lvmt, c2, &k1), Some((c2, b(11))));
+        assert_eq!(last(&lvmt, c1, &k1), Some((c1, b(10))));
+        assert_eq!(last(&lvmt, c2b, &k1), Some((c1, b(10))));
+        assert_eq!(last(&lvmt, c2b, &k2), Some((c2b, b(21))));
+        assert_eq!(last(&lvmt, c3, &k_none), None);
+
+        // The root AMT changes in every non-empty commit.
+        assert_eq!(amt_last(&lvmt, c3, &AmtId::root()), Some(c2));
+        assert_eq!(amt_last(&lvmt, c2b, &AmtId::root()), Some(c2b));
+        lvmt.check_consistency(c3, &AMT).unwrap();
+        lvmt.check_consistency(c2b, &AMT).unwrap();
+    }
+
+    // Confirm c1, c2 to history (c3 becomes the pending root; c2b is discarded).
+    db.confirmed_pending_to_history_with_commit_id(c3).unwrap();
+    {
+        let mut lvmt = db.as_manager().unwrap();
+        let b = |x: u64| Some(u64_to_boxed_u8(x));
+        // Pending commit falling back to the latest historical version.
+        assert_eq!(last(&lvmt, c3, &k1), Some((c2, b(11))));
+        assert_eq!(last(&lvmt, c3, &k2), Some((c1, b(20))));
+        // Latest historical version (c2) and a previous one (c1).
+        assert_eq!(last(&lvmt, c2, &k1), Some((c2, b(11))));
+        assert_eq!(last(&lvmt, c2, &k2), Some((c1, b(20))));
+        assert_eq!(last(&lvmt, c1, &k1), Some((c1, b(10))));
+        assert_eq!(last(&lvmt, c1, &k2), Some((c1, b(20))));
+        assert_eq!(last(&lvmt, c1, &k_none), None);
+        assert_eq!(last(&lvmt, c2, &k_none), None);
+        assert_eq!(amt_last(&lvmt, c3, &AmtId::root()), Some(c2));
+        assert_eq!(amt_last(&lvmt, c1, &AmtId::root()), Some(c1));
+
+        // A new pending commit on top of the confirmed history.
+        lvmt.commit(
+            Some(c3),
+            c4,
+            TestSetup::changes_iter(&[(2, Some(22))]),
+            &AMT,
+        )
+        .unwrap();
+        assert_eq!(last(&lvmt, c4, &k2), Some((c4, b(22))));
+        assert_eq!(last(&lvmt, c4, &k1), Some((c2, b(11))));
+
+        // Unknown commit.
+        assert!(lvmt.get_key_last_modified(novel(), &k1).is_err());
+
+        for c in [c1, c2, c3, c4] {
+            lvmt.check_consistency(c, &AMT).unwrap();
+        }
+    }
+
+    drop(db);
+    clear_dir(historical_path);
+    clear_dir(pending_path);
+}
+
+#[test]
 fn test_lvmt_state_root() {
     use super::{types::CurvePointWithVersion, EMPTY_AUTH_CHANGE_ROOT};
 
@@ -969,6 +1099,19 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
                 .into_owned();
 
             assert_eq!(commitment, stored_commitment, "Inconsitent commitments");
+        }
+
+        // The last-modified lookup must agree with the snapshot view, and point to a
+        // known commit.
+        for (key, value) in key_value_view.iter()? {
+            let (modified_at, found) = self.get_key_last_modified(commit, &key)?.unwrap();
+            assert_eq!(found, value, "Inconsistent last-modified key value");
+            assert!(self.get_state_root(modified_at)?.is_some());
+        }
+        for (amt_id, point) in amt_node_view.iter()? {
+            let (modified_at, found) = self.get_amt_last_modified(commit, &amt_id)?.unwrap();
+            assert_eq!(found, point, "Inconsistent last-modified AMT commitment");
+            assert!(self.get_state_root(modified_at)?.is_some());
         }
 
         // The recorded state root must be recomputable from the read-only interfaces.

@@ -201,6 +201,23 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         }
     }
 
+    /// See [`get_last_modified`].
+    pub fn get_with_last_modified(
+        &self,
+        commit: &CommitID,
+        key: &T::Key,
+    ) -> Result<Option<(CommitID, Option<T::Value>)>> {
+        get_last_modified(
+            &*self.pending_part,
+            &self.commit_id_table,
+            &self.history_number_table,
+            &self.history_index_table,
+            &self.change_history_table,
+            commit,
+            key,
+        )
+    }
+
     fn get_historical_part(
         &self,
         query_version_number: HistoryNumber,
@@ -263,6 +280,23 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
             history_number_table,
             change_history_table,
         })
+    }
+
+    /// See [`get_last_modified`].
+    pub fn get_with_last_modified(
+        &self,
+        commit: &CommitID,
+        key: &T::Key,
+    ) -> Result<Option<(CommitID, Option<T::Value>)>> {
+        get_last_modified(
+            &*self.pending_part,
+            &self.commit_id_table,
+            &self.history_number_table,
+            &self.history_index_table,
+            &self.change_history_table,
+            commit,
+            key,
+        )
     }
 
     pub(crate) fn get_history_number_by_commit_id(
@@ -360,6 +394,116 @@ fn get_versioned_key_previous<'db, T: VersionedKeyValueSchema>(
                 Ok(None)
             }
         }
+    }
+}
+
+/// Like [`get_versioned_key_latest`], but also returns the history number at which
+/// the returned value was written.
+fn get_versioned_key_latest_with_version<T: VersionedKeyValueSchema>(
+    latest_version_number: HistoryNumber,
+    key: &T::Key,
+    history_index_table: &TableReader<'_, HistoryIndicesTable<T>>,
+) -> Result<Option<(HistoryNumber, Option<T::Value>)>> {
+    let range_query_key = HistoryIndexKey(key.clone(), LATEST);
+    match history_index_table.get(&range_query_key)? {
+        Some(history_indices) => Ok(Some(
+            history_indices
+                .into_owned()
+                .get_latest_value_with_version(latest_version_number)?,
+        )),
+        None => Ok(None),
+    }
+}
+
+/// Like [`get_versioned_key_previous`], but also returns the history number at which
+/// the returned value was written (the value is `None` if that change deleted the key).
+fn get_versioned_key_previous_with_version<'db, T: VersionedKeyValueSchema>(
+    query_version_number: HistoryNumber,
+    key: &T::Key,
+    history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
+    change_history_table: &KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
+) -> Result<Option<(HistoryNumber, Option<T::Value>)>> {
+    let range_query_key = HistoryIndexKey(key.clone(), query_version_number);
+    match history_index_table.iter(&range_query_key)?.next() {
+        None => Ok(None),
+        Some(Err(e)) => Err(e.into()),
+        Some(Ok((k, _))) if &k.as_ref().0 != key => Ok(None),
+        Some(Ok((k, indices))) => {
+            let HistoryIndexKey(_, end_history_number) = k.as_ref();
+            match indices
+                .as_ref()
+                .last_le(query_version_number, *end_history_number)?
+            {
+                Some(found_version_number) => Ok(Some((
+                    found_version_number,
+                    change_history_table.get_versioned_key(&found_version_number, key)?,
+                ))),
+                None => Ok(None),
+            }
+        }
+    }
+}
+
+/// Returns the commit at which `key` was last modified as of `commit`, i.e. the
+/// closest ancestor-or-self of `commit` that wrote `key`, together with the value
+/// written there (`None` if that write deleted the key).
+///
+/// Returns `Ok(None)` if `key` was never written up to `commit`, and
+/// `Err(CommitIDNotFound)` if `commit` is unknown.
+#[allow(clippy::too_many_arguments)]
+fn get_last_modified<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>(
+    pending_part: &VersionedMap<PendingKeyValueConfig<T, CommitID>, P>,
+    commit_id_table: &TableReader<'db, CommitIDSchema>,
+    history_number_table: &TableReader<'db, HistoryNumberSchema>,
+    history_index_table: &TableReader<'db, HistoryIndicesTable<T>>,
+    change_history_table: &KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
+    commit: &CommitID,
+    key: &T::Key,
+) -> Result<Option<(CommitID, Option<T::Value>)>> {
+    let history_number_of = |commit: &CommitID| -> Result<HistoryNumber> {
+        match commit_id_table.get(commit)? {
+            Some(value) => Ok(value.into_owned()),
+            None => Err(StorageError::CommitIDNotFound),
+        }
+    };
+
+    let (history_number, is_latest) = if pending_part.contains_commit_id(commit) {
+        if let Some((modified_at, value)) =
+            pending_part.get_versioned_key_with_commit(commit, key)?
+        {
+            return Ok(Some((modified_at, value.into_option())));
+        }
+        // Not modified in the pending part: fall back to the latest historical version.
+        match pending_part.get_parent_of_root() {
+            Some(latest_history_commit) => (history_number_of(&latest_history_commit)?, true),
+            None => return Ok(None),
+        }
+    } else {
+        let history_number = history_number_of(commit)?;
+        let is_latest = pending_part.get_parent_of_root() == Some(*commit);
+        (history_number, is_latest)
+    };
+
+    let found = if is_latest {
+        get_versioned_key_latest_with_version(history_number, key, history_index_table)?
+    } else {
+        get_versioned_key_previous_with_version(
+            history_number,
+            key,
+            history_index_table,
+            change_history_table,
+        )?
+    };
+
+    match found {
+        None => Ok(None),
+        Some((modified_at, value)) => match history_number_table.get(&modified_at)? {
+            Some(commit_id) => Ok(Some((commit_id.into_owned(), value))),
+            None => Err(StorageError::CorruptedHistoryIndices(format!(
+                "history number {} has no commit id",
+                modified_at
+            ))),
+        },
     }
 }
 

@@ -307,6 +307,34 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
             .get_versioned_key(commit_id, key, ancestor_cache.as_ref())
     }
 
+    /// Like [`Self::get_versioned_key`], but also returns the commit at which the
+    /// returned value was written. `None` means `key` is not modified anywhere on
+    /// the pending path from the root to `commit_id`.
+    pub fn get_versioned_key_with_commit(
+        &self,
+        commit_id: &S::CommitId,
+        key: &S::Key,
+    ) -> PendResult<Option<(S::CommitId, ValueEntry<S::Value>)>> {
+        let guard = self.current.read();
+
+        let ancestor_cache = if let Some(current) = guard.as_ref() {
+            let cached = current.get(key).map(|c| (c.commit_id, c.value.clone()));
+            if current.get_commit_id() == *commit_id {
+                return Ok(cached);
+            }
+            Some((current.get_commit_id(), cached))
+        } else {
+            None
+        };
+        drop(guard);
+
+        self.tree_with_tracker.tree.get_versioned_key_with_commit(
+            commit_id,
+            key,
+            ancestor_cache.as_ref(),
+        )
+    }
+
     // alternative method of self.get_versioned_key(),
     // but it invokes self.checkout_current(),
     // thus is only suitable for frequent commit_id

@@ -79,6 +79,31 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         Ok(None)
     }
 
+    /// Like [`Self::get_versioned_key`], but also returns the commit at which the
+    /// returned value was written, i.e. the closest ancestor-or-self of `commit_id`
+    /// that modified `key`.
+    pub fn get_versioned_key_with_commit(
+        &self,
+        commit_id: &S::CommitId,
+        key: &S::Key,
+        // (current_commit_id, (modifying commit, value) of key at current_commit_id)
+        ancestor_cache: Option<&(S::CommitId, Option<(S::CommitId, ValueEntry<S::Value>)>)>,
+    ) -> PendResult<Option<(S::CommitId, ValueEntry<S::Value>)>> {
+        let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
+        while let Some(node) = node_option {
+            if let Some((cached_commit_id, cached)) = ancestor_cache {
+                if node.get_commit_id() == *cached_commit_id {
+                    return Ok(cached.clone());
+                }
+            }
+            if let Some(value) = node.get_modified_value(key) {
+                return Ok(Some((node.get_commit_id(), value)));
+            }
+            node_option = self.get_parent_node(node);
+        }
+        Ok(None)
+    }
+
     /// This function discards the siblings of the node at `commit_id`.
     /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
     pub(super) fn discard_inner(&mut self, commit_id: S::CommitId) -> PendResult<bool> {

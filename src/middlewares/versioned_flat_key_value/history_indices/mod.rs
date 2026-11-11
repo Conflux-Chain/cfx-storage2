@@ -96,6 +96,16 @@ impl<V: Clone> HistoryIndices<V> {
     /// This can only be called when `self` is the latest record and the latest version number <= `version_number`.
     /// Returns the latest_value corresponding to the latest version, otherwise returns Error.
     pub fn get_latest_value(&self, version_number: HistoryNumber) -> Result<Option<V>> {
+        self.get_latest_value_with_version(version_number)
+            .map(|(_, value)| value)
+    }
+
+    /// Like [`Self::get_latest_value`], but also returns the latest version number,
+    /// i.e. the version at which the returned value was written.
+    pub fn get_latest_value_with_version(
+        &self,
+        version_number: HistoryNumber,
+    ) -> Result<(HistoryNumber, Option<V>)> {
         match self {
             HistoryIndices::Latest {
                 start_version_number,
@@ -106,7 +116,7 @@ impl<V: Clone> HistoryIndices<V> {
                 if latest_version_number > version_number {
                     Err(StorageError::CorruptedHistoryIndices(format!("The queried version_number {} is older than the latest {} in get_latest_value().", version_number, latest_version_number)))
                 } else {
-                    Ok(latest_value.clone())
+                    Ok((latest_version_number, latest_value.clone()))
                 }
             }
             HistoryIndices::Previous(_) => Err(StorageError::CorruptedHistoryIndices(

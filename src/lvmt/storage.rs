@@ -84,6 +84,42 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
         ))
     }
 
+    /// Get the commit at which `key` was last written as of `commit` (the closest
+    /// ancestor-or-self that wrote it), together with the value written there.
+    ///
+    /// Its auth-change tree is the one containing `key_value_hash(key, value)`.
+    /// Returns `None` if `key` was never written up to `commit`. LVMT never deletes
+    /// at the versioned-store level (a deleted key keeps an `LvmtValue` with
+    /// `value: None`), so a found entry always carries a value.
+    pub fn get_key_last_modified(
+        &self,
+        commit: CommitID,
+        key: &[u8],
+    ) -> Result<Option<(CommitID, LvmtValue)>> {
+        let key: Box<[u8]> = key.into();
+        Ok(self
+            .key_value_store
+            .get_with_last_modified(&commit, &key)?
+            .and_then(|(modified_at, value)| value.map(|value| (modified_at, value))))
+    }
+
+    /// Get the commit at which the commitment of AMT `amt_id` was last updated as of
+    /// `commit`, together with the commitment written there.
+    ///
+    /// For a non-root AMT, that commit's auth-change tree contains
+    /// `amt_change_hash(amt_id, commitment)`. Returns `None` if the AMT was never
+    /// updated up to `commit`.
+    pub fn get_amt_last_modified(
+        &self,
+        commit: CommitID,
+        amt_id: &AmtId,
+    ) -> Result<Option<(CommitID, CurvePointWithVersion)>> {
+        Ok(self
+            .amt_node_store
+            .get_with_last_modified(&commit, amt_id)?
+            .and_then(|(modified_at, value)| value.map(|value| (modified_at, value))))
+    }
+
     pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
         // dbg!(&commit, &key);
         self.get_state(commit, false)?.get(&key)
@@ -436,6 +472,19 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'd
     pub fn get_state_root(&self, commit: CommitID) -> Result<Option<StateRoot>> {
         let state_root_view = Arc::new(self.pending_persistence_backend.view::<StateRootTable>()?);
         Ok(state_root_view.get(&commit)?.map(|x| x.into_owned()))
+    }
+
+    /// See [`LvmtStore::get_key_last_modified`].
+    pub fn get_key_last_modified(
+        &self,
+        commit: CommitID,
+        key: &[u8],
+    ) -> Result<Option<(CommitID, LvmtValue)>> {
+        let key: Box<[u8]> = key.into();
+        Ok(self
+            .key_value_reader
+            .get_with_last_modified(&commit, &key)?
+            .and_then(|(modified_at, value)| value.map(|value| (modified_at, value))))
     }
 
     pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
