@@ -201,7 +201,13 @@ fn main() {
             println!("Reopening the database");
             let backend = CachedDB::open(TableName::max_index() + 1, db_dir).unwrap();
             
-            backend.warmup_latest_amt_nodes().unwrap();
+            // LVMT_SKIP_AMT_WARMUP=1 跳过 AMT 节点最新值记录的预热（缓存本身仍启用），
+            // 用于量化该预热步骤在分段历史索引下的作用
+            if std::env::var("LVMT_SKIP_AMT_WARMUP").as_deref() == Ok("1") {
+                println!("Skipping HistoryIndex(AmtNode) latest-record warmup (LVMT_SKIP_AMT_WARMUP=1)");
+            } else {
+                backend.warmup_latest_amt_nodes().unwrap();
+            }
 
             println!("Reading random accounts from the database for cache warmup...");
             let epoch_size_in_initialization = options.epoch_size;
