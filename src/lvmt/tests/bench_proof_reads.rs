@@ -14,7 +14,8 @@
 //!
 //! Other knobs (env): `BENCH_KEYS` initial keys (default 1_000_000),
 //! `BENCH_WRITES` writes per commit (1500), `BENCH_COMMITS` commits after the
-//! initial load (2300), `BENCH_NEW_PERCENT` share of writes creating a new key (10).
+//! initial load (2300), `BENCH_NEW_PERCENT` share of writes creating a new key (10),
+//! `BENCH_KEEP` (set to keep the database afterwards).
 
 use std::{collections::BTreeMap, time::Instant};
 
@@ -250,6 +251,8 @@ fn bench_root_amt_proof_reads() {
 
     drop(lvmt);
     drop(db);
-    clear_dir(&historical_path);
-    clear_dir(&pending_path);
+    if std::env::var("BENCH_KEEP").is_err() {
+        clear_dir(&historical_path);
+        clear_dir(&pending_path);
+    }
 }
