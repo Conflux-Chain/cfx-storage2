@@ -21,7 +21,8 @@
 //!
 //! Also measured: proofs at a historical Q from a stored checkpoint (512 KB of
 //! root leaf versions every 100 commits), root-AMT reads at a pending commit, the computation on a single
-//! thread, and the reads and proof of one depth-1 AMT.
+//! thread, the reads and proof of one depth-1 AMT, and value proofs end to end
+//! (`get_with_proof` and `verify_lvmt_proof`) with their anchor reads alone.
 
 use std::{collections::BTreeMap, time::Instant};
 
@@ -31,6 +32,7 @@ use super::*;
 use crate::backends::impls::kvdb_rocksdb::open_database;
 use crate::lvmt::{
     crypto::Fr,
+    proof::verify_lvmt_proof,
     types::{AmtId, KEY_SLOT_SIZE, SLOT_SIZE},
 };
 
@@ -521,6 +523,119 @@ fn bench_root_amt_proof_reads() {
     }
 
     drop(lvmt);
+
+    // ---- Value proofs, end to end (`get_with_proof` on the shared reader) ----
+    // A key of the initial load (present, depth 1) and one never written.
+    let reader = db.as_reader().unwrap();
+    let pools: Vec<(usize, rayon::ThreadPool)> = [32, 8, 1]
+        .into_iter()
+        .map(|n| {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(n)
+                .build()
+                .unwrap();
+            (n, pool)
+        })
+        .collect();
+    let present = u64_to_boxed_u8(12345);
+    let absent = u64_to_boxed_u8(u64::MAX - 1);
+    let last = chain.len() - 1;
+    let mut proof_qs = vec![
+        ("pending tip", last),
+        ("pending mid", last - 55),
+        ("history tip", tip),
+    ];
+    for back in [150, 1020, 1950] {
+        if tip >= load_commits + back {
+            proof_qs.push(("history", tip - back));
+        }
+    }
+    eprintln!(
+        "\nvalue proofs: Q | key | threads | round | get_with_proof (ms) | verify (ms) | bytes | layers"
+    );
+    for (name, q) in &proof_qs {
+        let state_root = reader.get_state_root(chain[*q]).unwrap().unwrap();
+        for (key_name, key) in [("present", &present), ("absent", &absent)] {
+            for (threads, pool) in &pools {
+                for round in 1..=2 {
+                    let t = Instant::now();
+                    let (value, proof) = pool
+                        .install(|| reader.get_with_proof(chain[*q], key, &AMT))
+                        .unwrap();
+                    let prove_ms = ms(t);
+                    let t = Instant::now();
+                    let verified = verify_lvmt_proof(&AMT, &state_root, key, &proof).unwrap();
+                    let verify_ms = ms(t);
+                    assert_eq!(verified, value);
+                    assert_eq!(value.is_some(), key_name == "present");
+                    eprintln!(
+                        "{name} chain[{q}] | {key_name} | {threads:>2} | {round} | {prove_ms:>8.1} | {verify_ms:>6.1} | {:>6} | {}",
+                        proof.to_bytes().len(),
+                        proof.layers.len()
+                    );
+                }
+            }
+        }
+    }
+
+    // The anchor reads of the present key's proof, alone: the last-modified
+    // lookups, the Merkle paths in the writing commits' auth-change trees, and the
+    // MMR proofs with the writing commits' state root parts.
+    eprintln!(
+        "\nanchors: Q | round | item | written at | last modified (ms) | Merkle path (ms) | MMR + parts (ms) | Merkle nodes | MMR siblings"
+    );
+    let depth1 = AmtId::root().child(u16::from_be_bytes(
+        crate::lvmt::types::key_digest(&present)[..2]
+            .try_into()
+            .unwrap(),
+    ));
+    for (name, q) in &proof_qs {
+        let commit = chain[*q];
+        for round in 1..=2 {
+            for item_name in ["depth-1 AMT", "key"] {
+                let t = Instant::now();
+                let (written_at, item) = if item_name == "key" {
+                    let (c, v) = reader
+                        .get_key_last_modified(commit, &present)
+                        .unwrap()
+                        .unwrap();
+                    (c, crate::lvmt::auth_changes::key_value_hash(&present, &v))
+                } else {
+                    let (c, p) = reader
+                        .get_amt_last_modified(commit, &depth1)
+                        .unwrap()
+                        .unwrap();
+                    (c, crate::lvmt::auth_changes::amt_change_hash(&depth1, &p))
+                };
+                let last_ms = ms(t);
+                let t = Instant::now();
+                let merkle = reader.prove_auth_change(written_at, &item).unwrap();
+                let merkle_ms = ms(t);
+                let t = Instant::now();
+                let siblings = if written_at == commit {
+                    None
+                } else {
+                    reader.state_root_parts(written_at).unwrap();
+                    Some(
+                        reader
+                            .prove_hroot_leaf(commit, written_at)
+                            .unwrap()
+                            .siblings
+                            .len(),
+                    )
+                };
+                let mmr_ms = ms(t);
+                let at = chain.iter().position(|c| *c == written_at).unwrap();
+                eprintln!(
+                    "{name} chain[{q}] | {round} | {item_name} | chain[{at}] | {last_ms:>6.2} | {merkle_ms:>6.2} | {mmr_ms:>6.2} | {} | {}",
+                    merkle.path.len(),
+                    siblings.map_or("-".to_string(), |n| n.to_string())
+                );
+            }
+        }
+    }
+    drop(reader);
+
     drop(db);
     if std::env::var("BENCH_KEEP").is_err() {
         clear_dir(&historical_path);
