@@ -1482,3 +1482,155 @@ fn test_lvmt_root_leaf_versions() {
     db.confirmed_pending_to_history_with_commit_id(c3).unwrap();
     check(&mut db, &[c1, c2, c3, c4]);
 }
+
+/// The invariants behind correcting a checkpoint of root leaf versions by counting
+/// AMT changes (see `AmtChangeManager::compute_amt_changes`).
+#[test]
+fn test_lvmt_root_leaf_version_counting() {
+    use super::types::{AmtId, CurvePointWithVersion, SLOT_SIZE};
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use std::collections::BTreeMap;
+
+    let historical_path = "__test_lvmt_root_leaf_version_counting_historical";
+    let pending_path = "__test_lvmt_root_leaf_version_counting_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+
+    let historical_db = Arc::new(WrappedRocksDb::open(historical_path).unwrap());
+    let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
+    let mut db =
+        LvmtStorage::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>::new(
+            historical_db,
+            pending_db,
+        )
+        .unwrap();
+
+    // 60 commits of 300 writes over a growing key space (overwrites, new keys and
+    // deletions), the first 40 confirmed.
+    let mut rng = get_rng_for_test();
+    let mut previous_commits = HashSet::new();
+    let mut value_rng = StdRng::seed_from_u64(11);
+    let mut chain: Vec<CommitID> = vec![];
+    let mut next_key = 0u64;
+    for _ in 0..60 {
+        let changes: Vec<_> = (0..300)
+            .map(|_| {
+                let k = if next_key == 0 || value_rng.gen_range(0..4) == 0 {
+                    next_key += 1;
+                    next_key - 1
+                } else {
+                    value_rng.gen_range(0..next_key)
+                };
+                let v = (value_rng.gen_range(0..10) > 0).then(|| u64_to_boxed_u8(value_rng.gen()));
+                (u64_to_boxed_u8(k), v)
+            })
+            .collect();
+        let id = gen_novel_commit_id(&mut rng, &mut previous_commits);
+        let mut lvmt = db.as_manager().unwrap();
+        lvmt.commit(chain.last().copied(), id, changes.into_iter(), &AMT)
+            .unwrap();
+        chain.push(id);
+    }
+    let confirmed = 40; // chain[..confirmed] historical
+    db.confirmed_pending_to_history_with_commit_id(chain[confirmed])
+        .unwrap();
+
+    let lvmt = db.as_manager().unwrap();
+    let versions: Vec<Vec<u64>> = chain
+        .iter()
+        .map(|c| lvmt.get_root_leaf_versions(*c).unwrap())
+        .collect();
+
+    // Per-leaf count of depth-1 AMT changes in historical commits chain[from+1..=to].
+    let changes_of = |c: usize| -> BTreeMap<u16, CurvePointWithVersion> {
+        lvmt.get_historical_amt_changes(chain[c])
+            .unwrap()
+            .into_iter()
+            .filter(|(id, _)| id.len() == 1)
+            .map(|(id, p)| (id[0], p))
+            .collect()
+    };
+    let count = |from: usize, to: usize| -> Vec<u64> {
+        let mut counts = vec![0u64; 1 << 16];
+        for c in from + 1..=to {
+            for i in changes_of(c).keys() {
+                counts[*i as usize] += 1;
+            }
+        }
+        counts
+    };
+
+    // (1) Between consecutive commits a version goes up by 0 or 1; in a historical
+    // commit, by 1 exactly for the AMTs it changed, to the version written there.
+    for c in 1..chain.len() {
+        for i in 0..1 << 16 {
+            let diff = versions[c][i] - versions[c - 1][i];
+            assert!(diff <= 1, "commit {c} leaf {i}: +{diff}");
+        }
+        if c < confirmed {
+            let changed = changes_of(c);
+            for i in 0..1 << 16 {
+                let expected = match changed.get(&(i as u16)) {
+                    Some(p) => {
+                        assert_eq!(p.version, versions[c][i]);
+                        1
+                    }
+                    None => 0,
+                };
+                assert_eq!(versions[c][i] - versions[c - 1][i], expected);
+            }
+        }
+    }
+
+    // (2) Correcting from a checkpoint C to Q in either direction.
+    for (q, c) in [(5, 30), (30, 5), (0, 39), (39, 0), (17, 18), (20, 20)] {
+        let (lo, hi) = (q.min(c), q.max(c));
+        let counts = count(lo, hi);
+        let corrected: Vec<u64> = (0..1 << 16)
+            .map(|i| {
+                if c > q {
+                    versions[c][i] - counts[i]
+                } else {
+                    versions[c][i] + counts[i]
+                }
+            })
+            .collect();
+        assert_eq!(corrected, versions[q], "Q = {q}, C = {c}");
+    }
+
+    // (3) Slot 5 of root leaf i is the version of AMT [i]: a root-AMT proof built
+    // from these versions verifies against the stored root commitment.
+    let leaf_value = |version: u64| {
+        let mut slots = [0u64; SLOT_SIZE];
+        slots[SLOT_SIZE - 1] = version;
+        amt::pack_slots(&slots).unwrap()
+    };
+    for c in [0, 20, confirmed - 1, confirmed, chain.len() - 1] {
+        let values: Vec<_> = versions[c]
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| **v > 0)
+            .map(|(i, v)| (i, leaf_value(*v)))
+            .collect();
+        let idx = values[values.len() / 2].0;
+        let proof = AMT.prove_sparse(values.iter().copied(), idx);
+        let root = lvmt.get_root_commitment(chain[c]).unwrap();
+        AMT.verify(
+            &root.point.affine(),
+            idx,
+            leaf_value(versions[c][idx]),
+            &proof,
+        )
+        .unwrap();
+        assert_eq!(
+            lvmt.get_amt_node_store()
+                .get_versioned_store(&chain[c], false)
+                .unwrap()
+                .get(&AmtId::root().child(idx as u16))
+                .unwrap()
+                .unwrap()
+                .version,
+            versions[c][idx]
+        );
+    }
+}

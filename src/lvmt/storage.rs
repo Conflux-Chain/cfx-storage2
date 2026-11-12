@@ -134,6 +134,7 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
             Some(changes) => {
                 for (amt_id, point) in changes {
                     let i = amt_id[0] as usize;
+                    debug_assert!(point.is_some(), "AMT nodes are never deleted");
                     versions[i] = point.map_or(0, |p| p.version);
                     known[i] = true;
                 }
@@ -410,7 +411,8 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
 
         // dbg!("3");
 
-        // write amt_node schema
+        // write amt_node schema. AMT nodes are only ever written, never deleted (see
+        // `AmtChangeManager::compute_amt_changes` for why historical proofs need it).
         let amt_node_updates = amt_changes.into_iter().map(|(k, v)| (k, Some(v)));
         self.amt_node_store.add_to_pending_part(
             old_commit,

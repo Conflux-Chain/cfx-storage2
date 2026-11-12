@@ -48,6 +48,24 @@ impl AmtChangeManager {
         self.record(amt_id, node_index, (SLOT_SIZE - 1) as u8);
     }
 
+    /// The new commitment and version of every AMT changed in this commit.
+    ///
+    /// # Invariants relied on by historical proofs
+    ///
+    /// Proofs at a historical version correct a checkpoint of the root leaf values
+    /// by counting AMT changes (`v(Q) = v(C) ∓ #changes`), which holds because:
+    ///
+    /// 1. An AMT's version goes up by exactly 1 in each commit that changes it, and
+    ///    only then: `self.0` is keyed by `AmtId`, so an AMT appears once per
+    ///    commit.
+    /// 2. Slot 5 of leaf `i` of AMT `a` changes by exactly 1 in the same commits
+    ///    (`record` sets it once per commit), so it equals the version of AMT
+    ///    `a ‖ i`.
+    /// 3. `AmtNodes` entries are never deleted or reset (`LvmtStore::commit` only
+    ///    writes `Some`), so `unwrap_or_default` below only applies to a new AMT.
+    ///
+    /// Checked by `test_lvmt_root_leaf_version_counting`. Anything that GCs or
+    /// recycles AMT nodes must keep these, or change the checkpoint correction.
     pub fn compute_amt_changes(
         &self,
         db: &KeyValueSnapshotRead<'_, AmtNodes>,
