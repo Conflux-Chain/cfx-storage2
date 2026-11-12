@@ -2050,6 +2050,114 @@ fn test_lvmt_commit_dry_run() {
             .check_consistency(*c, &AMT)
             .unwrap();
     }
+
+    // A pivot switch and a confirmation change no base's result: a commit's
+    // ancestors and their state roots are fixed when it is created. Pending
+    // A -> B and A -> B'; make B' the pivot (B is discarded), then confirm B'.
+    let probe = gen_changes(30);
+    let dry_on = |db: &Db, base: CommitID| {
+        db.commit_dry_run(Some(base), probe.clone().into_iter(), &AMT)
+    };
+    let mut new_commit = |db: &mut Db, parent: CommitID| {
+        let id = gen_novel_commit_id(&mut rng, &mut previous_commits);
+        db.as_manager()
+            .unwrap()
+            .commit(Some(parent), id, gen_changes(30).into_iter(), &AMT)
+            .unwrap();
+        id
+    };
+    let a = new_commit(&mut db, *main.last().unwrap());
+    let b = new_commit(&mut db, a);
+    let b2 = new_commit(&mut db, a);
+    let before: Vec<_> = [a, b, b2].iter().map(|c| dry_on(&db, *c).unwrap()).collect();
+    assert!(db.as_manager().unwrap().make_pivot(b2).unwrap());
+    assert!(dry_on(&db, b).is_err());
+    assert_eq!(dry_on(&db, a).unwrap(), before[0]);
+    assert_eq!(dry_on(&db, b2).unwrap(), before[2]);
+    db.confirmed_pending_to_history_with_commit_id(b2).unwrap();
+    assert!(dry_on(&db, b).is_err());
+    assert_eq!(dry_on(&db, a).unwrap(), before[0]);
+    assert_eq!(dry_on(&db, b2).unwrap(), before[2]);
+
+    drop(db);
+    clear_dir(historical_path);
+    clear_dir(pending_path);
+}
+
+/// The state root depends on the set of changes, not their order: two new keys in
+/// the same depth-1 AMT take their slots in key order, whichever comes first.
+#[test]
+fn test_lvmt_commit_order_independent() {
+    use ethereum_types::H256;
+    use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
+
+    type Db = LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>;
+    let historical_path = "__test_lvmt_commit_order_independent_historical";
+    let pending_path = "__test_lvmt_commit_order_independent_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+    let mut db = Db::new(
+        Arc::new(WrappedRocksDb::open(historical_path).unwrap()),
+        Arc::new(WrappedRocksDb::open(pending_path).unwrap()),
+    )
+    .unwrap();
+
+    // Keys whose digests share the first 16-bit word: same depth-1 AMT, and more
+    // than its 5 slots, so some go to depth 2.
+    let key = |tail: u8| -> Box<[u8]> {
+        let mut digest = [0u8; 32];
+        digest[31] = tail;
+        [crate::lvmt::types::TEST_DIGEST_PREFIX, &digest[..]].concat().into()
+    };
+    let changes: Vec<(Box<[u8]>, Option<Box<[u8]>>)> = (1..=8u8)
+        .map(|i| (key(i), Some(u64_to_boxed_u8(i as u64))))
+        .chain((0..40u64).map(|i| (u64_to_boxed_u8(i), Some(u64_to_boxed_u8(i)))))
+        .collect();
+    // A later duplicate of a key is ignored in every order.
+    let with_dup = |mut changes: Vec<(Box<[u8]>, Option<Box<[u8]>>)>| {
+        changes.push((key(1), Some(u64_to_boxed_u8(99))));
+        changes
+    };
+
+    let mut rng = StdRng::seed_from_u64(16);
+    let expected = db
+        .commit_dry_run(None, with_dup(changes.clone()).into_iter(), &AMT)
+        .unwrap();
+    for _ in 0..5 {
+        let mut shuffled = changes.clone();
+        shuffled.shuffle(&mut rng);
+        let dry = db
+            .commit_dry_run(None, with_dup(shuffled).into_iter(), &AMT)
+            .unwrap();
+        assert_eq!(dry, expected);
+    }
+
+    // The same for a commit on a base, and the commit itself agrees.
+    let genesis = db
+        .as_manager()
+        .unwrap()
+        .commit(None, H256::repeat_byte(1), with_dup(changes).into_iter(), &AMT)
+        .unwrap();
+    assert_eq!(genesis, expected);
+    let next: Vec<(Box<[u8]>, Option<Box<[u8]>>)> = (9..=14u8)
+        .map(|i| (key(i), Some(u64_to_boxed_u8(i as u64))))
+        .chain([(key(3), None), (u64_to_boxed_u8(5), Some(u64_to_boxed_u8(50)))])
+        .collect();
+    let mut reversed = next.clone();
+    reversed.reverse();
+    let dry = db
+        .commit_dry_run(Some(H256::repeat_byte(1)), next.clone().into_iter(), &AMT)
+        .unwrap();
+    let root = db
+        .as_manager()
+        .unwrap()
+        .commit(Some(H256::repeat_byte(1)), H256::repeat_byte(2), reversed.into_iter(), &AMT)
+        .unwrap();
+    assert_eq!(dry, root);
+    db.as_manager()
+        .unwrap()
+        .check_consistency(H256::repeat_byte(2), &AMT)
+        .unwrap();
     drop(db);
     clear_dir(historical_path);
     clear_dir(pending_path);

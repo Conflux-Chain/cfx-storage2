@@ -280,6 +280,10 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
     /// ancestors' state roots, written to the `StateRoot` table, and returned to the
     /// caller. The commit's state root is then appended to its parent's MMR.
     ///
+    /// The state root depends on the set of `changes`, not on their order: they are
+    /// sorted by key before new keys take their slots. Of a duplicated key, the
+    /// first occurrence counts.
+    ///
     /// TODO: If the historical database ever needs this information, a process can be added
     /// to copy the `AuthChange` and `StateRoot` data from the pending DB to the historical DB
     /// when a state is confirmed. Currently, there is no such requirement.
@@ -424,8 +428,8 @@ struct PreparedCommit {
 /// changed keys, the new AMT commitments, the auth-change tree, the state root and
 /// the MMR entry. The views are the parent's state (`None` for the first commit);
 /// `height` is the new commit's and `parent_peaks` the MMR peaks after the parent.
-/// Pure: the result depends on the parent and `changes` only, not on the new
-/// commit's id.
+/// Pure: the result depends on the parent and the set of `changes` only, not on
+/// their order or the new commit's id.
 fn prepare_commit(
     amt_node_view: &KeyValueSnapshotRead<AmtNodes>,
     slot_alloc_view: &KeyValueSnapshotRead<SlotAllocations>,
@@ -439,15 +443,17 @@ fn prepare_commit(
     let mut allocations = AllocationCacheDb::new(slot_alloc_view);
     let mut amt_change_manager = AmtChangeManager::default();
 
+    // Keep the first occurrence of a duplicated key, then sort by key: new keys
+    // take their slots in this order, so the state root depends on the set of
+    // changes and not on the order the caller iterates them in.
     let mut set_of_keys = HashSet::new();
+    let mut changes: Vec<_> = changes
+        .filter(|(key, _)| set_of_keys.insert(key.clone()))
+        .collect();
+    changes.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
 
     // Update version number
     for (key, value) in changes {
-        // skip the duplicated keys
-        if !set_of_keys.insert(key.clone()) {
-            continue;
-        }
-
         let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
             (old_value.allocation, old_value.version + 1)
         } else {
