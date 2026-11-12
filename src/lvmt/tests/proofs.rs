@@ -176,6 +176,11 @@ fn test_lvmt_value_proofs() {
     p.layers[3].keys[0].value.version += 1;
     assert_eq!(verify(&deep[11], &p), Err(LvmtProofError::KeyPosition(3)));
 
+    // An allocation deeper than any AMT id is rejected, not a panic.
+    let mut p = proof.clone();
+    p.layers[3].keys[0].value.allocation.depth = 31;
+    assert_eq!(verify(&deep[11], &p), Err(LvmtProofError::KeyPosition(3)));
+
     let mut p = proof.clone();
     p.layers[1].slots[4] += 1;
     assert!(matches!(

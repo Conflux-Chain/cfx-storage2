@@ -209,6 +209,10 @@ pub fn verify_lvmt_proof(
         } else {
             let mut shown = [false; KEY_SLOT_SIZE];
             for item in &layer.keys {
+                // Checked first: `amt_info` needs a depth an AMT id can hold.
+                if item.value.allocation.depth as usize != j {
+                    return Err(KeyPosition(j));
+                }
                 let (item_amt, item_leaf, slot) = item.value.allocation.amt_info(&item.key);
                 let slot = slot as usize;
                 if item_amt != amt_id
