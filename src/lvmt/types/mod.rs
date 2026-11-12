@@ -8,7 +8,9 @@ pub use allocation::{AllocatePosition, AllocationKeyInfo, KEY_SLOT_SIZE, SLOT_SI
 pub use auth_changes::{AuthChangeKey, AuthChangeNode};
 pub use curve_point::{CurvePoint, CurvePointWithVersion};
 pub use lvmt_value::LvmtValue;
-pub use node_id::{compute_amt_node_id, AmtId, AmtNodeId};
+#[cfg(test)]
+pub use node_id::TEST_DIGEST_PREFIX;
+pub use node_id::{compute_amt_node_id, key_digest, AmtId, AmtNodeId};
 
 use crate::subkey_not_support;
 subkey_not_support!(AmtId, AuthChangeKey);

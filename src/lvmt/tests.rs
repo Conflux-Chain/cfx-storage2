@@ -30,6 +30,8 @@ pub const TEST_LEVEL: usize = 16;
 
 #[cfg(test)]
 mod bench_proof_reads;
+#[cfg(test)]
+mod proofs;
 
 pub static AMT: Lazy<AmtParams<PE>> = Lazy::new(|| {
     AmtParams::from_dir_mont("./pp", TEST_LEVEL, TEST_LEVEL, CreateMode::Neither, None)

@@ -66,33 +66,60 @@ impl AuthChangeNode {
     }
 
     pub fn hash(&self) -> H256 {
-        if self.hashes.len() == 1 {
-            return self.hashes[0];
-        }
-        let height = log2_ceil(self.hashes.len());
-        let pairs = self.hashes.len() - (1 << (height - 1));
+        hash_of_entries(&self.hashes)
+    }
 
-        let mut hashes: Vec<_> = self
-            .hashes
-            .chunks_exact(2)
-            .take(pairs)
-            .map(|x| blake2s_tuple(&x[0], &x[1]))
-            .collect();
-        hashes.extend(self.hashes[pairs * 2..].iter().cloned());
+    /// The entries of the node: the item hashes of a leaf node, or the hashes of
+    /// the children of an inner node.
+    pub fn hashes(&self) -> &[H256] {
+        &self.hashes
+    }
 
-        while hashes.len() > 1 {
-            hashes = hashes
-                .chunks_exact(2)
-                .map(|x| blake2s_tuple(&x[0], &x[1]))
-                .collect();
-        }
-
-        hashes[0]
+    /// For an inner node, the child whose subtree holds `item` if the tree holds it.
+    ///
+    /// Each tick is a prefix of the first item of the next subtree, long enough to
+    /// tell it from the last item of the previous one.
+    pub fn child_for(&self, item: &H256) -> Option<usize> {
+        let ticks = self.ticks.as_ref()?;
+        Some(
+            ticks
+                .iter()
+                .take_while(|tick| item.0[..tick.len()] >= tick[..])
+                .count(),
+        )
     }
 
     pub fn is_leaf(&self) -> bool {
         self.ticks.is_none()
     }
+}
+
+/// The hash of a node with the given entries ([`AuthChangeNode::hash`]): a binary
+/// Merkle root over them, the first entries paired so that every leaf is at the
+/// same depth or one above.
+pub fn hash_of_entries(entries: &[H256]) -> H256 {
+    assert!(!entries.is_empty());
+    if entries.len() == 1 {
+        return entries[0];
+    }
+    let height = log2_ceil(entries.len());
+    let pairs = entries.len() - (1 << (height - 1));
+
+    let mut hashes: Vec<_> = entries
+        .chunks_exact(2)
+        .take(pairs)
+        .map(|x| blake2s_tuple(&x[0], &x[1]))
+        .collect();
+    hashes.extend(entries[pairs * 2..].iter().cloned());
+
+    while hashes.len() > 1 {
+        hashes = hashes
+            .chunks_exact(2)
+            .map(|x| blake2s_tuple(&x[0], &x[1]))
+            .collect();
+    }
+
+    hashes[0]
 }
 
 impl Encode for AuthChangeNode {

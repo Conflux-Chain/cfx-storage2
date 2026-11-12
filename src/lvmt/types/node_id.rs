@@ -57,6 +57,23 @@ pub type AmtNodeId = AmtId;
 // byte order of the big-endian encoding below.
 impl crate::middlewares::table_schema::EncodingOrderedKey for AmtId {}
 
+/// The digest that places `key` in the AMTs: word `j` (16 bits) of it is the key's
+/// leaf in the AMT at depth `j`.
+pub fn key_digest(key: &[u8]) -> H256 {
+    #[cfg(test)]
+    if let Some(digest) = key.strip_prefix(TEST_DIGEST_PREFIX) {
+        if digest.len() >= 32 {
+            return H256::from_slice(&digest[..32]);
+        }
+    }
+    crate::utils::hash::blake2s(key)
+}
+
+/// In tests, a key `TEST_DIGEST_PREFIX ‖ d (32 bytes) ‖ any` has digest `d`, so tests
+/// can put more keys in one leaf than hashing would.
+#[cfg(test)]
+pub const TEST_DIGEST_PREFIX: &[u8] = b"\xffLVMT-TEST-DIGEST:";
+
 pub fn compute_amt_node_id(digest: H256, depth: usize) -> AmtNodeId {
     let length = depth + 1;
     let mut data = [0u16; 16];

@@ -30,7 +30,6 @@ use crate::{
     lvmt::types::LvmtValue,
     middlewares::{KeyValueStoreBulks, VersionedStore, VersionedStoreReader},
     traits::{KeyValueStoreManager, KeyValueStoreRead},
-    utils::hash::blake2s,
 };
 use ethereum_types::H256;
 
@@ -505,7 +504,7 @@ fn allocate_version_slot(
     key: &[u8],
     allocation_cache_db: &mut AllocationCacheDb,
 ) -> Result<AllocatePosition> {
-    let key_digest = blake2s(key);
+    let key_digest = crate::lvmt::types::key_digest(key);
 
     let mut depth = 1;
     loop {
@@ -630,12 +629,12 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'd
         Ok(view.get(&commit)?.map(|x| x.into_owned()))
     }
 
-    fn mmr_entry(&self, commit: CommitID) -> Result<MmrEntry> {
+    pub(super) fn mmr_entry(&self, commit: CommitID) -> Result<MmrEntry> {
         self.get_mmr_entry(commit)?
             .ok_or(StorageError::MmrEntryNotFound(commit))
     }
 
-    fn commit_height(&self, commit: CommitID) -> Result<u64> {
+    pub(super) fn commit_height(&self, commit: CommitID) -> Result<u64> {
         self.key_value_reader
             .get_commit_height(&commit)?
             .ok_or(StorageError::CommitIDNotFound)
@@ -915,6 +914,18 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'd
 
     pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
         self.key_value_reader.query_commit_existence(commit)
+    }
+
+    pub fn proof_config(&self) -> ProofConfig {
+        self.proof_config
+    }
+
+    pub(super) fn key_value_reader(&self) -> &VersionedStoreReader<'cache, 'db, FlatKeyValue, P> {
+        &self.key_value_reader
+    }
+
+    pub(super) fn amt_node_reader(&self) -> &VersionedStoreReader<'cache, 'db, AmtNodes, P> {
+        &self.amt_node_reader
     }
 
     pub fn checkout_current(&self, commit: CommitID) -> Result<()> {

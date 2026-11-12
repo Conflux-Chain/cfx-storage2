@@ -1,8 +1,7 @@
 use super::SLOT_SIZE;
 use crate::backends::serde::{Decode, Encode};
 use crate::errors::{DecResult, DecodeError};
-use crate::lvmt::types::{compute_amt_node_id, AmtId};
-use crate::utils::hash::blake2s;
+use crate::lvmt::types::{compute_amt_node_id, key_digest, AmtId};
 use std::borrow::Cow;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13,7 +12,7 @@ pub struct AllocatePosition {
 
 impl AllocatePosition {
     pub fn amt_info(&self, key: &[u8]) -> (AmtId, u16, u8) {
-        let digest = blake2s(key);
+        let digest = key_digest(key);
         let mut amt_node_id = compute_amt_node_id(digest, self.depth as usize);
         let node_index = amt_node_id.pop().unwrap();
         let amt_id = amt_node_id;

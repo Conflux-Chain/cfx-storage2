@@ -2,7 +2,7 @@ mod key;
 mod node;
 
 pub use key::AuthChangeKey;
-pub use node::AuthChangeNode;
+pub use node::{hash_of_entries, AuthChangeNode};
 use static_assertions::const_assert;
 
 pub const MAX_NODE_SIZE_LOG: usize = 3;
