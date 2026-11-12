@@ -1,6 +1,6 @@
 use crate::{
     middlewares::versioned_flat_key_value::pending_part::pending_schema::{
-        PendingKeyValueSchema, RecoverRecord, Result as PendResult,
+        KeyValueMap, PendingKeyValueSchema, RecoverRecord, Result as PendResult,
     },
     traits::{IsCompleted, NeedNext},
     types::ValueEntry,
@@ -53,6 +53,30 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
 
         Ok(true)
+    }
+
+    /// The value as of `commit_id` of every key accepted by `filter` that is modified
+    /// on the pending path from the root to `commit_id` (the closest modification
+    /// wins). Keys not modified on that path are absent.
+    ///
+    /// Visits each node of the path once and does not touch the checked-out
+    /// current state.
+    pub fn get_path_changes(
+        &self,
+        commit_id: &S::CommitId,
+        filter: impl Fn(&S::Key) -> bool,
+    ) -> PendResult<KeyValueMap<S>> {
+        let mut changes = KeyValueMap::<S>::new();
+        let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
+        while let Some(node) = node_option {
+            for (key, RecoverRecord { value, .. }) in node.get_modifications() {
+                if filter(key) && !changes.contains_key(key) {
+                    changes.insert(key.clone(), value.clone());
+                }
+            }
+            node_option = self.get_parent_node(node);
+        }
+        Ok(changes)
     }
 
     pub fn get_versioned_key(

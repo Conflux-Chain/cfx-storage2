@@ -282,6 +282,17 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
             .iter_historical_changes(&mut accept, commit_id, key)
     }
 
+    /// See [`super::tree::Tree::get_path_changes`].
+    pub fn get_path_changes(
+        &self,
+        commit_id: &S::CommitId,
+        filter: impl Fn(&S::Key) -> bool,
+    ) -> PendResult<KeyValueMap<S>> {
+        self.tree_with_tracker
+            .tree
+            .get_path_changes(commit_id, filter)
+    }
+
     // None: pending_part not know
     // Some(None): pending_part know that this key has been deleted
     // Some(Some(value)): pending_part know this key's value

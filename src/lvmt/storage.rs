@@ -115,6 +115,38 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
         slot_alloc_view.get(&amt_id.child(node_index))
     }
 
+    /// The leaf values of the root AMT at `commit`: entry `i` is the version of the
+    /// depth-1 AMT `[i]`, i.e. slot 5 of root leaf `i` (0 if that AMT was never
+    /// written). The root AMT has no keys, so these are its whole leaf values.
+    ///
+    /// For a historical commit, one point lookup per leaf at `commit`. For a pending
+    /// commit, point lookups at the latest historical commit overlaid with the
+    /// depth-1 AMTs changed on the pending path to `commit`, read once per pending
+    /// node; the shared checked-out state is not touched.
+    pub fn get_root_leaf_versions(&self, commit: CommitID) -> Result<Vec<u64>> {
+        let pending_changes = self
+            .amt_node_store
+            .get_pending_path_changes(&commit, |amt_id| amt_id.len() == 1)?;
+        let base = match pending_changes {
+            Some(_) => self.amt_node_store.get_latest_historical_commit(),
+            None => Some(commit),
+        };
+
+        let mut versions = vec![0u64; 1 << 16];
+        if let Some(base) = base {
+            let view = self.amt_node_store.get_versioned_store(&base, false)?;
+            for (i, version) in versions.iter_mut().enumerate() {
+                if let Some(point) = view.get(&AmtId::root().child(i as u16))? {
+                    *version = point.version;
+                }
+            }
+        }
+        for (amt_id, point) in pending_changes.into_iter().flatten() {
+            versions[amt_id[0] as usize] = point.map_or(0, |p| p.version);
+        }
+        Ok(versions)
+    }
+
     /// Get the allocated key slots of every leaf of AMT `amt_id` at `commit`, as
     /// `(node_index, keys)` in increasing `node_index`. Leaves without an allocated
     /// slot are omitted.

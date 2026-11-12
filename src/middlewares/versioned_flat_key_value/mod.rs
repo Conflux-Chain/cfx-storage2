@@ -137,6 +137,36 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         self.pending_part.get_height_of_root()
     }
 
+    /// The latest historical commit (the parent of the pending root), if any.
+    pub fn get_latest_historical_commit(&self) -> Option<CommitID> {
+        self.pending_part.get_parent_of_root()
+    }
+
+    /// If `commit` is in the pending part, returns the value as of `commit` (`None`
+    /// if deleted) of every key accepted by `filter` that is modified on the pending
+    /// path from the pending root to `commit`. Keys not in the result have their
+    /// value at [`Self::get_latest_historical_commit`].
+    ///
+    /// Unlike a pending [`SnapshotView`], this does not check out `commit`, so it
+    /// leaves the shared current state alone. Returns `Ok(None)` if `commit` is not
+    /// in the pending part.
+    pub fn get_pending_path_changes(
+        &self,
+        commit: &CommitID,
+        filter: impl Fn(&T::Key) -> bool,
+    ) -> Result<Option<HashMap<T::Key, Option<T::Value>>>> {
+        if !self.pending_part.contains_commit_id(commit) {
+            return Ok(None);
+        }
+        let changes = self.pending_part.get_path_changes(commit, filter)?;
+        Ok(Some(
+            changes
+                .into_iter()
+                .map(|(key, value)| (key, value.into_option()))
+                .collect(),
+        ))
+    }
+
     pub fn checkout_current(&self, commit: CommitID) -> Result<()> {
         Ok(self.pending_part.checkout_current(commit)?)
     }

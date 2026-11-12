@@ -1401,3 +1401,84 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         Ok(())
     }
 }
+
+#[test]
+fn test_lvmt_root_leaf_versions() {
+    use super::types::AmtId;
+
+    let historical_path = "__test_lvmt_root_leaf_versions_historical";
+    let pending_path = "__test_lvmt_root_leaf_versions_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+
+    let historical_db = Arc::new(WrappedRocksDb::open(historical_path).unwrap());
+    let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
+    let mut db =
+        LvmtStorage::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>::new(
+            historical_db,
+            pending_db,
+        )
+        .unwrap();
+
+    let mut rng = get_rng_for_test();
+    let mut previous_commits = HashSet::new();
+    let mut novel = || gen_novel_commit_id(&mut rng, &mut previous_commits);
+    let (c1, c2, c3, c4, c2b, c3b) = (novel(), novel(), novel(), novel(), novel(), novel());
+
+    // c1 -> c2 -> c3 -> c4 (empty), and a fork c1 -> c2b -> c3b. Keys overlap
+    // between commits, so some depth-1 AMTs change several times on a path.
+    let changes = |range: std::ops::Range<u64>, value: u64| {
+        range
+            .map(move |k| (u64_to_boxed_u8(k), Some(u64_to_boxed_u8(value))))
+            .collect::<Vec<_>>()
+    };
+    {
+        let mut lvmt = db.as_manager().unwrap();
+        let mut commit = |old, new, ch: Vec<_>| {
+            lvmt.commit(old, new, ch.into_iter(), &AMT).unwrap();
+        };
+        commit(None, c1, changes(0..300, 1));
+        commit(Some(c1), c2, changes(200..500, 2));
+        commit(Some(c2), c3, changes(0..100, 3));
+        commit(Some(c3), c4, vec![]);
+        commit(Some(c1), c2b, changes(250..400, 4));
+        commit(Some(c2b), c3b, changes(600..700, 5));
+    }
+
+    let check = |db: &mut LvmtStorage<_, _>, commits: &[CommitID]| {
+        // With the current map at different commits, which the overlay must ignore.
+        for checkout in [None, Some(c2), Some(c3b)] {
+            let lvmt = db.as_manager().unwrap();
+            if let Some(c) = checkout {
+                if lvmt
+                    .get_amt_node_store()
+                    .query_commit_existence(&c)
+                    .unwrap()
+                {
+                    lvmt.get_state(c, true).unwrap();
+                }
+            }
+            for &c in commits {
+                let view = lvmt
+                    .get_amt_node_store()
+                    .get_versioned_store(&c, false)
+                    .unwrap();
+                let expected: Vec<u64> = (0..=u16::MAX)
+                    .map(|i| {
+                        view.get(&AmtId::root().child(i))
+                            .unwrap()
+                            .map_or(0, |p| p.version)
+                    })
+                    .collect();
+                assert_eq!(lvmt.get_root_leaf_versions(c).unwrap(), expected);
+            }
+        }
+    };
+
+    // All pending, with a fork.
+    check(&mut db, &[c1, c2, c3, c4, c2b, c3b]);
+
+    // c1, c2 historical (c2 the latest), c3, c4 pending; the fork is dropped.
+    db.confirmed_pending_to_history_with_commit_id(c3).unwrap();
+    check(&mut db, &[c1, c2, c3, c4]);
+}

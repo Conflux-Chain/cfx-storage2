@@ -187,6 +187,7 @@ fn bench_root_amt_proof_reads() {
             let by_range = read_range(q);
             let range_ms = ms(t);
             assert_eq!(by_point, by_range);
+            assert_eq!(by_point, lvmt.get_root_leaf_versions(chain[q]).unwrap());
 
             let values: Vec<(usize, Fr)> = by_point
                 .iter()
@@ -305,10 +306,20 @@ fn bench_root_amt_proof_reads() {
             let checked_out = read_point(q);
             let read_ms = ms(t);
             assert_eq!(walked, checked_out);
+
+            // History tip + the changes on the pending path, without a checkout.
+            amt_nodes.checkout_current(chain[pending_root]).unwrap();
+            let t = Instant::now();
+            let overlaid = lvmt.get_root_leaf_versions(chain[q]).unwrap();
+            let overlay_ms = ms(t);
+            assert_eq!(walked, overlaid);
             if round == 1 {
                 check_root_proof(q, &checked_out);
             }
             eprintln!("{name} chain[{q}] | {round} | - | {walk_ms:.1} (walk from Q)");
+            eprintln!(
+                "{name} chain[{q}] | {round} | - | {overlay_ms:.1} (history tip + pending path changes)"
+            );
             eprintln!(
                 "{name} chain[{q}] | {round} | {checkout_ms:.1} | {read_ms:.1} (after checkout)"
             );
