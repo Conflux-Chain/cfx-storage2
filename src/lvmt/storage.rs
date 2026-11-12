@@ -309,81 +309,23 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         } else {
             (None, None, None)
         };
-        // dbg!("2");
-
-        let mut key_value_changes = vec![];
-        let mut allocations = AllocationCacheDb::new(&slot_alloc_view);
-        let mut amt_change_manager = AmtChangeManager::default();
-
-        let mut set_of_keys = HashSet::new();
-
-        // Update version number
-        for (key, value) in changes {
-            // skip the duplicated keys
-            if !set_of_keys.insert(key.clone()) {
-                continue;
-            }
-
-            let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
-                (old_value.allocation, old_value.version + 1)
-            } else {
-                let allocation = allocate_version_slot(&key, &mut allocations)?;
-                (allocation, ALLOC_START_VERSION)
-            };
-
-            amt_change_manager.record_with_allocation(allocation, &key);
-
-            key_value_changes.push((
-                key,
-                LvmtValue {
-                    allocation,
-                    version,
-                    value,
-                },
-            ));
-        }
-
-        let amt_changes = amt_change_manager.compute_amt_changes(&amt_node_view, pp)?;
-
-        // Update auth changes
-        let auth_changes = {
-            let auth_change_iter = amt_changes
-                .iter()
-                .filter(|&(amt_id, curve_point)| (!amt_id.is_empty()))
-                .map(|(amt_id, curve_point)| amt_change_hash(amt_id, curve_point));
-            let key_value_iter = key_value_changes
-                .iter()
-                .map(|(key, value)| key_value_hash(key, value));
-
-            let hashes = key_value_iter.chain(auth_change_iter).collect();
-            process_dump_items(hashes)
-        };
-
-        // The MMR of the ancestors: the parent's entry holds the peaks over the state
-        // roots at heights `0..=height(parent)`.
-        let (height, parent_peaks) = match old_commit {
-            Some(old) => {
-                let reader = self.reader();
-                (reader.commit_height(old)? + 1, reader.mmr_entry(old)?.peaks)
-            }
-            None => (0, vec![]),
-        };
-        let hroot = bag_peaks(height, &parent_peaks);
-
-        // Compute the state root. Any change propagates to the root AMT, so the root
-        // commitment is in `amt_changes` unless this commit changes nothing; then it
-        // is inherited from the parent.
-        let state_root = {
-            let root_commitment = match amt_changes.iter().find(|(id, _)| id.is_empty()) {
-                Some((_, point)) => point.clone(),
-                None => amt_node_view.get(&AmtId::root())?.unwrap_or_default(),
-            };
-            let auth_change_root = auth_changes
-                .get(&AuthChangeKey::root())
-                .map_or(EMPTY_AUTH_CHANGE_ROOT, |node| node.hash());
-            compute_state_root(&root_commitment, &auth_change_root, &hroot)
-        };
-        let mmr_entry = MmrEntry::append(&parent_peaks, height, &state_root);
+        let (height, parent_peaks) = self.reader().mmr_parent(old_commit)?;
+        let PreparedCommit {
+            key_value_changes,
+            allocations,
+            amt_changes,
+            auth_changes,
+            state_root,
+            mmr_entry,
+        } = prepare_commit(
+            &amt_node_view,
+            &slot_alloc_view,
+            &key_value_view,
+            height,
+            &parent_peaks,
+            changes,
+            pp,
+        )?;
 
         // Write to the pending part of db.
         // TODO: Write to the history part is beyond the range of LvmtStore.
@@ -414,10 +356,7 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         )?;
 
         // write slot_alloc schema
-        let slot_alloc_updates = allocations
-            .into_changes()
-            .into_iter()
-            .map(|(k, v)| (k, Some(v)));
+        let slot_alloc_updates = allocations.into_iter().map(|(k, v)| (k, Some(v)));
         self.slot_alloc_store.add_to_pending_part(
             old_commit,
             new_commit,
@@ -469,6 +408,105 @@ pub(super) fn delete_discarded_commit_rows<P: DatabaseTrait<PendingTableName>>(
         )?;
     }
     Ok(())
+}
+
+/// What a commit writes, computed from the parent's state without writing.
+struct PreparedCommit {
+    key_value_changes: Vec<(Box<[u8]>, LvmtValue)>,
+    allocations: HashMap<AmtNodeId, AllocationKeyInfo>,
+    amt_changes: Vec<(AmtId, CurvePointWithVersion)>,
+    auth_changes: std::collections::BTreeMap<AuthChangeKey, AuthChangeNode>,
+    state_root: StateRoot,
+    mmr_entry: MmrEntry,
+}
+
+/// The computation of [`LvmtStore::commit`]: versions and slot allocations of the
+/// changed keys, the new AMT commitments, the auth-change tree, the state root and
+/// the MMR entry. The views are the parent's state (`None` for the first commit);
+/// `height` is the new commit's and `parent_peaks` the MMR peaks after the parent.
+/// Pure: the result depends on the parent and `changes` only, not on the new
+/// commit's id.
+fn prepare_commit(
+    amt_node_view: &KeyValueSnapshotRead<AmtNodes>,
+    slot_alloc_view: &KeyValueSnapshotRead<SlotAllocations>,
+    key_value_view: &KeyValueSnapshotRead<FlatKeyValue>,
+    height: u64,
+    parent_peaks: &[H256],
+    changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
+    pp: &AmtParams<PE>,
+) -> Result<PreparedCommit> {
+    let mut key_value_changes = vec![];
+    let mut allocations = AllocationCacheDb::new(slot_alloc_view);
+    let mut amt_change_manager = AmtChangeManager::default();
+
+    let mut set_of_keys = HashSet::new();
+
+    // Update version number
+    for (key, value) in changes {
+        // skip the duplicated keys
+        if !set_of_keys.insert(key.clone()) {
+            continue;
+        }
+
+        let (allocation, version) = if let Some(old_value) = key_value_view.get(&key)? {
+            (old_value.allocation, old_value.version + 1)
+        } else {
+            let allocation = allocate_version_slot(&key, &mut allocations)?;
+            (allocation, ALLOC_START_VERSION)
+        };
+
+        amt_change_manager.record_with_allocation(allocation, &key);
+
+        key_value_changes.push((
+            key,
+            LvmtValue {
+                allocation,
+                version,
+                value,
+            },
+        ));
+    }
+
+    let amt_changes = amt_change_manager.compute_amt_changes(amt_node_view, pp)?;
+
+    // Update auth changes
+    let auth_changes = {
+        let auth_change_iter = amt_changes
+            .iter()
+            .filter(|&(amt_id, _)| (!amt_id.is_empty()))
+            .map(|(amt_id, curve_point)| amt_change_hash(amt_id, curve_point));
+        let key_value_iter = key_value_changes
+            .iter()
+            .map(|(key, value)| key_value_hash(key, value));
+
+        let hashes = key_value_iter.chain(auth_change_iter).collect();
+        process_dump_items(hashes)
+    };
+
+    // Compute the state root. Any change propagates to the root AMT, so the root
+    // commitment is in `amt_changes` unless this commit changes nothing; then it
+    // is inherited from the parent.
+    let hroot = bag_peaks(height, parent_peaks);
+    let state_root = {
+        let root_commitment = match amt_changes.iter().find(|(id, _)| id.is_empty()) {
+            Some((_, point)) => point.clone(),
+            None => amt_node_view.get(&AmtId::root())?.unwrap_or_default(),
+        };
+        let auth_change_root = auth_changes
+            .get(&AuthChangeKey::root())
+            .map_or(EMPTY_AUTH_CHANGE_ROOT, |node| node.hash());
+        compute_state_root(&root_commitment, &auth_change_root, &hroot)
+    };
+    let mmr_entry = MmrEntry::append(parent_peaks, height, &state_root);
+
+    Ok(PreparedCommit {
+        key_value_changes,
+        allocations: allocations.into_changes(),
+        amt_changes,
+        auth_changes,
+        state_root,
+        mmr_entry,
+    })
 }
 
 struct AllocationCacheDb<'db> {
@@ -918,6 +956,47 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'd
 
     pub fn proof_config(&self) -> ProofConfig {
         self.proof_config
+    }
+
+    /// The new commit's height and the MMR peaks after its parent `parent`.
+    pub(super) fn mmr_parent(&self, parent: Option<CommitID>) -> Result<(u64, Vec<H256>)> {
+        // The parent's entry holds the peaks over the state roots at heights
+        // `0..=height(parent)`.
+        Ok(match parent {
+            Some(old) => (self.commit_height(old)? + 1, self.mmr_entry(old)?.peaks),
+            None => (0, vec![]),
+        })
+    }
+
+    /// The state root [`LvmtStore::commit`] would return for `changes` on top of
+    /// `base`, without writing anything or checking out `base`. The state root does
+    /// not depend on the new commit's id, so none is taken: committing the same
+    /// `changes` on `base` later under any id returns this value.
+    pub fn commit_dry_run(
+        &self,
+        base: Option<CommitID>,
+        changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
+        pp: &AmtParams<PE>,
+    ) -> Result<StateRoot> {
+        let (height, parent_peaks) = self.mmr_parent(base)?;
+        let (amt_node_view, slot_alloc_view, key_value_view) = match base {
+            Some(base) => (
+                Some(self.amt_node_reader.get_versioned_store(&base, false)?),
+                Some(self.slot_alloc_reader.get_versioned_store(&base, false)?),
+                Some(self.key_value_reader.get_versioned_store(&base, false)?),
+            ),
+            None => (None, None, None),
+        };
+        Ok(prepare_commit(
+            &amt_node_view,
+            &slot_alloc_view,
+            &key_value_view,
+            height,
+            &parent_peaks,
+            changes,
+            pp,
+        )?
+        .state_root)
     }
 
     pub(super) fn key_value_reader(&self) -> &VersionedStoreReader<'cache, 'db, FlatKeyValue, P> {

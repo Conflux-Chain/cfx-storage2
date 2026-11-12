@@ -1946,3 +1946,111 @@ fn test_lvmt_discarded_commit_rows() {
             .unwrap();
     }
 }
+
+/// `commit_dry_run` returns the state root `commit` then returns for the same base
+/// and changes, under any commit id, and leaves the storage as it was.
+#[test]
+fn test_lvmt_commit_dry_run() {
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+
+    type Db = LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>;
+    let historical_path = "__test_lvmt_commit_dry_run_historical";
+    let pending_path = "__test_lvmt_commit_dry_run_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+    let historical_db = Arc::new(WrappedRocksDb::open(historical_path).unwrap());
+    let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
+    let mut db = Db::new(historical_db, pending_db).unwrap();
+
+    let mut rng = get_rng_for_test();
+    let mut previous_commits = HashSet::new();
+    let mut value_rng = StdRng::seed_from_u64(15);
+    let mut gen_changes = |n: usize| -> Vec<(Box<[u8]>, Option<Box<[u8]>>)> {
+        let mut changes: Vec<_> = (0..n)
+            .map(|_| {
+                let k: u64 = value_rng.gen_range(0..200);
+                let v = (value_rng.gen_range(0..5) > 0).then(|| u64_to_boxed_u8(value_rng.gen()));
+                (u64_to_boxed_u8(k), v)
+            })
+            .collect();
+        // A duplicated key: the first occurrence counts, in both.
+        if let Some(first) = changes.first().cloned() {
+            changes.push((first.0, Some(u64_to_boxed_u8(7))));
+        }
+        changes
+    };
+    // Dry-run twice, then commit under a fresh id: all three state roots agree.
+    let mut log: Vec<(
+        Option<CommitID>,
+        Vec<(Box<[u8]>, Option<Box<[u8]>>)>,
+        CommitID,
+    )> = vec![];
+    let mut dry_then_commit =
+        |db: &mut Db, base: Option<CommitID>, changes: Vec<(Box<[u8]>, Option<Box<[u8]>>)>| {
+            let dry = db
+                .commit_dry_run(base, changes.clone().into_iter(), &AMT)
+                .unwrap();
+            let again = db
+                .commit_dry_run(base, changes.clone().into_iter(), &AMT)
+                .unwrap();
+            assert_eq!(dry, again);
+            let id = gen_novel_commit_id(&mut rng, &mut previous_commits);
+            assert!(!db.as_reader().unwrap().query_commit_existence(&id).unwrap());
+            let root = db
+                .as_manager()
+                .unwrap()
+                .commit(base, id, changes.clone().into_iter(), &AMT)
+                .unwrap();
+            assert_eq!(dry, root);
+            log.push((base, changes, id));
+            id
+        };
+
+    // The first commit (genesis): dry-run, then commit with base `None`.
+    let genesis = dry_then_commit(&mut db, None, gen_changes(30));
+    let mut main = vec![genesis];
+    for i in 0..12 {
+        let changes = if i == 5 { vec![] } else { gen_changes(30) };
+        let parent = *main.last().unwrap();
+        main.push(dry_then_commit(&mut db, Some(parent), changes));
+    }
+    // A fork, then a dry-run on the main chain's tip while the fork is checked out.
+    let fork = dry_then_commit(&mut db, Some(main[6]), gen_changes(30));
+    db.as_manager().unwrap().checkout_current(fork).unwrap();
+    let tip = *main.last().unwrap();
+    main.push(dry_then_commit(&mut db, Some(tip), gen_changes(30)));
+
+    // Replayed on bases now in the historical part (the tip and older) or still
+    // pending: the state roots recorded at commit time.
+    db.confirmed_pending_to_history_with_commit_id(main[10])
+        .unwrap();
+    for (base, changes, id) in log.iter().filter(|(_, _, id)| *id != fork) {
+        let dry = db
+            .commit_dry_run(*base, changes.clone().into_iter(), &AMT)
+            .unwrap();
+        let recorded = db
+            .as_reader()
+            .unwrap()
+            .get_state_root(*id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(dry, recorded);
+    }
+
+    // The fork was discarded by the confirmation.
+    assert!(db
+        .as_reader()
+        .unwrap()
+        .get_state_root(fork)
+        .unwrap()
+        .is_none());
+    for c in &main {
+        db.as_manager()
+            .unwrap()
+            .check_consistency(*c, &AMT)
+            .unwrap();
+    }
+    drop(db);
+    clear_dir(historical_path);
+    clear_dir(pending_path);
+}

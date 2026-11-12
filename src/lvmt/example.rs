@@ -454,6 +454,17 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 }
 
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
+    /// See [`LvmtStoreReader::commit_dry_run`]: the state root a commit of
+    /// `changes` on `base` would get, with a shared borrow and no writes.
+    pub fn commit_dry_run(
+        &self,
+        base: Option<CommitID>,
+        changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
+        pp: &amt::AmtParams<super::crypto::PE>,
+    ) -> Result<super::StateRoot> {
+        self.as_reader()?.commit_dry_run(base, changes, pp)
+    }
+
     pub fn proof_config(&self) -> ProofConfig {
         self.proof_config
     }
