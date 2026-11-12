@@ -1,5 +1,6 @@
 mod amt_change_manager;
 mod auth_changes;
+mod checkpoint;
 pub mod crypto;
 
 #[cfg(fuzzing)]
@@ -16,6 +17,7 @@ pub mod table_schema;
 pub mod tests;
 pub mod types;
 
+pub use checkpoint::ProofConfig;
 pub use example::LvmtStorage;
 pub use snapshot::LvmtSnapshot;
 pub use state_root::{compute_state_root, StateRoot, EMPTY_AUTH_CHANGE_ROOT};

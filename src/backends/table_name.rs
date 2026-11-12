@@ -53,13 +53,15 @@ pub enum HistoricalTableName {
     HistoryNumber,
     HistoryChange(VersionedKVName),
     HistoryIndex(VersionedKVName),
+    /// Root AMT leaf versions stored every few historical commits (LVMT proofs).
+    RootLeafCheckpoint,
 }
 
 type AmtHistoryKey = HistoryIndexKey<<AmtNodes as VersionedKeyValueSchema>::Key>;
 
 impl TableNameTrait for HistoricalTableName {
     fn num_tables() -> u32 {
-        8
+        9
     }
 
     fn get_cache_size_for_col(cache_any: &dyn Any, col_id: u32) -> String {
@@ -157,6 +159,7 @@ impl From<HistoricalTableName> for u32 {
             HistoryIndex(AmtNode) => 5,
             HistoryChange(SlotAllocation) => 6,
             HistoryIndex(SlotAllocation) => 7,
+            RootLeafCheckpoint => 8,
         }
     }
 }
@@ -175,6 +178,7 @@ impl TryFrom<u32> for HistoricalTableName {
             5 => Ok(HistoryIndex(AmtNode)),
             6 => Ok(HistoryChange(SlotAllocation)),
             7 => Ok(HistoryIndex(SlotAllocation)),
+            8 => Ok(RootLeafCheckpoint),
             _ => Err(()),
         }
     }
@@ -192,6 +196,7 @@ impl From<HistoricalTableName> for &'static str {
             HistoryIndex(AmtNode) => "amt_node_history_index",
             HistoryChange(SlotAllocation) => "slot_alloc_change_history",
             HistoryIndex(SlotAllocation) => "slot_alloc_history_index",
+            RootLeafCheckpoint => "root_leaf_checkpoint",
         }
     }
 }

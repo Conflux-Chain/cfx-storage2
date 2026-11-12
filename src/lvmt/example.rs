@@ -1,14 +1,14 @@
-use std::{fs, path::Path, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, fs, path::Path, sync::Arc};
 
 use crate::{
     backends::{
         impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, PendingTableName,
-        TableRead,
+        TableRead, WriteSchemaTrait,
     },
     errors::Result,
     middlewares::{
-        confirm_ids_to_history, confirm_maps_to_history, history_number_to_height,
-        primitives_clear_pending_schema, primitives_gc_until_height,
+        confirm_ids_to_history, confirm_maps_to_history, height_to_history_number,
+        history_number_to_height, primitives_clear_pending_schema, primitives_gc_until_height,
         primitives_initialize_empty_schema, primitives_recover_schema,
         primitives_verify_no_newer_records, primitives_verify_schema_is_empty, CommitID,
         HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig, TreeWithTracker,
@@ -19,9 +19,12 @@ use crate::{
 
 use super::{
     auth_changes::AuthChangeTable,
+    checkpoint::{ProofConfig, RootLeafCheckpointTable, RootLeafVersions},
     storage::{LvmtStore, LvmtStoreReader},
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
+    types::{AmtId, CurvePointWithVersion},
 };
+use crate::types::ValueEntry;
 
 pub struct LvmtStorage<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> {
     pub(super) historical_db: Arc<D>,
@@ -33,6 +36,8 @@ pub struct LvmtStorage<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<P
     pub(super) slot_alloc_cache: VersionedStoreCache<SlotAllocations, P>,
 
     last_gc_height: u64,
+
+    proof_config: ProofConfig,
 }
 
 impl LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>> {
@@ -212,6 +217,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             amt_node_cache,
             slot_alloc_cache,
             last_gc_height: 0,
+            proof_config: ProofConfig::default(),
         })
     }
 
@@ -319,6 +325,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             amt_node_cache,
             slot_alloc_cache,
             last_gc_height: 0,
+            proof_config: ProofConfig::default(),
         })
     }
 
@@ -441,6 +448,27 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 }
 
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
+    pub fn proof_config(&self) -> ProofConfig {
+        self.proof_config
+    }
+
+    /// Sets the knobs of the historical proof reads. Changing the checkpoint
+    /// interval of an existing database is allowed: checkpoints at the old interval
+    /// are still used while they exist, and missing ones only make reads slower.
+    ///
+    /// # Panics
+    ///
+    /// If `checkpoint_interval` is zero.
+    pub fn set_proof_config(&mut self, config: ProofConfig) {
+        assert!(
+            config.checkpoint_interval > 0,
+            "checkpoint interval must be positive"
+        );
+        self.proof_config = config;
+    }
+}
+
+impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
     /// Creates a read-only view of the storage.
     ///
     /// Unlike [`as_manager`], this only requires `&self`, enabling concurrent
@@ -467,12 +495,16 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         let auth_changes =
             KeyValueStoreBulks::new(Arc::new(self.pending_db.view::<AuthChangeTable>()?));
 
+        let checkpoints = self.historical_db.view::<RootLeafCheckpointTable>()?;
+
         Ok(LvmtStore::new(
             self.pending_db.clone(),
             key_value_store,
             amt_node_store,
             slot_alloc_store,
             auth_changes,
+            checkpoints,
+            self.proof_config,
         ))
     }
 }
@@ -537,6 +569,11 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         &mut self,
         new_root_commit_id: CommitID,
     ) -> Result<()> {
+        // Root leaf versions at the latest historical commit, if the path to confirm
+        // reaches a checkpoint height. Read before the pending root moves, while the
+        // latest historical commit still takes the fast lookup path.
+        let checkpoint_base = self.checkpoint_base(new_root_commit_id)?;
+
         // pending part
         let pending_write_schema = P::write_schema();
 
@@ -557,6 +594,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             assert!(key_value_confirmed_path.is_same_path(&slot_alloc_confirmed_path));
 
             let start_height = key_value_confirmed_path.start_height;
+            let new_tip_height = key_value_confirmed_path.get_new_height_of_root() - 1;
             let commit_ids = &key_value_confirmed_path.commit_ids;
 
             self.commit_to_pending_db(pending_write_schema)?;
@@ -577,6 +615,16 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
                 key_value_confirmed_path.key_value_maps,
                 &historical_write_schema,
             )?;
+            if let Some(versions) = checkpoint_base {
+                self.write_checkpoints(
+                    versions,
+                    start_height,
+                    &amt_node_confirmed_path.key_value_maps,
+                    &historical_write_schema,
+                );
+            }
+            self.prune_checkpoints(new_tip_height, &historical_write_schema)?;
+
             confirm_maps_to_history::<D, AmtNodes>(
                 self.historical_db.clone(),
                 start_height,
@@ -593,6 +641,72 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             self.commit_to_historical_db(historical_write_schema)?;
         } // else: nothing is changed and no records are in pending_write_schema, so skip directly
 
+        Ok(())
+    }
+}
+
+// Root leaf checkpoints, see [`super::checkpoint`].
+impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
+    /// The root leaf versions at the latest historical commit if confirming up to
+    /// `new_root` (exclusive) passes a checkpoint height, else `None`.
+    fn checkpoint_base(&mut self, new_root: CommitID) -> Result<Option<Vec<u64>>> {
+        let from = self.amt_node_cache.get_height_of_root();
+        let Some(to) = self.amt_node_cache.get_height_of_commit(&new_root) else {
+            return Ok(None); // `change_root` reports the error
+        };
+        let s = self.proof_config.checkpoint_interval;
+        let first = from.div_ceil(s) * s;
+        if first >= to {
+            return Ok(None);
+        }
+        Ok(Some(match self.amt_node_cache.get_parent_of_root() {
+            Some(tip) => self.as_manager()?.get_root_leaf_versions(tip)?,
+            None => vec![0; super::checkpoint::ROOT_LEAF_COUNT],
+        }))
+    }
+
+    /// Rolls `versions` forward over the confirmed commits (`maps[i]` is the AMT
+    /// changes at height `start_height + i`) and writes a checkpoint at each
+    /// checkpoint height.
+    fn write_checkpoints(
+        &self,
+        mut versions: Vec<u64>,
+        start_height: u64,
+        maps: &nonempty::NonEmpty<HashMap<AmtId, ValueEntry<CurvePointWithVersion>>>,
+        write_schema: &D::WriteSchema,
+    ) {
+        for (i, map) in maps.iter().enumerate() {
+            for (amt_id, point) in map {
+                if amt_id.len() == 1 {
+                    let point = point.as_opt_ref().expect("AMT nodes are never deleted");
+                    versions[amt_id[0] as usize] = point.version;
+                }
+            }
+            let history_number = height_to_history_number(start_height + i as u64);
+            if self.proof_config.is_checkpoint(history_number) {
+                write_schema.write::<RootLeafCheckpointTable>((
+                    Cow::Owned(history_number),
+                    Some(Cow::Owned(RootLeafVersions(versions.clone()))),
+                ));
+            }
+        }
+    }
+
+    /// Deletes the checkpoints no longer needed once the historical tip is at
+    /// `tip_height`.
+    fn prune_checkpoints(&self, tip_height: u64, write_schema: &D::WriteSchema) -> Result<()> {
+        let below = self
+            .proof_config
+            .prune_below(height_to_history_number(tip_height));
+        let table = self.historical_db.view::<RootLeafCheckpointTable>()?;
+        for item in table.iter_from_start()? {
+            let (history_number, _) = item?;
+            let history_number = history_number.into_owned();
+            if history_number >= below {
+                break;
+            }
+            write_schema.write::<RootLeafCheckpointTable>((Cow::Owned(history_number), None));
+        }
         Ok(())
     }
 }

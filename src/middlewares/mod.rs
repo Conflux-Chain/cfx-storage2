@@ -12,7 +12,8 @@ pub mod versioned_flat_key_value;
 mod versioned_flat_key_value;
 
 pub use commit_id_schema::{
-    history_number_to_height, CommitID, CommitIDSchema, HistoryNumber, HistoryNumberSchema,
+    height_to_history_number, history_number_to_height, CommitID, CommitIDSchema, HistoryNumber,
+    HistoryNumberSchema,
 };
 pub use key_value_store_bulks::{ChangeKey, KeyValueStoreBulks};
 pub use versioned_flat_key_value::{

@@ -93,6 +93,17 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         self.index_map.contains_key(commit_id)
     }
 
+    /// The height of `commit_id`, or `None` if it is not in the tree.
+    pub fn get_height_of_commit(&self, commit_id: &S::CommitId) -> Option<u64> {
+        let slab_index = *self.index_map.get(commit_id)?;
+        Some(self.get_node_by_slab_index(slab_index).get_height())
+    }
+
+    /// The ids of all commits in the tree, in no particular order.
+    pub fn commit_ids(&self) -> impl Iterator<Item = &S::CommitId> {
+        self.index_map.keys()
+    }
+
     fn get_slab_index_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<SlabIndex> {
         let slab_index = *self
             .index_map

@@ -50,7 +50,7 @@ use crate::backends::{
     DatabaseTrait, HistoricalTableName, PendingTableName, TableRead, TableReader, WriteSchemaTrait,
 };
 use crate::errors::Result;
-use crate::middlewares::commit_id_schema::height_to_history_number;
+use crate::middlewares::commit_id_schema::{height_to_history_number, history_number_to_height};
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
 use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
@@ -223,12 +223,65 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
             .add_node(updates, commit, parent_commit, pending_write_schema)?)
     }
 
-    fn get_history_number_by_commit_id(&self, commit: CommitID) -> Result<HistoryNumber> {
+    pub(crate) fn get_history_number_by_commit_id(
+        &self,
+        commit: CommitID,
+    ) -> Result<HistoryNumber> {
         if let Some(value) = self.commit_id_table.get(&commit)? {
             Ok(value.into_owned())
         } else {
             Err(StorageError::CommitIDNotFound)
         }
+    }
+
+    /// The historical commit with the given history number, if any.
+    pub(crate) fn get_commit_id_by_history_number(
+        &self,
+        history_number: HistoryNumber,
+    ) -> Result<Option<CommitID>> {
+        Ok(self
+            .history_number_table
+            .get(&history_number)?
+            .map(|c| c.into_owned()))
+    }
+
+    /// The height of `commit` (pending or historical), or `None` if unknown.
+    pub fn get_commit_height(&self, commit: &CommitID) -> Result<Option<u64>> {
+        if let Some(height) = self.pending_part.get_height_of_commit(commit) {
+            return Ok(Some(height));
+        }
+        Ok(self
+            .commit_id_table
+            .get(commit)?
+            .map(|n| history_number_to_height(n.into_owned())))
+    }
+
+    /// The ancestor-or-self of `commit` at `height`. `commit` must be known and
+    /// `height` no greater than its height.
+    pub fn get_ancestor_at_height(&self, commit: &CommitID, height: u64) -> Result<CommitID> {
+        if self.pending_part.contains_commit_id(commit) && height >= self.get_height_of_root() {
+            return Ok(self
+                .pending_part
+                .get_ancestor_commit_at_height(height, *commit)?);
+        }
+        let own = self
+            .get_commit_height(commit)?
+            .ok_or(StorageError::CommitIDNotFound)?;
+        if height > own {
+            return Err(StorageError::CommitIDNotFound);
+        }
+        // Below the pending root, every chain goes through the historical part.
+        self.get_commit_id_by_history_number(height_to_history_number(height))?
+            .ok_or(StorageError::CommitIDNotFound)
+    }
+
+    /// Like [`Self::get_historical_commit_changes`], by history number.
+    pub(crate) fn get_historical_changes_by_number(
+        &self,
+        history_number: HistoryNumber,
+        from: T::Key,
+    ) -> Result<Vec<(T::Key, T::Value)>> {
+        self.change_history_table.iter_commit(history_number, from)
     }
 
     /// All `(key, value)` changes written by `commit`, which must be in the

@@ -1634,3 +1634,105 @@ fn test_lvmt_root_leaf_version_counting() {
         );
     }
 }
+
+/// Root leaf versions at historical commits read from checkpoints (with the
+/// count correction) equal direct point lookups; checkpoints are written at the
+/// interval, pruned below the depth, and still used after the interval changes.
+#[test]
+fn test_lvmt_root_leaf_checkpoints() {
+    use super::checkpoint::{ProofConfig, RootLeafCheckpointTable};
+    use super::types::AmtId;
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+
+    type Db = LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>;
+    let historical_path = "__test_lvmt_root_leaf_checkpoints_historical";
+    let pending_path = "__test_lvmt_root_leaf_checkpoints_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+
+    let historical_db = Arc::new(WrappedRocksDb::open(historical_path).unwrap());
+    let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
+    let mut db = Db::new(historical_db, pending_db).unwrap();
+    db.set_proof_config(ProofConfig {
+        history_depth: 20,
+        checkpoint_interval: 7,
+    });
+
+    let mut rng = get_rng_for_test();
+    let mut previous_commits = HashSet::new();
+    let mut value_rng = StdRng::seed_from_u64(12);
+    let mut chain: Vec<CommitID> = vec![];
+    let mut grow = |db: &mut Db, chain: &mut Vec<CommitID>, n: usize| {
+        for _ in 0..n {
+            let changes: Vec<_> = (0..200)
+                .map(|_| {
+                    let k: u64 = value_rng.gen_range(0..3000);
+                    (u64_to_boxed_u8(k), Some(u64_to_boxed_u8(value_rng.gen())))
+                })
+                .collect();
+            let id = gen_novel_commit_id(&mut rng, &mut previous_commits);
+            let mut lvmt = db.as_manager().unwrap();
+            lvmt.commit(chain.last().copied(), id, changes.into_iter(), &AMT)
+                .unwrap();
+            chain.push(id);
+        }
+    };
+
+    let direct = |lvmt: &LvmtStore<'_, '_, _>, c: CommitID| -> Vec<u64> {
+        let view = lvmt
+            .get_amt_node_store()
+            .get_versioned_store(&c, false)
+            .unwrap();
+        (0..=u16::MAX)
+            .map(|i| {
+                view.get(&AmtId::root().child(i))
+                    .unwrap()
+                    .map_or(0, |p| p.version)
+            })
+            .collect()
+    };
+    let stored_checkpoints = |db: &Db| -> Vec<u64> {
+        db.historical_db
+            .view::<RootLeafCheckpointTable>()
+            .unwrap()
+            .iter_from_start()
+            .unwrap()
+            .map(|item| item.unwrap().0.into_owned())
+            .collect()
+    };
+    let check_all = |db: &mut Db, chain: &[CommitID]| {
+        let lvmt = db.as_manager().unwrap();
+        for (h, c) in chain.iter().enumerate() {
+            assert_eq!(
+                lvmt.get_root_leaf_versions(*c).unwrap(),
+                direct(&lvmt, *c),
+                "height {h}"
+            );
+        }
+    };
+
+    // Confirm in rounds of uneven length, so that each round passes 0, 1 or 2
+    // checkpoint heights.
+    for (grow_by, confirm_to) in [(10, 3), (10, 12), (20, 33), (25, 55)] {
+        grow(&mut db, &mut chain, grow_by);
+        db.confirmed_pending_to_history_with_commit_id(chain[confirm_to])
+            .unwrap();
+    }
+    // Historical tip at height 54: checkpoints at multiples of 7 from
+    // 54 - 20 - 7 = 27 on.
+    assert_eq!(stored_checkpoints(&db), vec![28, 35, 42, 49]);
+    check_all(&mut db, &chain);
+
+    // A new interval: the old checkpoints stay usable until pruned, new ones are
+    // written at multiples of 5.
+    db.set_proof_config(ProofConfig {
+        history_depth: 20,
+        checkpoint_interval: 5,
+    });
+    grow(&mut db, &mut chain, 10);
+    db.confirmed_pending_to_history_with_commit_id(chain[62])
+        .unwrap();
+    // Tip at 61: prune below 61 - 25 = 36.
+    assert_eq!(stored_checkpoints(&db), vec![42, 49, 55, 60]);
+    check_all(&mut db, &chain);
+}

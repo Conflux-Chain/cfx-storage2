@@ -9,6 +9,7 @@ use amt::AmtParams;
 use super::{
     amt_change_manager::AmtChangeManager,
     auth_changes::{amt_change_hash, key_value_hash, process_dump_items, AuthChangeTable},
+    checkpoint::{ProofConfig, RootLeafCheckpointTable, ROOT_LEAF_COUNT},
     crypto::PE,
     state_root::{compute_state_root, StateRoot, StateRootTable, EMPTY_AUTH_CHANGE_ROOT},
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
@@ -17,7 +18,7 @@ use super::{
     },
 };
 use crate::{
-    backends::{DatabaseTrait, PendingTableName, TableRead, WriteSchemaTrait},
+    backends::{DatabaseTrait, PendingTableName, TableRead, TableReader, WriteSchemaTrait},
     errors::Result,
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::{table_schema::KeyValueSnapshotRead, CommitID},
@@ -37,6 +38,8 @@ pub struct LvmtStore<'cache, 'db, P: DatabaseTrait<PendingTableName>> {
     amt_node_store: VersionedStore<'cache, 'db, AmtNodes, P>,
     slot_alloc_store: VersionedStore<'cache, 'db, SlotAllocations, P>,
     auth_changes: KeyValueStoreBulks<'static, AuthChangeTable>,
+    checkpoints: TableReader<'static, RootLeafCheckpointTable>,
+    proof_config: ProofConfig,
 }
 
 const ALLOC_START_VERSION: u64 = 1;
@@ -119,38 +122,121 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
     /// depth-1 AMT `[i]`, i.e. slot 5 of root leaf `i` (0 if that AMT was never
     /// written). The root AMT has no keys, so these are its whole leaf values.
     ///
-    /// For a historical commit, one point lookup per leaf at `commit`. For a pending
-    /// commit, the depth-1 AMTs changed on the pending path to `commit` (read once
-    /// per pending node), then point lookups at the latest historical commit for
-    /// the other leaves only; the shared checked-out state is not touched.
+    /// - Pending commit: the depth-1 AMTs changed on the pending path to `commit`
+    ///   (read once per pending node), then point lookups at the latest historical
+    ///   commit for the other leaves only; the shared checked-out state is not
+    ///   touched.
+    /// - Latest historical commit: one point lookup per leaf.
+    /// - Older historical commit: from the nearest base among the stored
+    ///   checkpoints and the latest historical commit, corrected by the number of
+    ///   depth-1 AMT changes in between (see [`super::checkpoint`]); direct point
+    ///   lookups if no base is close enough.
     pub fn get_root_leaf_versions(&self, commit: CommitID) -> Result<Vec<u64>> {
-        let pending_changes = self
+        let Some(changes) = self
             .amt_node_store
-            .get_pending_path_changes(&commit, |amt_id| amt_id.len() == 1)?;
-
-        let mut versions = vec![0u64; 1 << 16];
-        let mut known = vec![false; 1 << 16];
-        let base = match pending_changes {
-            Some(changes) => {
-                for (amt_id, point) in changes {
-                    let i = amt_id[0] as usize;
-                    debug_assert!(point.is_some(), "AMT nodes are never deleted");
-                    versions[i] = point.map_or(0, |p| p.version);
-                    known[i] = true;
-                }
-                self.amt_node_store.get_latest_historical_commit()
-            }
-            None => Some(commit),
+            .get_pending_path_changes(&commit, |amt_id| amt_id.len() == 1)?
+        else {
+            return self.get_historical_root_leaf_versions(commit);
         };
 
-        if let Some(base) = base {
-            let view = self.amt_node_store.get_versioned_store(&base, false)?;
-            for (i, version) in versions.iter_mut().enumerate() {
-                if known[i] {
-                    continue;
+        let mut versions = vec![0u64; ROOT_LEAF_COUNT];
+        let mut known = vec![false; ROOT_LEAF_COUNT];
+        for (amt_id, point) in changes {
+            let i = amt_id[0] as usize;
+            debug_assert!(point.is_some(), "AMT nodes are never deleted");
+            versions[i] = point.map_or(0, |p| p.version);
+            known[i] = true;
+        }
+        if let Some(base) = self.amt_node_store.get_latest_historical_commit() {
+            self.read_root_leaf_versions(base, &mut versions, Some(&known))?;
+        }
+        Ok(versions)
+    }
+
+    /// Point lookups of the root leaf versions at `commit` into `versions`,
+    /// skipping the leaves marked in `skip`.
+    fn read_root_leaf_versions(
+        &self,
+        commit: CommitID,
+        versions: &mut [u64],
+        skip: Option<&[bool]>,
+    ) -> Result<()> {
+        let view = self.amt_node_store.get_versioned_store(&commit, false)?;
+        for (i, version) in versions.iter_mut().enumerate() {
+            if skip.is_some_and(|skip| skip[i]) {
+                continue;
+            }
+            *version = view
+                .get(&AmtId::root().child(i as u16))?
+                .map_or(0, |p| p.version);
+        }
+        Ok(())
+    }
+
+    fn get_historical_root_leaf_versions(&self, commit: CommitID) -> Result<Vec<u64>> {
+        let mut versions = vec![0u64; ROOT_LEAF_COUNT];
+        let tip = self.amt_node_store.get_latest_historical_commit();
+        let q = self
+            .amt_node_store
+            .get_history_number_by_commit_id(commit)?;
+        let tip = tip.expect("a historical commit exists");
+        if tip == commit {
+            self.read_root_leaf_versions(commit, &mut versions, None)?;
+            return Ok(versions);
+        }
+        let tip_n = self.amt_node_store.get_history_number_by_commit_id(tip)?;
+
+        // Candidate bases with their costs, in commits to scan. Reading the tip
+        // costs about as much as scanning `TIP_READ_COST` commits, reading every
+        // leaf at `commit` directly about `DIRECT_READ_COST`.
+        const TIP_READ_COST: u64 = 50;
+        const DIRECT_READ_COST: u64 = 500;
+        let s = self.proof_config.checkpoint_interval;
+        let floor = q - q % s;
+        let mut candidates = vec![
+            (q - floor, Some(floor)),
+            ((tip_n - q) + TIP_READ_COST, None),
+        ];
+        if floor + s <= tip_n {
+            candidates.push((floor + s - q, Some(floor + s)));
+        }
+        candidates.sort();
+
+        let mut base = None;
+        for (cost, checkpoint) in candidates {
+            if cost >= DIRECT_READ_COST {
+                break;
+            }
+            match checkpoint {
+                Some(n) => {
+                    if let Some(stored) = self.checkpoints.get(&n)? {
+                        versions = stored.into_owned().0;
+                        base = Some(n);
+                        break;
+                    }
                 }
-                if let Some(point) = view.get(&AmtId::root().child(i as u16))? {
-                    *version = point.version;
+                None => {
+                    self.read_root_leaf_versions(tip, &mut versions, None)?;
+                    base = Some(tip_n);
+                    break;
+                }
+            }
+        }
+        let Some(base) = base else {
+            self.read_root_leaf_versions(commit, &mut versions, None)?;
+            return Ok(versions);
+        };
+
+        // A depth-1 AMT version goes up by one in every commit that changes it.
+        let (from, to) = if base > q { (q, base) } else { (base, q) };
+        for n in from + 1..=to {
+            for (amt_id, _) in self
+                .amt_node_store
+                .get_historical_changes_by_number(n, AmtId::root())?
+            {
+                if amt_id.len() == 1 {
+                    let v = &mut versions[amt_id[0] as usize];
+                    *v = if base > q { *v - 1 } else { *v + 1 };
                 }
             }
         }
@@ -226,6 +312,8 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
         amt_node_store: VersionedStore<'cache, 'db, AmtNodes, P>,
         slot_alloc_store: VersionedStore<'cache, 'db, SlotAllocations, P>,
         auth_changes: KeyValueStoreBulks<'static, AuthChangeTable>,
+        checkpoints: TableReader<'static, RootLeafCheckpointTable>,
+        proof_config: ProofConfig,
     ) -> Self {
         Self {
             pending_persistence_backend,
@@ -233,6 +321,8 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
             amt_node_store,
             slot_alloc_store,
             auth_changes,
+            checkpoints,
+            proof_config,
         }
     }
 

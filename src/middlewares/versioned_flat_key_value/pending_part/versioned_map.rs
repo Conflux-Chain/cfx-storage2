@@ -100,6 +100,16 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
     pub fn get_height_of_root(&self) -> u64 {
         self.tree_with_tracker.tree.get_height_of_root()
     }
+
+    /// The height of a pending commit, or `None` if it is not pending.
+    pub fn get_height_of_commit(&self, commit_id: &S::CommitId) -> Option<u64> {
+        self.tree_with_tracker.tree.get_height_of_commit(commit_id)
+    }
+
+    /// The ids of all pending commits, in no particular order.
+    pub fn pending_commit_ids(&self) -> Vec<S::CommitId> {
+        self.tree_with_tracker.tree.commit_ids().copied().collect()
+    }
 }
 
 // add_node
