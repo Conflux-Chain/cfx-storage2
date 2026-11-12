@@ -47,6 +47,11 @@ pub enum StorageError {
     InvalidConfig(String),
     #[error("Database initialization failed: {0}")]
     DbInitError(String),
+
+    #[error("MMR entry not found for commit {0:?}")]
+    MmrEntryNotFound(crate::middlewares::CommitID),
+    #[error("proof unavailable: {0}")]
+    ProofUnavailable(String),
 }
 
 impl From<DecodeError> for StorageError {
@@ -121,6 +126,8 @@ impl PartialEq for StorageError {
             (InconsistentPendingFromRecovery, InconsistentPendingFromRecovery) => true,
             (InvalidConfig(e1), InvalidConfig(e2)) => e1 == e2,
             (DbInitError(e1), DbInitError(e2)) => e1 == e2,
+            (MmrEntryNotFound(e1), MmrEntryNotFound(e2)) => e1 == e2,
+            (ProofUnavailable(e1), ProofUnavailable(e2)) => e1 == e2,
 
             (VersionNotFound, _) => false,
             (CommitIDNotFound, _) => false,
@@ -136,6 +143,8 @@ impl PartialEq for StorageError {
             (InconsistentPendingFromRecovery, _) => false,
             (InvalidConfig(_), _) => false,
             (DbInitError(_), _) => false,
+            (MmrEntryNotFound(_), _) => false,
+            (ProofUnavailable(_), _) => false,
         }
     }
 }

@@ -207,11 +207,13 @@ pub enum PendingTableName {
     Wal(VersionedKVName),
     AuthNodeChange,
     StateRoot,
+    /// Per-commit nodes of the history accumulator (LVMT `hroot`).
+    Mmr,
 }
 
 impl TableNameTrait for PendingTableName {
     fn num_tables() -> u32 {
-        8
+        9
     }
 
     fn get_cache_size_for_col(_cache_any: &dyn Any, _col_id: u32) -> String {
@@ -245,6 +247,7 @@ impl From<PendingTableName> for u32 {
             Wal(SlotAllocation) => 5,
             AuthNodeChange => 6,
             StateRoot => 7,
+            Mmr => 8,
         }
     }
 }
@@ -263,6 +266,7 @@ impl TryFrom<u32> for PendingTableName {
             5 => Ok(Wal(SlotAllocation)),
             6 => Ok(AuthNodeChange),
             7 => Ok(StateRoot),
+            8 => Ok(Mmr),
             _ => Err(()),
         }
     }
@@ -280,6 +284,7 @@ impl From<PendingTableName> for &'static str {
             Wal(SlotAllocation) => "slot_alloc_pending_wal",
             AuthNodeChange => "auth_node_change",
             StateRoot => "state_root",
+            Mmr => "mmr",
         }
     }
 }

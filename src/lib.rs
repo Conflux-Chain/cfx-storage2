@@ -26,6 +26,6 @@ pub use errors::{Result, StorageError};
 pub use lvmt::{
     compute_state_root,
     types::{AuthChangeKey, AuthChangeNode, CurvePointWithVersion},
-    LvmtSnapshot, LvmtStorage, LvmtStore, LvmtStoreReader, LvmtValue, ProofConfig, StateRoot,
-    EMPTY_AUTH_CHANGE_ROOT,
+    LvmtSnapshot, LvmtStorage, LvmtStore, LvmtStoreReader, LvmtValue, MmrProof, ProofConfig,
+    StateRoot, EMPTY_AUTH_CHANGE_ROOT, EMPTY_HROOT,
 };

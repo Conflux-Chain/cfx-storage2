@@ -1284,11 +1284,35 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         let state_root = self.get_state_root(commit)?.unwrap();
         let root_commitment = self.get_root_commitment(commit)?;
         let auth_change_root = self.get_auth_change_root(commit)?.unwrap();
+        let hroot = self.get_hroot(commit)?;
         assert_eq!(
             state_root,
-            compute_state_root(&root_commitment, &auth_change_root),
+            compute_state_root(&root_commitment, &auth_change_root, &hroot),
             "Inconsistent state root"
         );
+
+        // The hroot accumulates the state roots of the ancestors, provably.
+        let height = self
+            .get_key_value_store()
+            .get_commit_height(&commit)?
+            .unwrap();
+        let mut heights: Vec<u64> = [0, height / 3, height / 2, height.saturating_sub(1)]
+            .into_iter()
+            .filter(|h| *h < height)
+            .collect();
+        heights.dedup();
+        for h in heights {
+            let ancestor = self
+                .get_key_value_store()
+                .get_ancestor_at_height(&commit, h)?;
+            let proof = self.prove_hroot_leaf(commit, ancestor)?;
+            let ancestor_root = self.get_state_root(ancestor)?.unwrap();
+            assert!(
+                proof.verify(&hroot, &ancestor_root),
+                "MMR proof of height {h}"
+            );
+        }
+        assert!(self.prove_hroot_leaf(commit, commit).is_err());
         Ok(())
     }
 }
@@ -1735,4 +1759,100 @@ fn test_lvmt_root_leaf_checkpoints() {
     // Tip at 61: prune below 61 - 25 = 36.
     assert_eq!(stored_checkpoints(&db), vec![42, 49, 55, 60]);
     check_all(&mut db, &chain);
+}
+
+/// `hroot` of every commit equals the MMR root recomputed from its ancestors'
+/// state roots, across the historical and pending parts and on a fork, and MMR
+/// proofs verify for ancestors only.
+#[test]
+fn test_lvmt_hroot() {
+    use super::mmr::{bag_peaks, MmrEntry};
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+
+    type Db = LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>;
+    let historical_path = "__test_lvmt_hroot_historical";
+    let pending_path = "__test_lvmt_hroot_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+    let historical_db = Arc::new(WrappedRocksDb::open(historical_path).unwrap());
+    let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
+    let mut db = Db::new(historical_db, pending_db).unwrap();
+
+    let mut rng = get_rng_for_test();
+    let mut previous_commits = HashSet::new();
+    let mut value_rng = StdRng::seed_from_u64(13);
+    let mut commit = |db: &mut Db, parent: Option<CommitID>| -> CommitID {
+        let changes: Vec<_> = (0..20)
+            .map(|_| {
+                let k: u64 = value_rng.gen_range(0..500);
+                (u64_to_boxed_u8(k), Some(u64_to_boxed_u8(value_rng.gen())))
+            })
+            .collect();
+        let id = gen_novel_commit_id(&mut rng, &mut previous_commits);
+        let mut lvmt = db.as_manager().unwrap();
+        lvmt.commit(parent, id, changes.into_iter(), &AMT).unwrap();
+        id
+    };
+
+    let mut main: Vec<CommitID> = vec![];
+    for _ in 0..40 {
+        let parent = main.last().copied();
+        main.push(commit(&mut db, parent));
+    }
+    // A fork off height 25.
+    let mut fork: Vec<CommitID> = main[..=25].to_vec();
+    for _ in 0..6 {
+        let parent = fork.last().copied();
+        fork.push(commit(&mut db, parent));
+    }
+
+    let check = |db: &mut Db, chain: &[CommitID], other: &[CommitID]| {
+        let lvmt = db.as_manager().unwrap();
+        let roots: Vec<_> = chain
+            .iter()
+            .map(|c| lvmt.get_state_root(*c).unwrap().unwrap())
+            .collect();
+        let mut peaks: Vec<_> = vec![];
+        for (h, c) in chain.iter().enumerate() {
+            assert_eq!(
+                lvmt.get_hroot(*c).unwrap(),
+                bag_peaks(h as u64, &peaks),
+                "height {h}"
+            );
+            peaks = MmrEntry::append(&peaks, h as u64, &roots[h]).peaks;
+        }
+        for q in [1usize, 2, 7, 16, 20, 21, 30, chain.len() - 1] {
+            let hroot = lvmt.get_hroot(chain[q]).unwrap();
+            for a in 0..q {
+                let proof = lvmt.prove_hroot_leaf(chain[q], chain[a]).unwrap();
+                assert!(proof.verify(&hroot, &roots[a]), "q = {q}, a = {a}");
+            }
+            assert!(lvmt.prove_hroot_leaf(chain[q], chain[q]).is_err());
+            assert!(lvmt.prove_hroot_leaf(chain[0], chain[q]).is_err());
+        }
+        // Commits of the other branch past the fork point are not ancestors.
+        assert!(lvmt
+            .prove_hroot_leaf(*chain.last().unwrap(), other[27])
+            .is_err());
+    };
+
+    check(&mut db, &main, &fork);
+    check(&mut db, &fork, &main);
+
+    // Ancestors move to the historical part.
+    db.confirmed_pending_to_history_with_commit_id(main[20])
+        .unwrap();
+    check(&mut db, &main, &fork);
+    check(&mut db, &fork, &main);
+
+    // Past the fork point: the fork is discarded.
+    db.confirmed_pending_to_history_with_commit_id(main[30])
+        .unwrap();
+    let lvmt = db.as_manager().unwrap();
+    let hroot = lvmt.get_hroot(main[39]).unwrap();
+    for a in 0..39 {
+        let proof = lvmt.prove_hroot_leaf(main[39], main[a]).unwrap();
+        let root = lvmt.get_state_root(main[a]).unwrap().unwrap();
+        assert!(proof.verify(&hroot, &root), "a = {a}");
+    }
 }

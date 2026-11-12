@@ -11,6 +11,7 @@ use super::{
     auth_changes::{amt_change_hash, key_value_hash, process_dump_items, AuthChangeTable},
     checkpoint::{ProofConfig, RootLeafCheckpointTable, ROOT_LEAF_COUNT},
     crypto::PE,
+    mmr::{bag_peaks, creating_leaf, MmrEntry, MmrProof, MmrTable, EMPTY_HROOT},
     state_root::{compute_state_root, StateRoot, StateRootTable, EMPTY_AUTH_CHANGE_ROOT},
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
     types::{
@@ -23,6 +24,7 @@ use crate::{
     lvmt::types::{compute_amt_node_id, AllocationKeyInfo, KEY_SLOT_SIZE},
     middlewares::{table_schema::KeyValueSnapshotRead, CommitID},
     traits::KeyValueStoreBulksTrait,
+    StorageError,
 };
 use crate::{
     lvmt::types::LvmtValue,
@@ -85,6 +87,73 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
             self.get_auth_change_node(commit, &AuthChangeKey::root())?
                 .map_or(EMPTY_AUTH_CHANGE_ROOT, |node| node.hash()),
         ))
+    }
+
+    /// The MMR nodes written by `commit` (see [`super::mmr`]), or `None` if unknown
+    /// to the pending persistence db.
+    pub fn get_mmr_entry(&self, commit: CommitID) -> Result<Option<MmrEntry>> {
+        let view = self.pending_persistence_backend.view::<MmrTable>()?;
+        Ok(view.get(&commit)?.map(|x| x.into_owned()))
+    }
+
+    fn mmr_entry(&self, commit: CommitID) -> Result<MmrEntry> {
+        self.get_mmr_entry(commit)?
+            .ok_or(StorageError::MmrEntryNotFound(commit))
+    }
+
+    fn commit_height(&self, commit: CommitID) -> Result<u64> {
+        self.key_value_store
+            .get_commit_height(&commit)?
+            .ok_or(StorageError::CommitIDNotFound)
+    }
+
+    /// The history accumulator of `commit`: the MMR root over the state roots of
+    /// its ancestors, as hashed into its state root.
+    pub fn get_hroot(&self, commit: CommitID) -> Result<H256> {
+        let height = self.commit_height(commit)?;
+        if height == 0 {
+            return Ok(EMPTY_HROOT);
+        }
+        let parent = self
+            .key_value_store
+            .get_ancestor_at_height(&commit, height - 1)?;
+        Ok(bag_peaks(height, &self.mmr_entry(parent)?.peaks))
+    }
+
+    /// Proof that the state root of `ancestor`, a strict ancestor of `commit`, is
+    /// accumulated in the `hroot` of `commit`.
+    pub fn prove_hroot_leaf(&self, commit: CommitID, ancestor: CommitID) -> Result<MmrProof> {
+        let leaf_count = self.commit_height(commit)?;
+        let leaf_index = self.commit_height(ancestor)?;
+        if leaf_index >= leaf_count
+            || self
+                .key_value_store
+                .get_ancestor_at_height(&commit, leaf_index)?
+                != ancestor
+        {
+            return Err(StorageError::ProofUnavailable(format!(
+                "{ancestor:?} is not a strict ancestor of {commit:?}"
+            )));
+        }
+        let siblings = MmrProof::sibling_positions(leaf_count, leaf_index)
+            .expect("leaf_index < leaf_count")
+            .into_iter()
+            .map(|(level, index)| {
+                let creator = self
+                    .key_value_store
+                    .get_ancestor_at_height(&commit, creating_leaf(level, index))?;
+                Ok(self.mmr_entry(creator)?.created[level as usize])
+            })
+            .collect::<Result<_>>()?;
+        let parent = self
+            .key_value_store
+            .get_ancestor_at_height(&commit, leaf_count - 1)?;
+        Ok(MmrProof {
+            leaf_count,
+            leaf_index,
+            siblings,
+            peaks: self.mmr_entry(parent)?.peaks,
+        })
     }
 
     /// Get the commit at which `key` was last written as of `commit` (the closest
@@ -394,13 +463,14 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
     /// frequent confirmation cycle of the historical database. This architectural change
     /// allows all related data for a commit to be written within a single `pending_write_schema`.
     ///
-    /// All five data components (`key-values`, `AMT nodes`, `slot allocations`,
-    /// `auth changes`, and the `state root`) are written atomically in one
-    /// `pending_write_schema` created and managed here.
+    /// All six data components (`key-values`, `AMT nodes`, `slot allocations`,
+    /// `auth changes`, the `state root` and the MMR entry) are written atomically in
+    /// one `pending_write_schema` created and managed here.
     ///
     /// The state root is computed here by [`compute_state_root`] from the new root AMT
-    /// commitment and the root of this commit's auth-change tree, written to the
-    /// `StateRoot` table, and returned to the caller.
+    /// commitment, the root of this commit's auth-change tree and the `hroot` over the
+    /// ancestors' state roots, written to the `StateRoot` table, and returned to the
+    /// caller. The commit's state root is then appended to its parent's MMR.
     ///
     /// TODO: If the historical database ever needs this information, a process can be added
     /// to copy the `AuthChange` and `StateRoot` data from the pending DB to the historical DB
@@ -481,6 +551,14 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
             process_dump_items(hashes)
         };
 
+        // The MMR of the ancestors: the parent's entry holds the peaks over the state
+        // roots at heights `0..=height(parent)`.
+        let (height, parent_peaks) = match old_commit {
+            Some(old) => (self.commit_height(old)? + 1, self.mmr_entry(old)?.peaks),
+            None => (0, vec![]),
+        };
+        let hroot = bag_peaks(height, &parent_peaks);
+
         // Compute the state root. Any change propagates to the root AMT, so the root
         // commitment is in `amt_changes` unless this commit changes nothing; then it
         // is inherited from the parent.
@@ -492,8 +570,9 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
             let auth_change_root = auth_changes
                 .get(&AuthChangeKey::root())
                 .map_or(EMPTY_AUTH_CHANGE_ROOT, |node| node.hash());
-            compute_state_root(&root_commitment, &auth_change_root)
+            compute_state_root(&root_commitment, &auth_change_root, &hroot)
         };
+        let mmr_entry = MmrEntry::append(&parent_peaks, height, &state_root);
 
         // Write to the pending part of db.
         // TODO: Write to the history part is beyond the range of LvmtStore.
@@ -541,9 +620,15 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         self.auth_changes
             .commit(new_commit, auth_change_bulk, &pending_write_schema)?;
 
-        // write state_root
+        // write state_root and the MMR entry
         pending_write_schema
             .write::<StateRootTable>((Cow::Owned(new_commit), Some(Cow::Owned(state_root))));
+        pending_write_schema
+            .write::<MmrTable>((Cow::Owned(new_commit), Some(Cow::Owned(mmr_entry))));
+        debug_assert_eq!(
+            self.key_value_store.get_commit_height(&new_commit)?,
+            Some(height)
+        );
 
         self.commit_to_pending_db(pending_write_schema)?;
 
