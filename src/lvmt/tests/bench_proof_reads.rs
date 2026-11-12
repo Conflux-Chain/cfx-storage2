@@ -19,7 +19,8 @@
 //! kept pending by the last confirmation), `BENCH_KEEP` (set to keep the database
 //! afterwards).
 //!
-//! Also measured: root-AMT reads at a pending commit, the computation on a single
+//! Also measured: proofs at a historical Q from a stored checkpoint (512 KB of
+//! root leaf versions every 100 commits), root-AMT reads at a pending commit, the computation on a single
 //! thread, and the reads and proof of one depth-1 AMT.
 
 use std::{collections::BTreeMap, time::Instant};
@@ -27,6 +28,7 @@ use std::{collections::BTreeMap, time::Instant};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 use super::*;
+use crate::backends::impls::kvdb_rocksdb::open_database;
 use crate::lvmt::{
     crypto::Fr,
     types::{AmtId, KEY_SLOT_SIZE, SLOT_SIZE},
@@ -257,6 +259,102 @@ fn bench_root_amt_proof_reads() {
         }
     }
 
+    // ---- Checkpoints ----
+    // A checkpoint every 100 commits back from the history tip, each the 65536 root
+    // leaf versions (u64 little-endian, 512 KB) under one key, in a RocksDB of its
+    // own opened with the same config as the stores. The database is reopened
+    // before reading, so the values come from SST files, not the memtable.
+    let ckpt_path = format!("{dir}/checkpoints");
+    clear_dir_then_create(&ckpt_path);
+    let ckpt_key = |c: usize| (c as u64).to_be_bytes();
+    {
+        let ckdb = open_database(1, &ckpt_path).unwrap();
+        for k in 0..=20 {
+            let Some(c) = tip.checked_sub(100 * k).filter(|c| *c >= load_commits) else {
+                break;
+            };
+            let bytes: Vec<u8> = read_point(c).iter().flat_map(|v| v.to_le_bytes()).collect();
+            let mut tr = ckdb.transaction();
+            tr.put_vec(0, &ckpt_key(c), bytes);
+            ckdb.write(tr).unwrap();
+        }
+    }
+    let ckdb = open_database(1, &ckpt_path).unwrap();
+    let read_checkpoint = |c: usize| -> Vec<u64> {
+        let bytes = ckdb.get(0, &ckpt_key(c)).unwrap().expect("checkpoint");
+        bytes
+            .chunks_exact(8)
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            .collect()
+    };
+
+    // Proof at a historical Q from checkpoint C: read C, scan the commits between
+    // them, correct the counts (subtract if C is after Q, add if before), prove.
+    eprintln!(
+        "\nQ | C | round | read checkpoint (ms) | scan (ms) | correct (ms) | prove_sparse (ms) | total (ms)"
+    );
+    for (q_back, c_back) in [
+        (150usize, 100usize),
+        (1050, 1000),
+        (1950, 2000),
+        (1020, 1000),
+    ] {
+        let (Some(q), Some(c)) = (tip.checked_sub(q_back), tip.checked_sub(c_back)) else {
+            continue;
+        };
+        if q.min(c) < load_commits {
+            continue;
+        }
+        for round in 1..=2 {
+            let start = Instant::now();
+            let t = Instant::now();
+            let mut versions = read_checkpoint(c);
+            let read_ms = ms(t);
+
+            let t = Instant::now();
+            let counts = if c > q {
+                scan_changes(q, c - q)
+            } else {
+                scan_changes(c, q - c)
+            };
+            let scan_ms = ms(t);
+
+            let t = Instant::now();
+            for (i, n) in &counts {
+                let v = &mut versions[*i as usize];
+                *v = if c > q { *v - n } else { *v + n };
+            }
+            let values: Vec<(usize, Fr)> = versions
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| **v > 0)
+                .map(|(i, v)| (i, root_leaf_value(*v)))
+                .collect();
+            let correct_ms = ms(t);
+
+            let t = Instant::now();
+            let proof = AMT.prove_sparse(values.iter().copied(), proof_idx);
+            let prove_ms = ms(t);
+            let total_ms = ms(start);
+
+            if round == 1 {
+                assert_eq!(versions, read_point(q));
+                let root = lvmt.get_root_commitment(chain[q]).unwrap();
+                AMT.verify(
+                    &root.point.affine(),
+                    proof_idx,
+                    root_leaf_value(versions[proof_idx]),
+                    &proof,
+                )
+                .unwrap();
+            }
+            eprintln!(
+                "tip-{q_back} | tip-{c_back} | {round} | {read_ms:>20.1} | {scan_ms:>9.1} | {correct_ms:>12.1} | {prove_ms:>17.1} | {total_ms:>10.1}"
+            );
+        }
+    }
+    drop(ckdb);
+
     // ---- Pending commits ----
     // Point reads of the root leaves at a pending commit Q. Without a checkout, each
     // read walks the pending tree from Q up to the commit currently checked out (here
@@ -427,5 +525,6 @@ fn bench_root_amt_proof_reads() {
     if std::env::var("BENCH_KEEP").is_err() {
         clear_dir(&historical_path);
         clear_dir(&pending_path);
+        clear_dir(&ckpt_path);
     }
 }
