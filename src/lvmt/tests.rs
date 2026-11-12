@@ -1856,3 +1856,78 @@ fn test_lvmt_hroot() {
         assert!(proof.verify(&hroot, &root), "a = {a}");
     }
 }
+
+/// The state root, auth-change tree and MMR entry of commits on discarded forks
+/// are deleted, by `make_pivot` and by confirmation; those of kept commits stay.
+#[test]
+fn test_lvmt_discarded_commit_rows() {
+    use super::types::AuthChangeKey;
+
+    type Db = LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>;
+    let historical_path = "__test_lvmt_discarded_commit_rows_historical";
+    let pending_path = "__test_lvmt_discarded_commit_rows_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+    let historical_db = Arc::new(WrappedRocksDb::open(historical_path).unwrap());
+    let pending_db = Arc::new(WrappedRocksDb::open(pending_path).unwrap());
+    let mut db = Db::new(historical_db, pending_db).unwrap();
+
+    let mut rng = get_rng_for_test();
+    let mut previous_commits = HashSet::new();
+    let mut next = 0u64;
+    let mut commit = |db: &mut Db, parent: Option<CommitID>| -> CommitID {
+        next += 1;
+        let changes = (0..5).map(|i| (u64_to_boxed_u8(next * 10 + i), Some(u64_to_boxed_u8(i))));
+        let id = gen_novel_commit_id(&mut rng, &mut previous_commits);
+        let mut lvmt = db.as_manager().unwrap();
+        lvmt.commit(parent, id, changes, &AMT).unwrap();
+        id
+    };
+    let mut chain_from = |db: &mut Db, parent: Option<CommitID>, n: usize| -> Vec<CommitID> {
+        let mut out = vec![];
+        for _ in 0..n {
+            let p = out.last().copied().or(parent);
+            out.push(commit(db, p));
+        }
+        out
+    };
+    let has_rows = |db: &mut Db, c: CommitID| -> [bool; 3] {
+        let lvmt = db.as_manager().unwrap();
+        [
+            lvmt.get_state_root(c).unwrap().is_some(),
+            lvmt.get_mmr_entry(c).unwrap().is_some(),
+            lvmt.get_auth_change_node(c, &AuthChangeKey::root())
+                .unwrap()
+                .is_some(),
+        ]
+    };
+
+    let main = chain_from(&mut db, None, 10);
+    let fork_a = chain_from(&mut db, Some(main[3]), 4);
+    let fork_b = chain_from(&mut db, Some(main[6]), 2);
+    for c in main.iter().chain(&fork_a).chain(&fork_b) {
+        assert_eq!(has_rows(&mut db, *c), [true; 3]);
+    }
+
+    assert!(db.as_manager().unwrap().make_pivot(main[8]).unwrap());
+    for c in fork_a.iter().chain(&fork_b) {
+        assert_eq!(has_rows(&mut db, *c), [false; 3]);
+    }
+    for c in &main {
+        assert_eq!(has_rows(&mut db, *c), [true; 3]);
+    }
+
+    let fork_c = chain_from(&mut db, Some(main[7]), 3);
+    db.confirmed_pending_to_history_with_commit_id(main[9])
+        .unwrap();
+    for c in &fork_c {
+        assert_eq!(has_rows(&mut db, *c), [false; 3]);
+    }
+    for c in &main {
+        assert_eq!(has_rows(&mut db, *c), [true; 3]);
+        db.as_manager()
+            .unwrap()
+            .check_consistency(*c, &AMT)
+            .unwrap();
+    }
+}

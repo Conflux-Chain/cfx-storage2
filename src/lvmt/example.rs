@@ -1,4 +1,10 @@
-use std::{borrow::Cow, collections::HashMap, fs, path::Path, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+    sync::Arc,
+};
 
 use crate::{
     backends::{
@@ -20,7 +26,7 @@ use crate::{
 use super::{
     auth_changes::AuthChangeTable,
     checkpoint::{ProofConfig, RootLeafCheckpointTable, RootLeafVersions},
-    storage::{LvmtStore, LvmtStoreReader},
+    storage::{delete_discarded_commit_rows, LvmtStore, LvmtStoreReader},
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
     types::{AmtId, CurvePointWithVersion},
 };
@@ -574,6 +580,8 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         // latest historical commit still takes the fast lookup path.
         let checkpoint_base = self.checkpoint_base(new_root_commit_id)?;
 
+        let pending_before = self.key_value_cache.pending_commit_ids();
+
         // pending part
         let pending_write_schema = P::write_schema();
 
@@ -592,6 +600,19 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 
             assert!(key_value_confirmed_path.is_same_path(&amt_node_confirmed_path));
             assert!(key_value_confirmed_path.is_same_path(&slot_alloc_confirmed_path));
+
+            // Commits on forks dropped by the root change.
+            let kept: HashSet<_> = self
+                .key_value_cache
+                .pending_commit_ids()
+                .into_iter()
+                .chain(key_value_confirmed_path.commit_ids.iter().copied())
+                .collect();
+            delete_discarded_commit_rows(
+                &self.pending_db,
+                pending_before.into_iter().filter(|c| !kept.contains(c)),
+                &pending_write_schema,
+            )?;
 
             let start_height = key_value_confirmed_path.start_height;
             let new_tip_height = key_value_confirmed_path.get_new_height_of_root() - 1;

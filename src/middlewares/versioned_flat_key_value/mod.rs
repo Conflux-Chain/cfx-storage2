@@ -137,6 +137,11 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         self.pending_part.get_height_of_root()
     }
 
+    /// The ids of all pending commits, in no particular order.
+    pub fn pending_commit_ids(&self) -> Vec<CommitID> {
+        self.pending_part.pending_commit_ids()
+    }
+
     /// The latest historical commit (the parent of the pending root), if any.
     pub fn get_latest_historical_commit(&self) -> Option<CommitID> {
         self.pending_part.get_parent_of_root()

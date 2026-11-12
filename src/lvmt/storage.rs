@@ -432,6 +432,7 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
             return Ok(false);
         }
 
+        let pending_before = self.key_value_store.pending_commit_ids();
         let key_value_has_discarded_nodes = self
             .key_value_store
             .make_pivot(commit_id, &pending_write_schema)?;
@@ -446,6 +447,21 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
             || (key_value_has_discarded_nodes != slot_alloc_has_discarded_nodes)
         {
             return Err(crate::StorageError::ConsistencyCheckFailure);
+        }
+
+        if key_value_has_discarded_nodes {
+            let remaining: HashSet<_> = self
+                .key_value_store
+                .pending_commit_ids()
+                .into_iter()
+                .collect();
+            delete_discarded_commit_rows(
+                &self.pending_persistence_backend,
+                pending_before
+                    .into_iter()
+                    .filter(|c| !remaining.contains(c)),
+                &pending_write_schema,
+            )?;
         }
 
         self.commit_to_pending_db(pending_write_schema)?;
@@ -634,6 +650,30 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
 
         Ok(state_root)
     }
+}
+
+/// Deletes the per-commit rows of commits discarded from the pending part (on a
+/// fork no longer reachable from the pending root): their state root, auth-change
+/// tree and MMR entry. Nothing refers to them any more: they are not ancestors of
+/// any remaining commit.
+pub(super) fn delete_discarded_commit_rows<P: DatabaseTrait<PendingTableName>>(
+    pending_db: &Arc<P>,
+    commits: impl IntoIterator<Item = CommitID>,
+    write_schema: &P::WriteSchema,
+) -> Result<()> {
+    let auth_changes = KeyValueStoreBulks::new(pending_db.view::<AuthChangeTable>()?);
+    for commit in commits {
+        write_schema.write::<StateRootTable>((Cow::Owned(commit), None));
+        write_schema.write::<MmrTable>((Cow::Owned(commit), None));
+        // The root has the smallest key encoding.
+        let rows = auth_changes.iter_commit(commit, AuthChangeKey::root())?;
+        auth_changes.commit(
+            commit,
+            rows.into_iter().map(|(key, _)| (key, None)),
+            write_schema,
+        )?;
+    }
+    Ok(())
 }
 
 struct AllocationCacheDb<'db> {
