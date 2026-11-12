@@ -482,10 +482,22 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     pub fn as_reader(&self) -> Result<LvmtStoreReader<'_, '_, P>> {
         let key_value_reader =
             VersionedStoreReader::new(self.historical_db.clone(), &self.key_value_cache)?;
+        let amt_node_reader =
+            VersionedStoreReader::new(self.historical_db.clone(), &self.amt_node_cache)?;
+        let slot_alloc_reader =
+            VersionedStoreReader::new(self.historical_db.clone(), &self.slot_alloc_cache)?;
+        let auth_changes =
+            KeyValueStoreBulks::new(Arc::new(self.pending_db.view::<AuthChangeTable>()?));
+        let checkpoints = self.historical_db.view::<RootLeafCheckpointTable>()?;
 
         Ok(LvmtStoreReader::new(
             self.pending_db.clone(),
             key_value_reader,
+            amt_node_reader,
+            slot_alloc_reader,
+            auth_changes,
+            checkpoints,
+            self.proof_config,
         ))
     }
 }

@@ -114,8 +114,8 @@ pub struct VersionedStoreReader<
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    VersionedStore<'cache, '_, T, P>
+impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStore<'cache, 'db, T, P>
 {
     pub fn is_in_historical_part(&self, commit: &CommitID) -> Result<bool> {
         if self.commit_id_table.get(commit)?.is_some() {
@@ -142,34 +142,58 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         self.pending_part.pending_commit_ids()
     }
 
-    /// The latest historical commit (the parent of the pending root), if any.
-    pub fn get_latest_historical_commit(&self) -> Option<CommitID> {
-        self.pending_part.get_parent_of_root()
+    /// A read-only view sharing this store's pending part and tables.
+    pub fn as_reader(&self) -> VersionedStoreReader<'_, 'db, T, P> {
+        VersionedStoreReader {
+            pending_part: &*self.pending_part,
+            history_index_table: self.history_index_table.clone(),
+            commit_id_table: self.commit_id_table.clone(),
+            history_number_table: self.history_number_table.clone(),
+            change_history_table: self.change_history_table.clone(),
+        }
     }
 
-    /// If `commit` is in the pending part, returns the value as of `commit` (`None`
-    /// if deleted) of every key accepted by `filter` that is modified on the pending
-    /// path from the pending root to `commit`. Keys not in the result have their
-    /// value at [`Self::get_latest_historical_commit`].
-    ///
-    /// Unlike a pending [`SnapshotView`], this does not check out `commit`, so it
-    /// leaves the shared current state alone. Returns `Ok(None)` if `commit` is not
-    /// in the pending part.
+    /// See [`VersionedStoreReader::get_latest_historical_commit`].
+    pub fn get_latest_historical_commit(&self) -> Option<CommitID> {
+        self.as_reader().get_latest_historical_commit()
+    }
+
+    /// See [`VersionedStoreReader::get_pending_path_changes`].
     pub fn get_pending_path_changes(
         &self,
         commit: &CommitID,
         filter: impl Fn(&T::Key) -> bool,
     ) -> Result<Option<HashMap<T::Key, Option<T::Value>>>> {
-        if !self.pending_part.contains_commit_id(commit) {
-            return Ok(None);
-        }
-        let changes = self.pending_part.get_path_changes(commit, filter)?;
-        Ok(Some(
-            changes
-                .into_iter()
-                .map(|(key, value)| (key, value.into_option()))
-                .collect(),
-        ))
+        self.as_reader().get_pending_path_changes(commit, filter)
+    }
+
+    /// See [`VersionedStoreReader::get_commit_height`].
+    pub fn get_commit_height(&self, commit: &CommitID) -> Result<Option<u64>> {
+        self.as_reader().get_commit_height(commit)
+    }
+
+    /// See [`VersionedStoreReader::get_ancestor_at_height`].
+    pub fn get_ancestor_at_height(&self, commit: &CommitID, height: u64) -> Result<CommitID> {
+        self.as_reader().get_ancestor_at_height(commit, height)
+    }
+
+    /// See [`VersionedStoreReader::get_historical_changes_by_number`].
+    pub(crate) fn get_historical_changes_by_number(
+        &self,
+        history_number: HistoryNumber,
+        from: T::Key,
+    ) -> Result<Vec<(T::Key, T::Value)>> {
+        self.as_reader()
+            .get_historical_changes_by_number(history_number, from)
+    }
+
+    /// See [`VersionedStoreReader::get_historical_commit_changes`].
+    pub(crate) fn get_historical_commit_changes(
+        &self,
+        commit: &CommitID,
+        from: T::Key,
+    ) -> Result<Vec<(T::Key, T::Value)>> {
+        self.as_reader().get_historical_commit_changes(commit, from)
     }
 
     pub fn checkout_current(&self, commit: CommitID) -> Result<()> {
@@ -239,6 +263,75 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         }
     }
 
+    /// See [`get_last_modified`].
+    pub fn get_with_last_modified(
+        &self,
+        commit: &CommitID,
+        key: &T::Key,
+    ) -> Result<Option<(CommitID, Option<T::Value>)>> {
+        get_last_modified(
+            &*self.pending_part,
+            &self.commit_id_table,
+            &self.history_number_table,
+            &self.history_index_table,
+            &self.change_history_table,
+            commit,
+            key,
+        )
+    }
+
+    fn get_historical_part(
+        &self,
+        query_version_number: HistoryNumber,
+        key: &T::Key,
+        is_latest: bool,
+    ) -> Result<Option<T::Value>> {
+        if is_latest {
+            get_versioned_key_latest(query_version_number, key, &self.history_index_table)
+        } else {
+            get_versioned_key_previous(
+                query_version_number,
+                key,
+                &self.history_index_table,
+                &self.change_history_table,
+            )
+        }
+    }
+}
+
+impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStoreReader<'cache, '_, T, P>
+{
+    /// The latest historical commit (the parent of the pending root), if any.
+    pub fn get_latest_historical_commit(&self) -> Option<CommitID> {
+        self.pending_part.get_parent_of_root()
+    }
+
+    /// If `commit` is in the pending part, returns the value as of `commit` (`None`
+    /// if deleted) of every key accepted by `filter` that is modified on the pending
+    /// path from the pending root to `commit`. Keys not in the result have their
+    /// value at [`Self::get_latest_historical_commit`].
+    ///
+    /// Unlike a pending [`SnapshotView`], this does not check out `commit`, so it
+    /// leaves the shared current state alone. Returns `Ok(None)` if `commit` is not
+    /// in the pending part.
+    pub fn get_pending_path_changes(
+        &self,
+        commit: &CommitID,
+        filter: impl Fn(&T::Key) -> bool,
+    ) -> Result<Option<HashMap<T::Key, Option<T::Value>>>> {
+        if !self.pending_part.contains_commit_id(commit) {
+            return Ok(None);
+        }
+        let changes = self.pending_part.get_path_changes(commit, filter)?;
+        Ok(Some(
+            changes
+                .into_iter()
+                .map(|(key, value)| (key, value.into_option()))
+                .collect(),
+        ))
+    }
+
     /// The historical commit with the given history number, if any.
     pub(crate) fn get_commit_id_by_history_number(
         &self,
@@ -301,45 +394,6 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         self.change_history_table.iter_commit(history_number, from)
     }
 
-    /// See [`get_last_modified`].
-    pub fn get_with_last_modified(
-        &self,
-        commit: &CommitID,
-        key: &T::Key,
-    ) -> Result<Option<(CommitID, Option<T::Value>)>> {
-        get_last_modified(
-            &*self.pending_part,
-            &self.commit_id_table,
-            &self.history_number_table,
-            &self.history_index_table,
-            &self.change_history_table,
-            commit,
-            key,
-        )
-    }
-
-    fn get_historical_part(
-        &self,
-        query_version_number: HistoryNumber,
-        key: &T::Key,
-        is_latest: bool,
-    ) -> Result<Option<T::Value>> {
-        if is_latest {
-            get_versioned_key_latest(query_version_number, key, &self.history_index_table)
-        } else {
-            get_versioned_key_previous(
-                query_version_number,
-                key,
-                &self.history_index_table,
-                &self.change_history_table,
-            )
-        }
-    }
-}
-
-impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    VersionedStoreReader<'cache, '_, T, P>
-{
     pub fn is_in_historical_part(&self, commit: &CommitID) -> Result<bool> {
         if self.commit_id_table.get(commit)?.is_some() {
             Ok(true)

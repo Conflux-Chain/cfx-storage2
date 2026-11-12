@@ -49,313 +49,106 @@ type KeyValueVec = Vec<(Box<[u8]>, LvmtValue)>;
 
 // Read-only
 impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
-    /// Get the state root of the given commit.
-    /// If not found in the pending persistence db, return `None`.
+    /// A read-only view of this store, see [`LvmtStoreReader`].
+    pub fn reader(&self) -> LvmtStoreReader<'_, 'db, P> {
+        LvmtStoreReader {
+            pending_persistence_backend: self.pending_persistence_backend.clone(),
+            key_value_reader: self.key_value_store.as_reader(),
+            amt_node_reader: self.amt_node_store.as_reader(),
+            slot_alloc_reader: self.slot_alloc_store.as_reader(),
+            auth_changes: self.auth_changes.clone(),
+            checkpoints: self.checkpoints.clone(),
+            proof_config: self.proof_config,
+        }
+    }
+
+    /// See [`LvmtStoreReader::get_state_root`].
     pub fn get_state_root(&self, commit: CommitID) -> Result<Option<StateRoot>> {
-        let state_root_view = Arc::new(self.pending_persistence_backend.view::<StateRootTable>()?);
-        Ok(state_root_view.get(&commit)?.map(|x| x.into_owned()))
+        self.reader().get_state_root(commit)
     }
 
-    /// Get the commitment of the root AMT at the given commit.
-    ///
-    /// Returns the default (identity point, version 0) if the root AMT has never
-    /// been changed up to this commit.
+    /// See [`LvmtStoreReader::get_root_commitment`].
     pub fn get_root_commitment(&self, commit: CommitID) -> Result<CurvePointWithVersion> {
-        let amt_node_view = self.amt_node_store.get_versioned_store(&commit, false)?;
-        Ok(amt_node_view.get(&AmtId::root())?.unwrap_or_default())
+        self.reader().get_root_commitment(commit)
     }
 
-    /// Get a node of the auth-change tree written by the given commit.
+    /// See [`LvmtStoreReader::get_auth_change_node`].
     pub fn get_auth_change_node(
         &self,
         commit: CommitID,
         key: &AuthChangeKey,
     ) -> Result<Option<AuthChangeNode>> {
-        self.auth_changes.get_versioned_key(&commit, key)
+        self.reader().get_auth_change_node(commit, key)
     }
 
-    /// Get the root hash of the auth-change tree written by the given commit.
-    ///
-    /// Returns [`EMPTY_AUTH_CHANGE_ROOT`] for a commit without any change, and
-    /// `None` if the commit is unknown to the pending persistence db (i.e. its
-    /// state root is not recorded).
+    /// See [`LvmtStoreReader::get_auth_change_root`].
     pub fn get_auth_change_root(&self, commit: CommitID) -> Result<Option<H256>> {
-        if self.get_state_root(commit)?.is_none() {
-            return Ok(None);
-        }
-        Ok(Some(
-            self.get_auth_change_node(commit, &AuthChangeKey::root())?
-                .map_or(EMPTY_AUTH_CHANGE_ROOT, |node| node.hash()),
-        ))
+        self.reader().get_auth_change_root(commit)
     }
 
-    /// The MMR nodes written by `commit` (see [`super::mmr`]), or `None` if unknown
-    /// to the pending persistence db.
+    /// See [`LvmtStoreReader::get_mmr_entry`].
     pub fn get_mmr_entry(&self, commit: CommitID) -> Result<Option<MmrEntry>> {
-        let view = self.pending_persistence_backend.view::<MmrTable>()?;
-        Ok(view.get(&commit)?.map(|x| x.into_owned()))
+        self.reader().get_mmr_entry(commit)
     }
 
-    fn mmr_entry(&self, commit: CommitID) -> Result<MmrEntry> {
-        self.get_mmr_entry(commit)?
-            .ok_or(StorageError::MmrEntryNotFound(commit))
-    }
-
-    fn commit_height(&self, commit: CommitID) -> Result<u64> {
-        self.key_value_store
-            .get_commit_height(&commit)?
-            .ok_or(StorageError::CommitIDNotFound)
-    }
-
-    /// The history accumulator of `commit`: the MMR root over the state roots of
-    /// its ancestors, as hashed into its state root.
+    /// See [`LvmtStoreReader::get_hroot`].
     pub fn get_hroot(&self, commit: CommitID) -> Result<H256> {
-        let height = self.commit_height(commit)?;
-        if height == 0 {
-            return Ok(EMPTY_HROOT);
-        }
-        let parent = self
-            .key_value_store
-            .get_ancestor_at_height(&commit, height - 1)?;
-        Ok(bag_peaks(height, &self.mmr_entry(parent)?.peaks))
+        self.reader().get_hroot(commit)
     }
 
-    /// Proof that the state root of `ancestor`, a strict ancestor of `commit`, is
-    /// accumulated in the `hroot` of `commit`.
+    /// See [`LvmtStoreReader::prove_hroot_leaf`].
     pub fn prove_hroot_leaf(&self, commit: CommitID, ancestor: CommitID) -> Result<MmrProof> {
-        let leaf_count = self.commit_height(commit)?;
-        let leaf_index = self.commit_height(ancestor)?;
-        if leaf_index >= leaf_count
-            || self
-                .key_value_store
-                .get_ancestor_at_height(&commit, leaf_index)?
-                != ancestor
-        {
-            return Err(StorageError::ProofUnavailable(format!(
-                "{ancestor:?} is not a strict ancestor of {commit:?}"
-            )));
-        }
-        let siblings = MmrProof::sibling_positions(leaf_count, leaf_index)
-            .expect("leaf_index < leaf_count")
-            .into_iter()
-            .map(|(level, index)| {
-                let creator = self
-                    .key_value_store
-                    .get_ancestor_at_height(&commit, creating_leaf(level, index))?;
-                Ok(self.mmr_entry(creator)?.created[level as usize])
-            })
-            .collect::<Result<_>>()?;
-        let parent = self
-            .key_value_store
-            .get_ancestor_at_height(&commit, leaf_count - 1)?;
-        Ok(MmrProof {
-            leaf_count,
-            leaf_index,
-            siblings,
-            peaks: self.mmr_entry(parent)?.peaks,
-        })
+        self.reader().prove_hroot_leaf(commit, ancestor)
     }
 
-    /// Get the commit at which `key` was last written as of `commit` (the closest
-    /// ancestor-or-self that wrote it), together with the value written there.
-    ///
-    /// Its auth-change tree is the one containing `key_value_hash(key, value)`.
-    /// Returns `None` if `key` was never written up to `commit`. LVMT never deletes
-    /// at the versioned-store level (a deleted key keeps an `LvmtValue` with
-    /// `value: None`), so a found entry always carries a value.
+    /// See [`LvmtStoreReader::get_key_last_modified`].
     pub fn get_key_last_modified(
         &self,
         commit: CommitID,
         key: &[u8],
     ) -> Result<Option<(CommitID, LvmtValue)>> {
-        let key: Box<[u8]> = key.into();
-        Ok(self
-            .key_value_store
-            .get_with_last_modified(&commit, &key)?
-            .and_then(|(modified_at, value)| value.map(|value| (modified_at, value))))
+        self.reader().get_key_last_modified(commit, key)
     }
 
-    /// Get the keys allocated to the key slots of leaf `node_index` of AMT `amt_id`
-    /// at `commit` (`keys()[i]` is in slot `i`), or `None` if no slot is allocated.
+    /// See [`LvmtStoreReader::get_leaf_keys`].
     pub fn get_leaf_keys(
         &self,
         commit: CommitID,
         amt_id: &AmtId,
         node_index: u16,
     ) -> Result<Option<AllocationKeyInfo>> {
-        let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit, false)?;
-        slot_alloc_view.get(&amt_id.child(node_index))
+        self.reader().get_leaf_keys(commit, amt_id, node_index)
     }
 
-    /// The leaf values of the root AMT at `commit`: entry `i` is the version of the
-    /// depth-1 AMT `[i]`, i.e. slot 5 of root leaf `i` (0 if that AMT was never
-    /// written). The root AMT has no keys, so these are its whole leaf values.
-    ///
-    /// - Pending commit: the depth-1 AMTs changed on the pending path to `commit`
-    ///   (read once per pending node), then point lookups at the latest historical
-    ///   commit for the other leaves only; the shared checked-out state is not
-    ///   touched.
-    /// - Latest historical commit: one point lookup per leaf.
-    /// - Older historical commit: from the nearest base among the stored
-    ///   checkpoints and the latest historical commit, corrected by the number of
-    ///   depth-1 AMT changes in between (see [`super::checkpoint`]); direct point
-    ///   lookups if no base is close enough.
+    /// See [`LvmtStoreReader::get_root_leaf_versions`].
     pub fn get_root_leaf_versions(&self, commit: CommitID) -> Result<Vec<u64>> {
-        let Some(changes) = self
-            .amt_node_store
-            .get_pending_path_changes(&commit, |amt_id| amt_id.len() == 1)?
-        else {
-            return self.get_historical_root_leaf_versions(commit);
-        };
-
-        let mut versions = vec![0u64; ROOT_LEAF_COUNT];
-        let mut known = vec![false; ROOT_LEAF_COUNT];
-        for (amt_id, point) in changes {
-            let i = amt_id[0] as usize;
-            debug_assert!(point.is_some(), "AMT nodes are never deleted");
-            versions[i] = point.map_or(0, |p| p.version);
-            known[i] = true;
-        }
-        if let Some(base) = self.amt_node_store.get_latest_historical_commit() {
-            self.read_root_leaf_versions(base, &mut versions, Some(&known))?;
-        }
-        Ok(versions)
+        self.reader().get_root_leaf_versions(commit)
     }
 
-    /// Point lookups of the root leaf versions at `commit` into `versions`,
-    /// skipping the leaves marked in `skip`.
-    fn read_root_leaf_versions(
-        &self,
-        commit: CommitID,
-        versions: &mut [u64],
-        skip: Option<&[bool]>,
-    ) -> Result<()> {
-        let view = self.amt_node_store.get_versioned_store(&commit, false)?;
-        for (i, version) in versions.iter_mut().enumerate() {
-            if skip.is_some_and(|skip| skip[i]) {
-                continue;
-            }
-            *version = view
-                .get(&AmtId::root().child(i as u16))?
-                .map_or(0, |p| p.version);
-        }
-        Ok(())
-    }
-
-    fn get_historical_root_leaf_versions(&self, commit: CommitID) -> Result<Vec<u64>> {
-        let mut versions = vec![0u64; ROOT_LEAF_COUNT];
-        let tip = self.amt_node_store.get_latest_historical_commit();
-        let q = self
-            .amt_node_store
-            .get_history_number_by_commit_id(commit)?;
-        let tip = tip.expect("a historical commit exists");
-        if tip == commit {
-            self.read_root_leaf_versions(commit, &mut versions, None)?;
-            return Ok(versions);
-        }
-        let tip_n = self.amt_node_store.get_history_number_by_commit_id(tip)?;
-
-        // Candidate bases with their costs, in commits to scan. Reading the tip
-        // costs about as much as scanning `TIP_READ_COST` commits, reading every
-        // leaf at `commit` directly about `DIRECT_READ_COST`.
-        const TIP_READ_COST: u64 = 50;
-        const DIRECT_READ_COST: u64 = 500;
-        let s = self.proof_config.checkpoint_interval;
-        let floor = q - q % s;
-        let mut candidates = vec![
-            (q - floor, Some(floor)),
-            ((tip_n - q) + TIP_READ_COST, None),
-        ];
-        if floor + s <= tip_n {
-            candidates.push((floor + s - q, Some(floor + s)));
-        }
-        candidates.sort();
-
-        let mut base = None;
-        for (cost, checkpoint) in candidates {
-            if cost >= DIRECT_READ_COST {
-                break;
-            }
-            match checkpoint {
-                Some(n) => {
-                    if let Some(stored) = self.checkpoints.get(&n)? {
-                        versions = stored.into_owned().0;
-                        base = Some(n);
-                        break;
-                    }
-                }
-                None => {
-                    self.read_root_leaf_versions(tip, &mut versions, None)?;
-                    base = Some(tip_n);
-                    break;
-                }
-            }
-        }
-        let Some(base) = base else {
-            self.read_root_leaf_versions(commit, &mut versions, None)?;
-            return Ok(versions);
-        };
-
-        // A depth-1 AMT version goes up by one in every commit that changes it.
-        let (from, to) = if base > q { (q, base) } else { (base, q) };
-        for n in from + 1..=to {
-            for (amt_id, _) in self
-                .amt_node_store
-                .get_historical_changes_by_number(n, AmtId::root())?
-            {
-                if amt_id.len() == 1 {
-                    let v = &mut versions[amt_id[0] as usize];
-                    *v = if base > q { *v - 1 } else { *v + 1 };
-                }
-            }
-        }
-        Ok(versions)
-    }
-
-    /// Get the allocated key slots of every leaf of AMT `amt_id` at `commit`, as
-    /// `(node_index, keys)` in increasing `node_index`. Leaves without an allocated
-    /// slot are omitted.
+    /// See [`LvmtStoreReader::get_amt_slot_keys`].
     pub fn get_amt_slot_keys(
         &self,
         commit: CommitID,
         amt_id: &AmtId,
     ) -> Result<Vec<(u16, AllocationKeyInfo)>> {
-        let slot_alloc_view = self.slot_alloc_store.get_versioned_store(&commit, false)?;
-        // Leaf ids of `amt_id` are `amt_id ‖ index`; the range also covers deeper ids
-        // (leaves of its descendant AMTs), which are filtered out.
-        let leaf_len = amt_id.len() + 1;
-        Ok(slot_alloc_view
-            .iter_range(amt_id.child(0), amt_id.prefix_successor())?
-            .filter(|(node_id, _)| node_id.len() == leaf_len)
-            .map(|(node_id, info)| (node_id[leaf_len - 1], info))
-            .collect())
+        self.reader().get_amt_slot_keys(commit, amt_id)
     }
 
-    /// All AMT commitments updated by `commit`, which must be in the historical
-    /// part, in increasing `AmtId` order (the root AMT first, if updated).
+    /// See [`LvmtStoreReader::get_historical_amt_changes`].
     pub(crate) fn get_historical_amt_changes(
         &self,
         commit: CommitID,
     ) -> Result<Vec<(AmtId, CurvePointWithVersion)>> {
-        self.amt_node_store
-            .get_historical_commit_changes(&commit, AmtId::root())
+        self.reader().get_historical_amt_changes(commit)
     }
 
-    /// Get the commit at which the commitment of AMT `amt_id` was last updated as of
-    /// `commit`, together with the commitment written there.
-    ///
-    /// For a non-root AMT, that commit's auth-change tree contains
-    /// `amt_change_hash(amt_id, commitment)`. Returns `None` if the AMT was never
-    /// updated up to `commit`.
+    /// See [`LvmtStoreReader::get_amt_last_modified`].
     pub fn get_amt_last_modified(
         &self,
         commit: CommitID,
         amt_id: &AmtId,
     ) -> Result<Option<(CommitID, CurvePointWithVersion)>> {
-        Ok(self
-            .amt_node_store
-            .get_with_last_modified(&commit, amt_id)?
-            .and_then(|(modified_at, value)| value.map(|value| (modified_at, value))))
+        self.reader().get_amt_last_modified(commit, amt_id)
     }
 
     pub fn get(&self, commit: CommitID, key: Box<[u8]>) -> Result<Option<LvmtValue>> {
@@ -570,7 +363,10 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
         // The MMR of the ancestors: the parent's entry holds the peaks over the state
         // roots at heights `0..=height(parent)`.
         let (height, parent_peaks) = match old_commit {
-            Some(old) => (self.commit_height(old)? + 1, self.mmr_entry(old)?.peaks),
+            Some(old) => {
+                let reader = self.reader();
+                (reader.commit_height(old)? + 1, reader.mmr_entry(old)?.peaks)
+            }
             None => (0, vec![]),
         };
         let hroot = bag_peaks(height, &parent_peaks);
@@ -752,29 +548,155 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
 
 /// Read-only variant of [`LvmtStore`] that holds shared references to the caches.
 ///
-/// This enables concurrent read access when `LvmtStorage` is protected by an `RwLock`.
+/// This enables concurrent read access when `LvmtStorage` is protected by an `RwLock`:
+/// nothing here checks out a commit or writes, so reads and proofs can run beside a
+/// writer holding the lock for `commit`.
 pub struct LvmtStoreReader<'cache, 'db, P: DatabaseTrait<PendingTableName>> {
     pending_persistence_backend: Arc<P>,
     key_value_reader: VersionedStoreReader<'cache, 'db, FlatKeyValue, P>,
+    amt_node_reader: VersionedStoreReader<'cache, 'db, AmtNodes, P>,
+    slot_alloc_reader: VersionedStoreReader<'cache, 'db, SlotAllocations, P>,
+    auth_changes: KeyValueStoreBulks<'static, AuthChangeTable>,
+    checkpoints: TableReader<'static, RootLeafCheckpointTable>,
+    proof_config: ProofConfig,
 }
 
 impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'db, P> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pending_persistence_backend: Arc<P>,
         key_value_reader: VersionedStoreReader<'cache, 'db, FlatKeyValue, P>,
+        amt_node_reader: VersionedStoreReader<'cache, 'db, AmtNodes, P>,
+        slot_alloc_reader: VersionedStoreReader<'cache, 'db, SlotAllocations, P>,
+        auth_changes: KeyValueStoreBulks<'static, AuthChangeTable>,
+        checkpoints: TableReader<'static, RootLeafCheckpointTable>,
+        proof_config: ProofConfig,
     ) -> Self {
         Self {
             pending_persistence_backend,
             key_value_reader,
+            amt_node_reader,
+            slot_alloc_reader,
+            auth_changes,
+            checkpoints,
+            proof_config,
         }
     }
 
+    /// Get the state root of the given commit.
+    /// If not found in the pending persistence db, return `None`.
     pub fn get_state_root(&self, commit: CommitID) -> Result<Option<StateRoot>> {
         let state_root_view = Arc::new(self.pending_persistence_backend.view::<StateRootTable>()?);
         Ok(state_root_view.get(&commit)?.map(|x| x.into_owned()))
     }
 
-    /// See [`LvmtStore::get_key_last_modified`].
+    /// Get the commitment of the root AMT at the given commit.
+    ///
+    /// Returns the default (identity point, version 0) if the root AMT has never
+    /// been changed up to this commit.
+    pub fn get_root_commitment(&self, commit: CommitID) -> Result<CurvePointWithVersion> {
+        let amt_node_view = self.amt_node_reader.get_versioned_store(&commit, false)?;
+        Ok(amt_node_view.get(&AmtId::root())?.unwrap_or_default())
+    }
+
+    /// Get a node of the auth-change tree written by the given commit.
+    pub fn get_auth_change_node(
+        &self,
+        commit: CommitID,
+        key: &AuthChangeKey,
+    ) -> Result<Option<AuthChangeNode>> {
+        self.auth_changes.get_versioned_key(&commit, key)
+    }
+
+    /// Get the root hash of the auth-change tree written by the given commit.
+    ///
+    /// Returns [`EMPTY_AUTH_CHANGE_ROOT`] for a commit without any change, and
+    /// `None` if the commit is unknown to the pending persistence db (i.e. its
+    /// state root is not recorded).
+    pub fn get_auth_change_root(&self, commit: CommitID) -> Result<Option<H256>> {
+        if self.get_state_root(commit)?.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(
+            self.get_auth_change_node(commit, &AuthChangeKey::root())?
+                .map_or(EMPTY_AUTH_CHANGE_ROOT, |node| node.hash()),
+        ))
+    }
+
+    /// The MMR nodes written by `commit` (see [`super::mmr`]), or `None` if unknown
+    /// to the pending persistence db.
+    pub fn get_mmr_entry(&self, commit: CommitID) -> Result<Option<MmrEntry>> {
+        let view = self.pending_persistence_backend.view::<MmrTable>()?;
+        Ok(view.get(&commit)?.map(|x| x.into_owned()))
+    }
+
+    fn mmr_entry(&self, commit: CommitID) -> Result<MmrEntry> {
+        self.get_mmr_entry(commit)?
+            .ok_or(StorageError::MmrEntryNotFound(commit))
+    }
+
+    fn commit_height(&self, commit: CommitID) -> Result<u64> {
+        self.key_value_reader
+            .get_commit_height(&commit)?
+            .ok_or(StorageError::CommitIDNotFound)
+    }
+
+    /// The history accumulator of `commit`: the MMR root over the state roots of
+    /// its ancestors, as hashed into its state root.
+    pub fn get_hroot(&self, commit: CommitID) -> Result<H256> {
+        let height = self.commit_height(commit)?;
+        if height == 0 {
+            return Ok(EMPTY_HROOT);
+        }
+        let parent = self
+            .key_value_reader
+            .get_ancestor_at_height(&commit, height - 1)?;
+        Ok(bag_peaks(height, &self.mmr_entry(parent)?.peaks))
+    }
+
+    /// Proof that the state root of `ancestor`, a strict ancestor of `commit`, is
+    /// accumulated in the `hroot` of `commit`.
+    pub fn prove_hroot_leaf(&self, commit: CommitID, ancestor: CommitID) -> Result<MmrProof> {
+        let leaf_count = self.commit_height(commit)?;
+        let leaf_index = self.commit_height(ancestor)?;
+        if leaf_index >= leaf_count
+            || self
+                .key_value_reader
+                .get_ancestor_at_height(&commit, leaf_index)?
+                != ancestor
+        {
+            return Err(StorageError::ProofUnavailable(format!(
+                "{ancestor:?} is not a strict ancestor of {commit:?}"
+            )));
+        }
+        let siblings = MmrProof::sibling_positions(leaf_count, leaf_index)
+            .expect("leaf_index < leaf_count")
+            .into_iter()
+            .map(|(level, index)| {
+                let creator = self
+                    .key_value_reader
+                    .get_ancestor_at_height(&commit, creating_leaf(level, index))?;
+                Ok(self.mmr_entry(creator)?.created[level as usize])
+            })
+            .collect::<Result<_>>()?;
+        let parent = self
+            .key_value_reader
+            .get_ancestor_at_height(&commit, leaf_count - 1)?;
+        Ok(MmrProof {
+            leaf_count,
+            leaf_index,
+            siblings,
+            peaks: self.mmr_entry(parent)?.peaks,
+        })
+    }
+
+    /// Get the commit at which `key` was last written as of `commit` (the closest
+    /// ancestor-or-self that wrote it), together with the value written there.
+    ///
+    /// Its auth-change tree is the one containing `key_value_hash(key, value)`.
+    /// Returns `None` if `key` was never written up to `commit`. LVMT never deletes
+    /// at the versioned-store level (a deleted key keeps an `LvmtValue` with
+    /// `value: None`), so a found entry always carries a value.
     pub fn get_key_last_modified(
         &self,
         commit: CommitID,
@@ -784,6 +706,189 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'd
         Ok(self
             .key_value_reader
             .get_with_last_modified(&commit, &key)?
+            .and_then(|(modified_at, value)| value.map(|value| (modified_at, value))))
+    }
+
+    /// Get the keys allocated to the key slots of leaf `node_index` of AMT `amt_id`
+    /// at `commit` (`keys()[i]` is in slot `i`), or `None` if no slot is allocated.
+    pub fn get_leaf_keys(
+        &self,
+        commit: CommitID,
+        amt_id: &AmtId,
+        node_index: u16,
+    ) -> Result<Option<AllocationKeyInfo>> {
+        let slot_alloc_view = self.slot_alloc_reader.get_versioned_store(&commit, false)?;
+        slot_alloc_view.get(&amt_id.child(node_index))
+    }
+
+    /// The leaf values of the root AMT at `commit`: entry `i` is the version of the
+    /// depth-1 AMT `[i]`, i.e. slot 5 of root leaf `i` (0 if that AMT was never
+    /// written). The root AMT has no keys, so these are its whole leaf values.
+    ///
+    /// - Pending commit: the depth-1 AMTs changed on the pending path to `commit`
+    ///   (read once per pending node), then point lookups at the latest historical
+    ///   commit for the other leaves only; the shared checked-out state is not
+    ///   touched.
+    /// - Latest historical commit: one point lookup per leaf.
+    /// - Older historical commit: from the nearest base among the stored
+    ///   checkpoints and the latest historical commit, corrected by the number of
+    ///   depth-1 AMT changes in between (see [`super::checkpoint`]); direct point
+    ///   lookups if no base is close enough.
+    pub fn get_root_leaf_versions(&self, commit: CommitID) -> Result<Vec<u64>> {
+        let Some(changes) = self
+            .amt_node_reader
+            .get_pending_path_changes(&commit, |amt_id| amt_id.len() == 1)?
+        else {
+            return self.get_historical_root_leaf_versions(commit);
+        };
+
+        let mut versions = vec![0u64; ROOT_LEAF_COUNT];
+        let mut known = vec![false; ROOT_LEAF_COUNT];
+        for (amt_id, point) in changes {
+            let i = amt_id[0] as usize;
+            debug_assert!(point.is_some(), "AMT nodes are never deleted");
+            versions[i] = point.map_or(0, |p| p.version);
+            known[i] = true;
+        }
+        if let Some(base) = self.amt_node_reader.get_latest_historical_commit() {
+            self.read_root_leaf_versions(base, &mut versions, Some(&known))?;
+        }
+        Ok(versions)
+    }
+
+    /// Point lookups of the root leaf versions at `commit` into `versions`,
+    /// skipping the leaves marked in `skip`.
+    fn read_root_leaf_versions(
+        &self,
+        commit: CommitID,
+        versions: &mut [u64],
+        skip: Option<&[bool]>,
+    ) -> Result<()> {
+        let view = self.amt_node_reader.get_versioned_store(&commit, false)?;
+        for (i, version) in versions.iter_mut().enumerate() {
+            if skip.is_some_and(|skip| skip[i]) {
+                continue;
+            }
+            *version = view
+                .get(&AmtId::root().child(i as u16))?
+                .map_or(0, |p| p.version);
+        }
+        Ok(())
+    }
+
+    fn get_historical_root_leaf_versions(&self, commit: CommitID) -> Result<Vec<u64>> {
+        let mut versions = vec![0u64; ROOT_LEAF_COUNT];
+        let tip = self.amt_node_reader.get_latest_historical_commit();
+        let q = self
+            .amt_node_reader
+            .get_history_number_by_commit_id(commit)?;
+        let tip = tip.expect("a historical commit exists");
+        if tip == commit {
+            self.read_root_leaf_versions(commit, &mut versions, None)?;
+            return Ok(versions);
+        }
+        let tip_n = self.amt_node_reader.get_history_number_by_commit_id(tip)?;
+
+        // Candidate bases with their costs, in commits to scan. Reading the tip
+        // costs about as much as scanning `TIP_READ_COST` commits, reading every
+        // leaf at `commit` directly about `DIRECT_READ_COST`.
+        const TIP_READ_COST: u64 = 50;
+        const DIRECT_READ_COST: u64 = 500;
+        let s = self.proof_config.checkpoint_interval;
+        let floor = q - q % s;
+        let mut candidates = vec![
+            (q - floor, Some(floor)),
+            ((tip_n - q) + TIP_READ_COST, None),
+        ];
+        if floor + s <= tip_n {
+            candidates.push((floor + s - q, Some(floor + s)));
+        }
+        candidates.sort();
+
+        let mut base = None;
+        for (cost, checkpoint) in candidates {
+            if cost >= DIRECT_READ_COST {
+                break;
+            }
+            match checkpoint {
+                Some(n) => {
+                    if let Some(stored) = self.checkpoints.get(&n)? {
+                        versions = stored.into_owned().0;
+                        base = Some(n);
+                        break;
+                    }
+                }
+                None => {
+                    self.read_root_leaf_versions(tip, &mut versions, None)?;
+                    base = Some(tip_n);
+                    break;
+                }
+            }
+        }
+        let Some(base) = base else {
+            self.read_root_leaf_versions(commit, &mut versions, None)?;
+            return Ok(versions);
+        };
+
+        // A depth-1 AMT version goes up by one in every commit that changes it.
+        let (from, to) = if base > q { (q, base) } else { (base, q) };
+        for n in from + 1..=to {
+            for (amt_id, _) in self
+                .amt_node_reader
+                .get_historical_changes_by_number(n, AmtId::root())?
+            {
+                if amt_id.len() == 1 {
+                    let v = &mut versions[amt_id[0] as usize];
+                    *v = if base > q { *v - 1 } else { *v + 1 };
+                }
+            }
+        }
+        Ok(versions)
+    }
+
+    /// Get the allocated key slots of every leaf of AMT `amt_id` at `commit`, as
+    /// `(node_index, keys)` in increasing `node_index`. Leaves without an allocated
+    /// slot are omitted.
+    pub fn get_amt_slot_keys(
+        &self,
+        commit: CommitID,
+        amt_id: &AmtId,
+    ) -> Result<Vec<(u16, AllocationKeyInfo)>> {
+        let slot_alloc_view = self.slot_alloc_reader.get_versioned_store(&commit, false)?;
+        // Leaf ids of `amt_id` are `amt_id ‖ index`; the range also covers deeper ids
+        // (leaves of its descendant AMTs), which are filtered out.
+        let leaf_len = amt_id.len() + 1;
+        Ok(slot_alloc_view
+            .iter_range(amt_id.child(0), amt_id.prefix_successor())?
+            .filter(|(node_id, _)| node_id.len() == leaf_len)
+            .map(|(node_id, info)| (node_id[leaf_len - 1], info))
+            .collect())
+    }
+
+    /// All AMT commitments updated by `commit`, which must be in the historical
+    /// part, in increasing `AmtId` order (the root AMT first, if updated).
+    pub(crate) fn get_historical_amt_changes(
+        &self,
+        commit: CommitID,
+    ) -> Result<Vec<(AmtId, CurvePointWithVersion)>> {
+        self.amt_node_reader
+            .get_historical_commit_changes(&commit, AmtId::root())
+    }
+
+    /// Get the commit at which the commitment of AMT `amt_id` was last updated as of
+    /// `commit`, together with the commitment written there.
+    ///
+    /// For a non-root AMT, that commit's auth-change tree contains
+    /// `amt_change_hash(amt_id, commitment)`. Returns `None` if the AMT was never
+    /// updated up to `commit`.
+    pub fn get_amt_last_modified(
+        &self,
+        commit: CommitID,
+        amt_id: &AmtId,
+    ) -> Result<Option<(CommitID, CurvePointWithVersion)>> {
+        Ok(self
+            .amt_node_reader
+            .get_with_last_modified(&commit, amt_id)?
             .and_then(|(modified_at, value)| value.map(|value| (modified_at, value))))
     }
 

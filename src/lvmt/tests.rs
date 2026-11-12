@@ -1725,12 +1725,25 @@ fn test_lvmt_root_leaf_checkpoints() {
             .collect()
     };
     let check_all = |db: &mut Db, chain: &[CommitID]| {
+        let expected: Vec<_> = {
+            let lvmt = db.as_manager().unwrap();
+            chain.iter().map(|c| direct(&lvmt, *c)).collect()
+        };
         let lvmt = db.as_manager().unwrap();
         for (h, c) in chain.iter().enumerate() {
             assert_eq!(
                 lvmt.get_root_leaf_versions(*c).unwrap(),
-                direct(&lvmt, *c),
+                expected[h],
                 "height {h}"
+            );
+        }
+        drop(lvmt);
+        let reader = db.as_reader().unwrap();
+        for (h, c) in chain.iter().enumerate() {
+            assert_eq!(
+                reader.get_root_leaf_versions(*c).unwrap(),
+                expected[h],
+                "reader, height {h}"
             );
         }
     };
