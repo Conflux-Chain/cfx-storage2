@@ -28,13 +28,13 @@ impl<'db, T: TableSchema> KeyValueStoreBulks<'db, T> {
     }
 }
 
-impl<'db, T: TableSchema> Clone for KeyValueStoreBulks<'db, T> {
+impl<T: TableSchema> Clone for KeyValueStoreBulks<'_, T> {
     fn clone(&self) -> Self {
         KeyValueStoreBulks(self.0.clone())
     }
 }
 
-impl<'a, K, V, C, T, TN> KeyValueStoreBulksTrait<K, V, C, TN> for KeyValueStoreBulks<'a, T>
+impl<K, V, C, T, TN> KeyValueStoreBulksTrait<K, V, C, TN> for KeyValueStoreBulks<'_, T>
 where
     TN: TableNameTrait,
     T: TableSchema<Key = ChangeKey<C, K>, Value = V, TableName = TN>,

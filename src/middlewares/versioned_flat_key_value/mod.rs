@@ -79,8 +79,8 @@ pub struct VersionedStore<
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    VersionedStore<'cache, 'db, T, P>
+impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStore<'cache, '_, T, P>
 {
     pub fn is_in_historical_part(&self, commit: &CommitID) -> Result<bool> {
         if self.commit_id_table.get(commit)?.is_some() {
@@ -118,11 +118,10 @@ impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>
         db: Arc<D>,
         pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>, P>,
     ) -> Result<Self> {
-        let history_index_table = Arc::from(db.view::<HistoryIndicesTable<T>>()?);
-        let commit_id_table = Arc::from(db.view::<CommitIDSchema>()?);
-        let history_number_table = Arc::from(db.view::<HistoryNumberSchema>()?);
-        let change_history_table =
-            KeyValueStoreBulks::new(Arc::from(db.view::<HistoryChangeTable<T>>()?));
+        let history_index_table = db.view::<HistoryIndicesTable<T>>()?;
+        let commit_id_table = db.view::<CommitIDSchema>()?;
+        let history_number_table = db.view::<HistoryNumberSchema>()?;
+        let change_history_table = KeyValueStoreBulks::new(db.view::<HistoryChangeTable<T>>()?);
 
         let versioned_store = VersionedStore {
             pending_part,
@@ -398,10 +397,8 @@ pub fn confirm_maps_to_history<
     to_confirm_maps: NonEmpty<HashMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    let history_index_table =
-        db.view::<HistoryIndicesTable<T>>()?;
-    let change_history_table =
-        KeyValueStoreBulks::new(Arc::from(db.view::<HistoryChangeTable<T>>()?));
+    let history_index_table = db.view::<HistoryIndicesTable<T>>()?;
+    let change_history_table = KeyValueStoreBulks::new(db.view::<HistoryChangeTable<T>>()?);
 
     let mut history_index_cache = HistoryIndexCache::new();
     for (delta_height, updates) in to_confirm_maps.into_iter().enumerate() {

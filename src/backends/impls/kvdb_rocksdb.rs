@@ -1,8 +1,14 @@
 use std::{
-    any::{Any, TypeId}, borrow::{Borrow, Cow}, collections::HashMap, marker::PhantomData, num::NonZeroUsize, path::Path, sync::{
+    any::{Any, TypeId},
+    borrow::{Borrow, Cow},
+    collections::HashMap,
+    marker::PhantomData,
+    num::NonZeroUsize,
+    path::Path,
+    sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
-    }
+    },
 };
 
 use super::super::{
@@ -11,7 +17,10 @@ use super::super::{
     DatabaseTrait, TableIter, TableRead,
 };
 use crate::{
-    backends::{table_name::TableNameTrait, write_schema::HybridWriteSchema, HistoricalTableName, TableReader},
+    backends::{
+        table_name::TableNameTrait, write_schema::HybridWriteSchemaNoSubkey, HistoricalTableName,
+        TableReader,
+    },
     errors::{DatabaseError, Result},
 };
 
@@ -55,7 +64,7 @@ type TableCache<T> = LruCache<Box<<T as TableSchema>::Key>, Option<Box<<T as Tab
 pub struct CachedRocksDBColumn<T: TableSchema> {
     col: u32,
     inner: Arc<kvdb_rocksdb::Database>,
-    cache: Arc<Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>>,
+    cache: Arc<Mutex<TableCache<T>>>,
     metrics: Arc<CacheMetrics>,
 }
 
@@ -69,7 +78,10 @@ impl<T: TableSchema> TableRead<T> for UncachedRocksDBColumn {
         }
     }
 
-    fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
+    fn iter<'a, 'b>(&'a self, key: &T::Key) -> Result<TableIter<'a, 'b, T>>
+    where
+        'a: 'b,
+    {
         let iter = self
             .inner
             .iter_from(self.col, &key.encode())
@@ -135,8 +147,7 @@ impl<T: TableSchema> TableRead<T> for CachedRocksDBColumn<T> {
         // 3. write db result to cache
         {
             let mut cache = self.cache.lock();
-            let evicted_item = 
-            cache.put(
+            let evicted_item = cache.put(
                 Box::new(key.clone()),
                 db_result.as_ref().map(|v| Box::new(v.clone())),
             );
@@ -150,7 +161,10 @@ impl<T: TableSchema> TableRead<T> for CachedRocksDBColumn<T> {
         Ok(db_result.map(Cow::Owned))
     }
 
-    fn iter(&self, key: &T::Key) -> Result<TableIter<T>> {
+    fn iter<'a, 'b>(&'a self, key: &T::Key) -> Result<TableIter<'a, 'b, T>>
+    where
+        'a: 'b,
+    {
         let iter = self
             .inner
             .iter_from(self.col, &key.encode())
@@ -198,7 +212,7 @@ pub struct WrappedRocksDb<TN: TableNameTrait> {
     // This is crucial for the type system to associate WrappedRocksDb<HistoricalTableName>
     // with HistoricalTableName.
     _phantom: PhantomData<TN>,
-    
+
     caches: Mutex<HashMap<u32, Arc<dyn Any + Send + Sync>>>,
     // metrics for each cache
     metrics: Mutex<HashMap<u32, Arc<CacheMetrics>>>,
@@ -220,7 +234,11 @@ impl<TN: TableNameTrait> WrappedRocksDb<TN> {
         const TABLE_WIDTH: usize = 140;
 
         println!("{:-<width$}", "", width = TABLE_WIDTH);
-        println!("{:^width$}", "Cache Performance Statistics", width = TABLE_WIDTH);
+        println!(
+            "{:^width$}",
+            "Cache Performance Statistics",
+            width = TABLE_WIDTH
+        );
         println!("{:-<width$}", "", width = TABLE_WIDTH);
         println!(
             "{:<12} | {:<28} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10}",
@@ -249,14 +267,13 @@ impl<TN: TableNameTrait> WrappedRocksDb<TN> {
                 "N/A".to_string()
             };
 
-            let table_name: String = TN::try_from(*col_id)
-                .map_or_else(
-                    |_| format!("Invalid Col ID ({})", col_id),
-                    |table_instance| {
-                        let static_str: &'static str = table_instance.into();
-                        static_str.to_string()
-                    }
-                );
+            let table_name: String = TN::try_from(*col_id).map_or_else(
+                |_| format!("Invalid Col ID ({})", col_id),
+                |table_instance| {
+                    let static_str: &'static str = table_instance.into();
+                    static_str.to_string()
+                },
+            );
 
             println!(
                 "{:<12} | {:<28} | {:>10} | {:>9.2}% | {:>10} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10}",
@@ -278,10 +295,9 @@ impl<TN: TableNameTrait> WrappedRocksDb<TN> {
 
 impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
     // type TableID = u32;
-    type WriteSchema = HybridWriteSchema<TN>;
+    type WriteSchema = HybridWriteSchemaNoSubkey<TN>;
 
     fn view<T: TableSchema<TableName = TN>>(self: &Arc<Self>) -> Result<TableReader<'static, T>> {
-        const CACHE_CAPACITY: usize = 200_000;
         let col_id: u32 = T::NAME.into();
 
         if let Some(cache_capacity) = TN::get_cache_capacity(col_id) {
@@ -329,23 +345,25 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
         let mut tx = kvdb::DBTransaction::new();
 
         for op in changes.drain() {
-            let col_id = op.col_id();
+            let col_id = op.col_id().into();
             if let Some(cache_any) = caches_map.get(&col_id) {
-                let metrics = metrics_map.get(&col_id).expect("Metrics should exist if cache exists");
-                TN::apply_cache_update_policy(col_id, &op, cache_any);
+                let metrics = metrics_map
+                    .get(&col_id)
+                    .expect("Metrics should exist if cache exists");
+                TN::apply_cache_update_policy(col_id, op.as_ref(), cache_any, metrics);
             }
 
             if let Some(v) = op.raw_value() {
-                tx.put_vec(op.col_id(), op.raw_key(), v.to_vec());
+                tx.put_vec(col_id, op.raw_key(), v.to_vec());
             } else {
-                tx.delete(op.col_id(), op.raw_key())
+                tx.delete(col_id, op.raw_key())
             }
         }
 
         drop(caches_map);
         drop(metrics_map);
 
-        // self.print_cache_stats();
+        self.print_cache_stats();
 
         Ok(KeyValueDB::write(&*self.inner, tx)?)
     }

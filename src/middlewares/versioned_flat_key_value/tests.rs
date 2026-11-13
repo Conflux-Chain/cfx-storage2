@@ -33,9 +33,7 @@ use rand_chacha::{
     ChaChaRng,
 };
 
-impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
-    VersionedStore<'cache, 'db, T, P>
-{
+impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedStore<'_, '_, T, P> {
     #[cfg(test)]
     pub fn check_consistency(&self) -> Result<()> {
         if self.check_consistency_inner().is_err() {
@@ -999,15 +997,8 @@ where
     }
 }
 
-impl<
-        'a,
-        'b,
-        'c,
-        'cache,
-        'db,
-        T: VersionedKeyValueSchema<Key = u64, Value = u64>,
-        P: DatabaseTrait<PendingTableName>,
-    > VersionedStoreProxy<'a, 'b, 'c, 'cache, 'db, T, P>
+impl<T: VersionedKeyValueSchema<Key = u64, Value = u64>, P: DatabaseTrait<PendingTableName>>
+    VersionedStoreProxy<'_, '_, '_, '_, '_, T, P>
 {
     fn get_versioned_store(
         &self,

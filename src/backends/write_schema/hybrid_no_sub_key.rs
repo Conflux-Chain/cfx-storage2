@@ -1,39 +1,41 @@
 use std::{
     any::Any,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
 };
 
 use lru::LruCache;
 use parking_lot::Mutex;
 
-use crate::backends::{serde::Encode, TableNameTrait, TableSchema};
+use crate::backends::{
+    impls::kvdb_rocksdb::CacheMetrics, serde::Encode, TableNameTrait, TableSchema,
+};
 
 use super::{TableWriteOp, WriteSchemaTrait};
 
-pub struct HybridWriteSchema<Name: TableNameTrait> {
-    inner: Mutex<Vec<Box<dyn GenericWriteOperation<Name>>>>,
+pub struct HybridWriteSchemaNoSubkey<TN: TableNameTrait> {
+    inner: Mutex<Vec<Box<dyn GenericWriteOperation<TN>>>>,
 }
 
-impl<Name: TableNameTrait> HybridWriteSchema<Name> {
+impl<TN: TableNameTrait> HybridWriteSchemaNoSubkey<TN> {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(Vec::new()),
         }
     }
 
-    pub fn drain(self) -> Vec<Box<dyn GenericWriteOperation<Name>>> {
+    pub fn drain(self) -> Vec<Box<dyn GenericWriteOperation<TN>>> {
         self.inner.into_inner()
     }
 }
 
-impl<Name: TableNameTrait> Default for HybridWriteSchema<Name> {
+impl<TN: TableNameTrait> Default for HybridWriteSchemaNoSubkey<TN> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<Name: TableNameTrait> WriteSchemaTrait<Name> for HybridWriteSchema<Name> {
-    fn write<T: TableSchema<TableName = Name>>(&self, op: TableWriteOp<'_, T>) {
+impl<TN: TableNameTrait> WriteSchemaTrait<TN> for HybridWriteSchemaNoSubkey<TN> {
+    fn write<T: TableSchema<TableName = TN>>(&self, op: TableWriteOp<'_, T>) {
         let (key, value) = op;
 
         let raw_key = <T::Key as Encode>::encode_cow(key.clone()).into_owned();
@@ -41,8 +43,8 @@ impl<Name: TableNameTrait> WriteSchemaTrait<Name> for HybridWriteSchema<Name> {
             .clone()
             .map(|v| <T::Value as Encode>::encode_cow(v).into_owned());
 
-        let operation = TypedWriteOperation::<T> {
-            col: T::NAME.into(),
+        let operation = TypedWriteOperation::<TN, T> {
+            col: T::NAME,
             raw_key,
             raw_value,
             structured_key: Box::new(key.into_owned()),
@@ -52,7 +54,10 @@ impl<Name: TableNameTrait> WriteSchemaTrait<Name> for HybridWriteSchema<Name> {
         self.inner.lock().push(Box::new(operation));
     }
 
-    fn write_batch<'a, T: TableSchema<TableName = Name>>(&self, changes: impl IntoIterator<Item = TableWriteOp<'a, T>>) {
+    fn write_batch<'a, T: TableSchema<TableName = TN>>(
+        &self,
+        changes: impl IntoIterator<Item = TableWriteOp<'a, T>>,
+    ) {
         let mut inner = self.inner.lock();
         for op in changes {
             let (key, value) = op;
@@ -60,8 +65,8 @@ impl<Name: TableNameTrait> WriteSchemaTrait<Name> for HybridWriteSchema<Name> {
             let raw_value = value
                 .as_ref()
                 .map(|v| T::Value::encode_cow(v.clone()).into_owned());
-            let operation = TypedWriteOperation::<T> {
-                col: T::NAME.into(),
+            let operation = TypedWriteOperation::<TN, T> {
+                col: T::NAME,
                 raw_key,
                 raw_value,
                 structured_key: Box::new(key.into_owned()),
@@ -72,8 +77,8 @@ impl<Name: TableNameTrait> WriteSchemaTrait<Name> for HybridWriteSchema<Name> {
     }
 }
 
-pub trait GenericWriteOperation<Name: TableNameTrait>: Send + Sync {
-    fn col_id(&self) -> u32;
+pub trait GenericWriteOperation<TN: TableNameTrait>: Send + Sync {
+    fn col_id(&self) -> TN;
 
     fn raw_key(&self) -> &[u8];
 
@@ -81,25 +86,27 @@ pub trait GenericWriteOperation<Name: TableNameTrait>: Send + Sync {
 
     fn structured_key_any(&self) -> &dyn Any;
 
-    fn apply_to_cache(&self, cache_any: &Arc<dyn Any + Send + Sync>);//, metrics: &Arc<CacheMetrics>);
+    fn apply_to_cache(&self, cache_any: &Arc<dyn Any + Send + Sync>, metrics: &Arc<CacheMetrics>);
 
     fn invalidate_in_cache(
         &self,
         cache_any: &Arc<dyn Any + Send + Sync>,
-        // metrics: &Arc<CacheMetrics>,
+        metrics: &Arc<CacheMetrics>,
     );
 }
 
-struct TypedWriteOperation<T: TableSchema> {
-    col: u32,
+struct TypedWriteOperation<TN, T: TableSchema> {
+    col: TN,
     raw_key: Vec<u8>,
     raw_value: Option<Vec<u8>>,
     structured_key: Box<T::Key>,
     structured_value: Option<Box<T::Value>>,
 }
 
-impl<Name: TableNameTrait, T: TableSchema<TableName = Name>> GenericWriteOperation<Name> for TypedWriteOperation<T> {
-    fn col_id(&self) -> u32 {
+impl<TN: TableNameTrait, T: TableSchema<TableName = TN>> GenericWriteOperation<TN>
+    for TypedWriteOperation<TN, T>
+{
+    fn col_id(&self) -> TN {
         self.col
     }
 
@@ -115,18 +122,18 @@ impl<Name: TableNameTrait, T: TableSchema<TableName = Name>> GenericWriteOperati
         &self.structured_key
     }
 
-    fn apply_to_cache(&self, cache_any: &Arc<dyn Any + Send + Sync>) { //, metrics: &Arc<CacheMetrics>) {
+    fn apply_to_cache(&self, cache_any: &Arc<dyn Any + Send + Sync>, metrics: &Arc<CacheMetrics>) {
         if let Ok(typed_cache_arc) = cache_any
             .clone()
             .downcast::<Mutex<LruCache<Box<T::Key>, Option<Box<T::Value>>>>>()
         {
             let mut cache = typed_cache_arc.lock();
-            // let evicted_item =
+            let evicted_item =
                 cache.put(self.structured_key.clone(), self.structured_value.clone());
-            // metrics.puts.fetch_add(1, Ordering::Relaxed);
-            // if evicted_item.is_some() {
-            //     metrics.evictions.fetch_add(1, Ordering::Relaxed);
-            // }
+            metrics.puts.fetch_add(1, Ordering::Relaxed);
+            if evicted_item.is_some() {
+                metrics.evictions.fetch_add(1, Ordering::Relaxed);
+            }
         } else {
             unreachable!();
         }
@@ -135,7 +142,7 @@ impl<Name: TableNameTrait, T: TableSchema<TableName = Name>> GenericWriteOperati
     fn invalidate_in_cache(
         &self,
         cache_any: &Arc<dyn Any + Send + Sync>,
-        // metrics: &Arc<CacheMetrics>,
+        metrics: &Arc<CacheMetrics>,
     ) {
         if let Ok(typed_cache_arc) = cache_any
             .clone()
@@ -143,13 +150,12 @@ impl<Name: TableNameTrait, T: TableSchema<TableName = Name>> GenericWriteOperati
         {
             let mut cache = typed_cache_arc.lock();
             // Just pop! No clones of the value needed.
-            // let popped_item = 
-            cache.pop(&self.structured_key);
-            // if popped_item.is_some() {
-            //     metrics.pops.fetch_add(1, Ordering::Relaxed);
-            // } else {
-            //     metrics.not_pops.fetch_add(1, Ordering::Relaxed);
-            // }
+            let popped_item = cache.pop(&self.structured_key);
+            if popped_item.is_some() {
+                metrics.pops.fetch_add(1, Ordering::Relaxed);
+            } else {
+                metrics.not_pops.fetch_add(1, Ordering::Relaxed);
+            }
         } else {
             unreachable!();
         }

@@ -19,8 +19,8 @@ pub use self::table_name::TableNameTrait;
 
 /// Trait defining the interface for a backend database, which provides multiple tables, each acting as a key-value store.
 pub trait DatabaseTrait<TN: TableNameTrait>: Sized + Send + Sync {
-    /// Type for identifying tables. Different databases may specify different types.
-    /// For example, MDBX uses 'static str, while kvdb-rocksdb uses u32.
+    // /// Type for identifying tables. Different databases may specify different types.
+    // /// For example, MDBX uses 'static str, while kvdb-rocksdb uses u32.
     // type TableID: From<TN> + Send + Sync;
 
     /// Type for collecting write operations.
@@ -37,9 +37,7 @@ pub trait DatabaseTrait<TN: TableNameTrait>: Sized + Send + Sync {
     /// # Returns
     ///
     /// A `Result` containing an implementation of `TableReader` for the specified schema.
-    fn view<T: TableSchema<TableName = TN>>(
-        self: &Arc<Self>,
-    ) -> Result<TableReader<'static, T>>;
+    fn view<T: TableSchema<TableName = TN>>(self: &Arc<Self>) -> Result<TableReader<'static, T>>;
 
     /// Creates a new WriteSchema instance.
     ///

@@ -348,7 +348,7 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
                 .contains_commit_id(&c.get_commit_id())
         };
 
-        if guard.as_ref().map_or(false, obsoleted_commit_id) {
+        if guard.as_ref().is_some_and(obsoleted_commit_id) {
             **guard = None;
         }
     }

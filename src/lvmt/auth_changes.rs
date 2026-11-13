@@ -148,6 +148,7 @@ fn shared_prefix_len<T: PartialEq>(a: &[T], b: &[T]) -> usize {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::iter::repeat_n;
 
     use crate::lvmt::types::test_utils::bytes32_strategy;
     use crate::utils::hash::blake2s_tuple;
@@ -173,8 +174,7 @@ mod tests {
                         return None;
                     }
                     Some(
-                        repeat(MAX_TREE_SIZE)
-                            .take(node_index)
+                        repeat_n(MAX_TREE_SIZE, node_index)
                             .chain(once(node_size))
                             .chain(repeat(MIN_TREE_SIZE))
                             .take(size)

@@ -77,7 +77,7 @@ impl<S: PendingKeyValueSchema> Hash for WalKeySpecificPart<S> {
             WalKeySpecificPart::AddNodeMapKey(key) => {
                 key.hash(state);
             }
-            
+
             WalKeySpecificPart::AddNodeMeta
             | WalKeySpecificPart::ChangeRootMeta
             | WalKeySpecificPart::MakePivotMeta

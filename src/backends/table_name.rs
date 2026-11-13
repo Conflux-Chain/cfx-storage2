@@ -1,4 +1,6 @@
-pub trait TableNameTrait: Send + Sync + 'static + Copy + Into<u32> + Into<&'static str> + TryFrom<u32, Error = ()> {
+pub trait TableNameTrait:
+    Send + Sync + 'static + Copy + Into<u32> + Into<&'static str> + TryFrom<u32, Error = ()>
+{
     /// Returns the total number of Column Families in the Historical DB.
     /// This value can be used directly to configure a RocksDB instance.
     fn num_tables() -> u32;
@@ -7,15 +9,16 @@ pub trait TableNameTrait: Send + Sync + 'static + Copy + Into<u32> + Into<&'stat
 
     /// Returns the cache capacity for a given column, if it is cacheable.
     ///
-    /// Returns `Some(capacity)` if the column should be cached, 
+    /// Returns `Some(capacity)` if the column should be cached,
     /// or `None` if it is not cacheable.
     fn get_cache_capacity(col_id: u32) -> Option<usize>;
 
     /// Applies the appropriate cache update policy for a given column.
     fn apply_cache_update_policy(
         col_id: u32,
-        op: &Box<dyn GenericWriteOperation<Self>>,
+        op: &dyn GenericWriteOperation<Self>,
         cache_any: &Arc<dyn Any + Send + Sync>,
+        metrics: &Arc<CacheMetrics>,
     ) where
         Self: Sized;
 }
@@ -34,9 +37,15 @@ use parking_lot::Mutex;
 // Use a `use` statement to simplify subsequent code.
 use VersionedKVName::*;
 
-use crate::{lvmt::table_schema::{AmtNodes, FlatKeyValue}, middlewares::{table_schema::{HistoryIndicesTable, VersionedKeyValueSchema}, CommitIDSchema, HistoryIndexKey}};
+use crate::{
+    lvmt::table_schema::{AmtNodes, FlatKeyValue},
+    middlewares::{
+        table_schema::{HistoryIndicesTable, VersionedKeyValueSchema},
+        CommitIDSchema, HistoryIndexKey,
+    },
+};
 
-use super::{write_schema::GenericWriteOperation, TableSchema};
+use super::{impls::kvdb_rocksdb::CacheMetrics, write_schema::GenericWriteOperation, TableSchema};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum HistoricalTableName {
@@ -55,10 +64,37 @@ impl TableNameTrait for HistoricalTableName {
 
     fn get_cache_size_for_col(cache_any: &dyn Any, col_id: u32) -> String {
         match col_id {
-            id if id == HistoricalTableName::CommitID.into() => cache_any.downcast_ref::<Mutex<LruCache<Box<<CommitIDSchema as TableSchema>::Key>, Option<Box<<CommitIDSchema as TableSchema>::Value>>>>>().map(|c| c.lock().len()).unwrap_or_default().to_string(),
-            id if id == HistoricalTableName::HistoryIndex(FlatKV).into() => cache_any.downcast_ref::<Mutex<LruCache<Box<<HistoryIndicesTable<FlatKeyValue> as TableSchema>::Key>, Option<Box<<HistoryIndicesTable<FlatKeyValue> as TableSchema>::Value>>>>>().map(|c| c.lock().len()).unwrap_or_default().to_string(),
-            id if id == HistoricalTableName::HistoryIndex(AmtNode).into() => cache_any.downcast_ref::<Mutex<LruCache<Box<<HistoryIndicesTable<AmtNodes> as TableSchema>::Key>, Option<Box<<HistoryIndicesTable<AmtNodes> as TableSchema>::Value>>>>>().map(|c| c.lock().len()).unwrap_or_default().to_string(),
-            _ => "N/A".to_string(), 
+            id if id == HistoricalTableName::CommitID.into() => cache_any
+                .downcast_ref::<Mutex<
+                    LruCache<
+                        Box<<CommitIDSchema as TableSchema>::Key>,
+                        Option<Box<<CommitIDSchema as TableSchema>::Value>>,
+                    >,
+                >>()
+                .map(|c| c.lock().len())
+                .unwrap_or_default()
+                .to_string(),
+            id if id == HistoricalTableName::HistoryIndex(FlatKV).into() => cache_any
+                .downcast_ref::<Mutex<
+                    LruCache<
+                        Box<<HistoryIndicesTable<FlatKeyValue> as TableSchema>::Key>,
+                        Option<Box<<HistoryIndicesTable<FlatKeyValue> as TableSchema>::Value>>,
+                    >,
+                >>()
+                .map(|c| c.lock().len())
+                .unwrap_or_default()
+                .to_string(),
+            id if id == HistoricalTableName::HistoryIndex(AmtNode).into() => cache_any
+                .downcast_ref::<Mutex<
+                    LruCache<
+                        Box<<HistoryIndicesTable<AmtNodes> as TableSchema>::Key>,
+                        Option<Box<<HistoryIndicesTable<AmtNodes> as TableSchema>::Value>>,
+                    >,
+                >>()
+                .map(|c| c.lock().len())
+                .unwrap_or_default()
+                .to_string(),
+            _ => "N/A".to_string(),
         }
     }
 
@@ -80,25 +116,29 @@ impl TableNameTrait for HistoricalTableName {
 
     fn apply_cache_update_policy(
         col_id: u32,
-        op: &Box<dyn GenericWriteOperation<Self>>,
+        op: &dyn GenericWriteOperation<Self>,
         cache_any: &Arc<dyn Any + Send + Sync>,
+        metrics: &Arc<CacheMetrics>,
     ) where
-        Self: Sized
+        Self: Sized,
     {
-        let amt_history_index_col_id: u32 = HistoricalTableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into();
-        
+        let amt_history_index_col_id: u32 =
+            HistoricalTableName::HistoryIndex(crate::backends::VersionedKVName::AmtNode).into();
+
         if col_id == amt_history_index_col_id {
-            if let Some(structured_key) = op.structured_key_any().downcast_ref::<Box<AmtHistoryKey>>() {
+            if let Some(structured_key) =
+                op.structured_key_any().downcast_ref::<Box<AmtHistoryKey>>()
+            {
                 if structured_key.is_latest() {
-                    op.apply_to_cache(cache_any);//, metrics);
+                    op.apply_to_cache(cache_any, metrics);
                 } else {
-                    op.invalidate_in_cache(cache_any);//, metrics);
+                    op.invalidate_in_cache(cache_any, metrics);
                 }
             } else {
                 unreachable!("Type mismatch for AmtNode HistoryIndex key. Expected Box<HistoryIndexKey<<AmtNodes as VersionedKeyValueSchema>::Key>>");
             }
         } else {
-            op.invalidate_in_cache(cache_any);//, metrics);
+            op.invalidate_in_cache(cache_any, metrics);
             // ()
         }
     }
@@ -179,10 +219,11 @@ impl TableNameTrait for PendingTableName {
 
     fn apply_cache_update_policy(
         _col_id: u32,
-        _op: &Box<dyn GenericWriteOperation<Self>>,
+        _op: &dyn GenericWriteOperation<Self>,
         _cache_any: &Arc<dyn Any + Send + Sync>,
+        _metrics: &Arc<CacheMetrics>,
     ) where
-        Self: Sized
+        Self: Sized,
     {
     }
 }
@@ -262,10 +303,11 @@ impl TableNameTrait for MockTableName {
 
     fn apply_cache_update_policy(
         _col_id: u32,
-        _op: &Box<dyn GenericWriteOperation<Self>>,
+        _op: &dyn GenericWriteOperation<Self>,
         _cache_any: &Arc<dyn Any + Send + Sync>,
+        _metrics: &Arc<CacheMetrics>,
     ) where
-        Self: Sized
+        Self: Sized,
     {
     }
 }
@@ -317,7 +359,7 @@ mod tests {
     fn test_historical_get_cache_capacity_exhaustive() {
         for i in 0..HistoricalTableName::num_tables() {
             let table_name = HistoricalTableName::try_from(i).unwrap();
-            
+
             let actual_cacheable_capacity = HistoricalTableName::get_cache_capacity(i);
 
             let expected_cacheable_capacity = match table_name {
@@ -328,11 +370,9 @@ mod tests {
             };
 
             assert_eq!(
-                actual_cacheable_capacity,
-                expected_cacheable_capacity,
+                actual_cacheable_capacity, expected_cacheable_capacity,
                 "get_cache_capacity mismatch for HistoricalTableName::{:?} (col_id {})",
-                table_name,
-                i
+                table_name, i
             );
         }
 
@@ -348,7 +388,7 @@ mod tests {
     fn test_pending_get_cache_capacity_exhaustive() {
         for i in 0..PendingTableName::num_tables() {
             let table_name = PendingTableName::try_from(i).unwrap();
-            
+
             assert_eq!(
                 PendingTableName::get_cache_capacity(i),
                 None,

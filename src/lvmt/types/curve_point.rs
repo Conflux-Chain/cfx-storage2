@@ -73,7 +73,7 @@ impl CurvePoint {
 }
 
 pub fn batch_normalize<'a>(
-    curve_point_iter_mut: impl Iterator<Item = &'a mut CurvePoint> + ExactSizeIterator,
+    curve_point_iter_mut: impl ExactSizeIterator<Item = &'a mut CurvePoint>,
 ) {
     let mut pointers = Vec::with_capacity(curve_point_iter_mut.len());
     let mut proj_points = Vec::with_capacity(curve_point_iter_mut.len());

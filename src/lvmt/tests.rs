@@ -768,7 +768,7 @@ fn test_lvmt_commit_with_empty_changes() {
     clear_dir(pending_path);
 }
 
-impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
+impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
     pub fn check_consistency(&self, commit: CommitID, pp: &AmtParams<PE>) -> Result<()> {
         use std::collections::BTreeSet;
 
@@ -859,7 +859,7 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
 
         // Gather the versions of allocated slots for Amt trees (except the root Amt)
         for (amt_id, curve_point_with_version) in amt_node_view.iter()? {
-            if amt_id.len() > 0 {
+            if !amt_id.is_empty() {
                 let mut parent_amt_id = amt_id;
                 let node_index = parent_amt_id.pop().unwrap();
                 let slot_index = SLOT_SIZE - 1;

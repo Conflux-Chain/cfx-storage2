@@ -138,7 +138,7 @@ impl Encode for [H256; 4] {
         const_assert_eq!(size_of::<[H256; 4]>(), size_of::<[u8; 128]>());
         const_assert_eq!(align_of::<[H256; 4]>(), align_of::<[u8; 128]>());
 
-        let raw = unsafe { transmute::<_, &[u8; 128]>(self) };
+        let raw = unsafe { transmute::<&[ethereum_types::H256; 4], &[u8; 128]>(self) };
         Cow::Borrowed(raw.as_ref())
     }
 }

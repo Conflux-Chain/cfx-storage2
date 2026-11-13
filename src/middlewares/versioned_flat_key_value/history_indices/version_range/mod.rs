@@ -631,10 +631,12 @@ mod tests {
         }
 
         let version_range = if TypeId::of::<T>() == TypeId::of::<u16>() {
-            let vec_u16 = unsafe { std::mem::transmute(vec) };
+            let vec_u16 =
+                unsafe { std::mem::transmute::<std::vec::Vec<T>, std::vec::Vec<u16>>(vec) };
             OffsetBasedVersionRange::U16Vector(vec_u16)
         } else if TypeId::of::<T>() == TypeId::of::<u32>() {
-            let vec_u32 = unsafe { std::mem::transmute(vec) };
+            let vec_u32 =
+                unsafe { std::mem::transmute::<std::vec::Vec<T>, std::vec::Vec<u32>>(vec) };
             OffsetBasedVersionRange::U32Vector(vec_u32)
         } else {
             panic!("T must be either u16 or u32, {:?}", TypeId::of::<T>());

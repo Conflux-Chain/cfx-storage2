@@ -97,7 +97,7 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
 }
 
 // Write
-impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
+impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
     pub fn checkout_current(&mut self, commit: CommitID) -> Result<()> {
         self.key_value_store.checkout_current(commit)
     }
@@ -220,7 +220,7 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> 
         let auth_changes = {
             let auth_change_iter = amt_changes
                 .iter()
-                .filter(|&(amt_id, curve_point)| (amt_id.len() > 0))
+                .filter(|&(amt_id, curve_point)| (!amt_id.is_empty()))
                 .map(|(amt_id, curve_point)| amt_change_hash(amt_id, curve_point));
             let key_value_iter = key_value_changes
                 .iter()
