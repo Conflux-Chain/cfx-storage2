@@ -92,9 +92,12 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             }
             let parent_node = self.get_node_mut_by_slab_index(parent_of_discard);
             parent_node.remove_child_except(&slab_index);
-        } // else // root is already the unique child of its parent, so do nothing
 
-        Ok(true)
+            Ok(true)
+        } else {
+            // root is already the unique child of its parent, so do nothing
+            Ok(false)
+        }
     }
 
     pub fn discard(&mut self, commit_id: S::CommitId) -> PendResult<bool> {

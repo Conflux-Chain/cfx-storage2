@@ -20,6 +20,10 @@ pub const VERSION_RANGE_BYTES: usize = 1 << VERSION_RANGE_BYTES_LOG;
 
 const_assert!(VERSION_RANGE_BYTES == 64 || VERSION_RANGE_BYTES == 128);
 
+/// # ⚠️ SECURITY & CORRECTNESS WARNING: 
+/// This structure cannot be used as a database key unless its Encode implementation is modified.
+/// See the [`crate::backends::serde::Encode`] trait for more details.
+/// 
 /// Tracks version history for a database key through chained records.
 ///
 /// A `HistoryIndices` represents a single record that describes a range of modified version numbers.

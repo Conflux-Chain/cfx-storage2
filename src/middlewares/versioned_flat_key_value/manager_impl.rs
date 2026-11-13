@@ -293,6 +293,7 @@ impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
                     },
                 )))
             } else {
+                // dbg!(&history_number);
                 Ok(SnapshotView::Historical(HistoricalSnapshot::Previous(
                     PreviousHistoricalSnapshot {
                         history_number,

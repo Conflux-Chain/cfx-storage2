@@ -5,6 +5,66 @@ use static_assertions::const_assert_eq;
 
 use crate::errors::{DecResult, DecodeError};
 
+/// A trait for encoding data into a byte sequence, typically for use as keys or values in a KV store.
+///
+/// # ⚠️ SECURITY & CORRECTNESS WARNING: KEY ENCODING
+///
+/// When implementing `Encode` for structures used as **Database Keys**, you must ensure the encoding is
+/// **canonical** and **prefix-free** to preserve correct lexicographical ordering and avoid collisions.
+///
+/// ## The "Concatenation Ambiguity" Problem
+///
+/// If a struct contains multiple fields and the earlier fields are **variable-length** (e.g., `String`, `Vec<u8>`),
+/// simple concatenation is **unsafe**.
+///
+/// ### ❌ Bad Example (Ambiguous)
+///
+/// ```rust,ignore
+/// struct Key {
+///     prefix: String,
+///     id: u32,
+/// }
+/// // If we just concat(prefix, id):
+/// // Case A: prefix="abc", id=1 (encoded as '1') -> "abc1"
+/// // Case B: prefix="ab",  id=c1 (encoded as 'c1') -> "abc1"
+/// // Result: Case A and Case B produce the exact same bytes! This causes data corruption.
+/// ```
+///
+/// ### ❌ Bad Example (Sorting Issue)
+///
+/// Even if they don't collide, variable-length prefixes without length headers destroy ordering:
+/// *   Key A: `[0x01, 0x02]` (vec), `0x05` (suffix) -> `01 02 05`
+/// *   Key B: `[0x01]` (vec),       `0x03` (suffix) -> `01 03`
+/// *   Lexicographical order: B < A.
+/// *   Byte order: `01 02 05` < `01 03` (Wait, `0x02` < `0x03`, so A < B).
+/// *   **Result:** The database sort order does not match the logical sort order.
+///
+/// ## ✅ How to Implement Correctly
+///
+/// 1.  **Fixed-Length Fields:** If a field has a fixed size (e.g., `u64`, `[u8; 32]`, `H256`), simple concatenation is safe.
+/// 2.  **Variable-Length Fields (Middle):** If a variable-length field is **NOT** the last field, you **MUST** prepend its length or use a separator.
+///     *   *Recommendation:* Prepend the length as a Big-Endian integer (e.g., `u32`).
+/// 3.  **Variable-Length Fields (Last):** If the variable-length field is the **very last** component, simple concatenation is usually safe (assuming the prefix is unique).
+///
+/// ## Example Implementation
+///
+/// ```rust,ignore
+/// impl Encode for MyKey {
+///     fn encode(&self) -> Vec<u8> {
+///         let mut out = Vec::new();
+///         
+///         // 1. Variable length field in the middle: MUST add length prefix
+///         let name_bytes = self.name.as_bytes();
+///         out.extend_from_slice(&(name_bytes.len() as u32).to_be_bytes()); // Length header
+///         out.extend_from_slice(name_bytes);
+///
+///         // 2. Fixed length field: Just append
+///         out.extend_from_slice(&self.id.to_be_bytes());
+///
+///         out
+///     }
+/// }
+/// ```
 pub trait Encode: ToOwned {
     fn encode(&self) -> Cow<[u8]>;
     fn encode_owned(input: <Self as ToOwned>::Owned) -> Vec<u8> {

@@ -17,6 +17,9 @@ use crate::errors::Result;
 
 pub use self::table_name::TableNameTrait;
 
+#[cfg(test)]
+pub use table_name::MockTableName;
+
 /// Trait defining the interface for a backend database, which provides multiple tables, each acting as a key-value store.
 pub trait DatabaseTrait<TN: TableNameTrait>: Sized + Send + Sync {
     // /// Type for identifying tables. Different databases may specify different types.

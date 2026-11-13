@@ -356,29 +356,35 @@ fuzz_target!(|input: FuzzInput<TestKey, TestValue>| {
                     &AMT,
                 );
 
-                // dbg!(&parent_commit, &mock_res, &real_res);
+                // dbg!(&parent_commit, &new_commit_id, &mock_res, &real_res);
 
                 assert_eq!(mock_res.is_ok(), real_res.is_ok(), "AddToPending results must match");
             }
 
             // TODO: make_pivot
             FuzzOperation::Discard { commit_spec } => {
-                ()
-            }
-            //     let (commit_id_opt, _) = resolve_commit_id(commit_spec, &mock_store, &mut commit_counter);
-            //     if let Some(commit_id) = commit_id_opt {
-            //         let pending_ws = WrappedRocksDb::write_schema();
-            //         let mock_res = mock_store.discard(commit_id, &pending_ws);
-            //         let real_res = real_store.discard(commit_id, &pending_ws);
-            //         pending_db.commit(pending_ws).unwrap();
+                let (commit_id_opt, _) = resolve_commit_id(commit_spec, &mock_store, &mut commit_counter);
+                // dbg!(&commit_id_opt);
+
+                if let Some(commit_id) = commit_id_opt {
+                    let mock_res = mock_store.make_pivot(commit_id);
+                    let real_res = real_store.make_pivot(commit_id);
+                    // dbg!(&mock_res, &real_res);
                     
-            //         assert_eq!(mock_res, real_res, "Discard results must match");
-            //     }
-            // }
+                    match (mock_res, real_res) {
+                        (Ok(m), Ok(r)) => assert_eq!(m, r, "Make pivot Ok results must match"),
+                        (Err(_), Err(_)) => {
+                            // Both are errors; considered acceptable without comparing details.
+                        }
+                        (m, r) => panic!("Make pivot result mismatch: mock={:?}, real={:?}", m, r),
+                    }
+                }
+            }
 
             FuzzOperation::Confirm { commit_spec } => {
                 let (commit_id_opt, _) = resolve_commit_id(commit_spec, &mock_store, &mut commit_counter);
                 // dbg!(&commit_id_opt);
+
                 if let Some(commit_id) = commit_id_opt {
                     let mock_res = mock_store.confirmed_pending_to_history(commit_id);
 
@@ -397,6 +403,8 @@ fuzz_target!(|input: FuzzInput<TestKey, TestValue>| {
 
             FuzzOperation::GetVersionedKey { commit_spec, key_spec } => {
                 let (commit_id_opt, _) = resolve_commit_id(commit_spec, &mock_store, &mut commit_counter);
+                // dbg!(&commit_id_opt);
+
                 if let Some(commit_id) = commit_id_opt {
                     let key_to_get_opt = match key_spec {
                         KeySpec::GenerateNew(key) => Some(key.clone()),
@@ -410,10 +418,13 @@ fuzz_target!(|input: FuzzInput<TestKey, TestValue>| {
                         }
                     };
 
+                    // dbg!(&key_to_get_opt);
                     if let Some(key_to_get) = key_to_get_opt {
                         let mock_res = mock_store.get_versioned_key(&commit_id, &key_to_get);
+                        // dbg!(get_lvmt_key_from_key::<TestSchema>(key_to_get.clone()));
                         let real_res = real_store.get(commit_id, get_lvmt_key_from_key::<TestSchema>(key_to_get));
                         
+                        // dbg!(&mock_res, &real_res);
                         match real_res {
                             Ok(opt_lvmt) => {
                                 let real_inner = if let Some(lvmt_v) = opt_lvmt {

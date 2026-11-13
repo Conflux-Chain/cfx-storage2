@@ -165,19 +165,21 @@ mod tests {
             .collect::<std::result::Result<Vec<_>, DatabaseError>>()?;
         assert_eq!(collected_reversed, expected_reversed);
 
-        // --- Test: iter() ---
+        // --- Test: iter(), from an existing key ---
         let iter_from_20: Vec<_> = reader
             .iter(&b"key2:20".to_vec())?
             .map(|kv| kv.map(|(k, v)| (k.into_owned(), v.into_owned())))
             .collect::<std::result::Result<Vec<_>, DatabaseError>>()?;
         assert_eq!(iter_from_20, &test_data2[1..]);
 
+        // --- Test: iter(), from an absent key that is smaller than the maximum existing key ---
         let iter_from_25: Vec<_> = reader
             .iter(&b"key2:25".to_vec())?
             .map(|kv| kv.map(|(k, v)| (k.into_owned(), v.into_owned())))
             .collect::<std::result::Result<Vec<_>, DatabaseError>>()?;
         assert_eq!(iter_from_25, &test_data2[2..]);
 
+        // --- Test: iter(), from an absent key that is larger than the maximum existing key ---
         let iter_from_50: Vec<_> = reader
             .iter(&b"key2:50".to_vec())?
             .map(|kv| kv.map(|(k, v)| (k.into_owned(), v.into_owned())))
