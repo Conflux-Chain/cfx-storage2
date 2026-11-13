@@ -1,11 +1,12 @@
-use super::VERSION_RANGE_BYTES;
+use super::{PushError, VERSION_RANGE_BYTES};
 
+/// The bit at index 0 should always be set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bitmap {
     data: [u8; VERSION_RANGE_BYTES],
 }
 
-/// Maximum index represented in Bitmap
+/// Maximum index represented in [`Bitmap`].
 pub const BITMAP_MAX_INDEX: u16 = VERSION_RANGE_BYTES as u16 * 8 - 1;
 
 impl Bitmap {
@@ -21,6 +22,23 @@ impl Bitmap {
             let byte_idx = (bit / 8) as usize;
             let bit_pos = bit % 8;
             bitmap[byte_idx] |= 1 << bit_pos;
+        }
+
+        Bitmap { data: bitmap }
+    }
+
+    #[cfg(test)]
+    /// - Will panic if element in vec > BITMAP_MAX_INDEX.
+    /// - Invalid: the bit at index 0 will not be set regardless of whether there is 0 in vec or not.
+    pub fn new_invalid_from_vec(vec: &[u16]) -> Self {
+        let mut bitmap = [0u8; VERSION_RANGE_BYTES];
+
+        for &bit in vec {
+            if bit > 0 {
+                let byte_idx = (bit / 8) as usize;
+                let bit_pos = bit % 8;
+                bitmap[byte_idx] |= 1 << bit_pos;
+            }
         }
 
         Bitmap { data: bitmap }
@@ -130,6 +148,44 @@ impl Bitmap {
 
         indices
     }
+
+    pub fn count_ones(&self) -> usize {
+        self.data
+            .iter()
+            .map(|&byte| byte.count_ones() as usize)
+            .sum()
+    }
+
+    /// Returns an error if the bit at index 0 is not set.
+    pub fn validate(&self) -> Result<(), PushError> {
+        if (self.data[0] & 1) == 0 {
+            Err(PushError::InvalidState)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Set an index, without checking whether this index has already been set.
+    ///
+    /// # Behavior
+    ///
+    /// - If the index does not exceed the maximum allowed index ([`BITMAP_MAX_INDEX`]):
+    ///   - Modifies `self` to include this index.
+    ///   - Returns `true`.
+    /// - If the index exceeds the maximum allowed index:
+    ///   - Leaves `self` unchanged.
+    ///   - Returns `false`.
+    pub fn set_unchecked(&mut self, index: u64) -> bool {
+        if index > (BITMAP_MAX_INDEX as u64) {
+            return false;
+        }
+
+        let idx = index as usize;
+        let byte = idx / 8;
+        let bit = idx % 8;
+        self.data[byte] |= 1 << bit;
+        true
+    }
 }
 
 #[cfg(test)]
@@ -180,9 +236,64 @@ mod tests {
 
         assert_eq!(
             max_bit, last_element,
-            "max_bit ({}) != last element ({}) for input {:?}",
+            "max_bit() failed: max_bit ({}) != last element ({}) for input {:?}",
             max_bit, last_element, input
         );
+    }
+
+    fn test_count_ones_method(input: &[u16]) {
+        let bitmap = Bitmap::new_from_vec(input);
+        let vec_from_bitmap = bitmap.to_vec();
+        let num_bits = bitmap.count_ones();
+        let vec_len = vec_from_bitmap.len();
+
+        assert_eq!(
+            num_bits, vec_len,
+            "count_ones() failed: num_bits ({}) != vec_len ({}) for input {:?}",
+            num_bits, vec_len, input
+        );
+    }
+
+    fn test_validate_method(input: &[u16]) {
+        // valid case
+        let bitmap = Bitmap::new_from_vec(input);
+        bitmap.validate().unwrap();
+
+        // invalid case
+        let bitmap_without_0 = Bitmap::new_invalid_from_vec(input);
+        bitmap_without_0.validate().unwrap_err();
+    }
+
+    fn test_set_unchecked_method(input: &[u16]) {
+        let bitmap = Bitmap::new_from_vec(input);
+        let vec_from_bitmap = bitmap.to_vec();
+        let last_element = *vec_from_bitmap.last().unwrap() as u64;
+
+        for offset in 0..(BITMAP_MAX_INDEX as u64 + 3) {
+            let mut bitmap_mut = bitmap.clone();
+            let success = bitmap_mut.set_unchecked(offset);
+            let should_success = offset <= BITMAP_MAX_INDEX as u64;
+            assert_eq!(
+                success, should_success,
+                "set_unchecked() failed: success ({}) != should_success ({}) for input {:?}",
+                success, should_success, input
+            );
+
+            if success {
+                let vec_after_push = bitmap_mut.to_vec();
+
+                let mut expected_vec_after_push = vec_from_bitmap.clone();
+                expected_vec_after_push.push(offset as u16);
+                expected_vec_after_push.sort_unstable();
+                expected_vec_after_push.dedup();
+
+                assert_eq!(
+                    vec_after_push, expected_vec_after_push,
+                    "set_unchecked() failed: vec_after_push ({:?}) != expected_vec_after_push ({:?}) for input {:?}",
+                    vec_after_push, expected_vec_after_push, input
+                );
+            }
+        }
     }
 
     #[derive(Debug, Clone)]
@@ -244,6 +355,12 @@ mod tests {
 
     fn test_bitmap_method(vec: Vec<u16>) {
         test_max_bit_method(&vec);
+
+        test_count_ones_method(&vec);
+
+        test_validate_method(&vec);
+
+        test_set_unchecked_method(&vec);
 
         let BitmapTestCase {
             bitmap,

@@ -1,4 +1,5 @@
 mod version_range;
+pub use version_range::PushError;
 
 use static_assertions::const_assert;
 pub use version_range::OffsetBasedVersionRange;
@@ -53,6 +54,12 @@ pub enum HistoryIndices<V: Clone> {
     Previous(OffsetBasedVersionRange),
 }
 
+/// Represents a complete previous record.
+pub struct PreviousRecord {
+    end_version_number: HistoryNumber,
+    range_encoding: OffsetBasedVersionRange,
+}
+
 #[cfg(test)]
 impl PartialEq for HistoryIndices<Box<[u8]>> {
     fn eq(&self, other: &Self) -> bool {
@@ -90,6 +97,70 @@ impl<V: Clone> HistoryIndices<V> {
                     Err(StorageError::CorruptedHistoryIndices)
                 } else {
                     Ok(latest_value.clone())
+                }
+            }
+            HistoryIndices::Previous(_) => Err(StorageError::CorruptedHistoryIndices),
+        }
+    }
+
+    /// New a latest record. Can only be called when there is no record.
+    pub fn new(version_number: HistoryNumber, value: Option<V>) -> Self {
+        Self::Latest {
+            start_version_number: version_number,
+            range_encoding: OffsetBasedVersionRange::new(),
+            latest_value: value,
+        }
+    }
+
+    /// Attempts to push a new version number with its value into the lastest record.
+    /// This can only be called when `self` is the latest record and the latest version number < `version_number`,
+    /// otherwise returns an error.
+    ///
+    /// # Behavior
+    ///
+    /// - If appending `version_number` maintains the constraints of the range_encoding for the lastest record:
+    ///   - Modifies `self` to include the new version_number.
+    ///   - Returns `Ok(None)`.
+    /// - If appending `version_number` would violate the constraints:
+    ///   - Converts the original latest record to a previous record, and returns `Ok(Some(this_previous_record))`.
+    ///   - Modifies `self` to be the new lastest record, which includes
+    ///     - the latest_version_number of the original lastest record as the start_version_number,
+    ///     - the `version_number` as the only version except for the start_version_number.
+    pub fn push(
+        &mut self,
+        version_number: HistoryNumber,
+        value: Option<V>,
+    ) -> Result<Option<PreviousRecord>> {
+        match self {
+            HistoryIndices::Latest {
+                start_version_number,
+                range_encoding,
+                latest_value,
+            } => {
+                let latest_version_number = *start_version_number + range_encoding.max_offset();
+                if latest_version_number >= version_number {
+                    Err(StorageError::CorruptedHistoryIndices)
+                } else {
+                    // start_version_number <= latest_version_number < version_number
+                    let offset = version_number - *start_version_number;
+                    let maybe_new_range = range_encoding.try_push_or_new(offset)?;
+
+                    *latest_value = value;
+
+                    if let Some(new_range) = maybe_new_range {
+                        *start_version_number = latest_version_number;
+
+                        let previous_record = PreviousRecord {
+                            end_version_number: latest_version_number,
+                            range_encoding: range_encoding.clone(),
+                        };
+
+                        *range_encoding = new_range;
+
+                        Ok(Some(previous_record))
+                    } else {
+                        Ok(None)
+                    }
                 }
             }
             HistoryIndices::Previous(_) => Err(StorageError::CorruptedHistoryIndices),
