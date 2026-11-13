@@ -72,6 +72,14 @@ impl<S: PendingKeyValueSchema> TreeWithTracker<S> {
         }
     }
 
+    #[cfg(test)]
+    pub fn change_root_without_persistence(
+        &mut self,
+        commit_id: S::CommitId,
+    ) -> PendResult<Option<ConfirmedPathInfo<S>>> {
+        self.tree.change_root(commit_id)
+    }
+
     pub fn make_pivot<P: DatabaseTrait<PendingTableName>>(
         &mut self,
         commit_id: S::CommitId,

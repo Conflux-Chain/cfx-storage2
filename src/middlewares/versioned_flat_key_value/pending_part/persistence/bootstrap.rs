@@ -17,6 +17,8 @@ pub mod primitives {
 
     use std::sync::Arc;
 
+    use log::warn;
+
     use crate::middlewares::versioned_flat_key_value::pending_part::persistence::write_tree_snapshot;
 
     use super::{
@@ -38,6 +40,13 @@ pub mod primitives {
         db: &Arc<P>,
         write_schema: &P::WriteSchema,
     ) -> Result<()> {
+        warn!(
+            "Clearing all pending data for schema {:?} as a remediation step. \
+            This is an intentional action, likely triggered by a prior recovery failure, \
+            to discard potentially inconsistent data.",
+            S::KV_NAME
+        );
+
         let snapshots_view = Arc::new(db.view::<SnapshotsTable<S>>()?);
         for item in snapshots_view.iter_from_start()? {
             write_schema.write::<SnapshotsTable<S>>((item?.0, None));

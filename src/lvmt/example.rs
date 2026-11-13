@@ -1,16 +1,22 @@
-use std::sync::Arc;
+use std::{fs, path::Path, sync::Arc};
 
 use parking_lot::Mutex;
 
 use crate::{
-    backends::{DatabaseTrait, HistoricalTableName, PendingTableName, TableRead},
+    backends::{
+        impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, PendingTableName,
+        TableRead,
+    },
     errors::Result,
     middlewares::{
         confirm_ids_to_history, confirm_maps_to_history, history_number_to_height,
-        primitives_gc_until_height, primitives_initialize_empty_schema, primitives_recover_schema,
-        primitives_verify_schema_is_empty, CommitID, CommitIDSchema, HistoryNumberSchema,
-        KeyValueStoreBulks, PendingKeyValueConfig, VersionedStore, VersionedStoreCache,
+        primitives_clear_pending_schema, primitives_gc_until_height,
+        primitives_initialize_empty_schema, primitives_recover_schema,
+        primitives_verify_no_newer_records, primitives_verify_schema_is_empty, CommitID,
+        CommitIDSchema, HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig,
+        TreeWithTracker, VersionedStore, VersionedStoreCache,
     },
+    StorageError,
 };
 
 use super::{
@@ -20,13 +26,13 @@ use super::{
 };
 
 pub struct LvmtStorage<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> {
-    historical_db: Arc<D>,
+    pub(super) historical_db: Arc<D>,
 
     pending_db: Arc<P>,
 
-    key_value_cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue, P>>>,
-    amt_node_cache: Arc<Mutex<VersionedStoreCache<AmtNodes, P>>>,
-    slot_alloc_cache: Arc<Mutex<VersionedStoreCache<SlotAllocations, P>>>,
+    pub(super) key_value_cache: Arc<Mutex<VersionedStoreCache<FlatKeyValue, P>>>,
+    pub(super) amt_node_cache: Arc<Mutex<VersionedStoreCache<AmtNodes, P>>>,
+    pub(super) slot_alloc_cache: Arc<Mutex<VersionedStoreCache<SlotAllocations, P>>>,
 }
 
 fn get_latest_from_history<D: DatabaseTrait<HistoricalTableName>>(
@@ -48,13 +54,157 @@ fn get_latest_from_history<D: DatabaseTrait<HistoricalTableName>>(
     Ok((parent_of_root_commit_id, height_of_root))
 }
 
-fn todo_fn() {
-    unimplemented!()
+fn verify_recovery_consistency<P: DatabaseTrait<PendingTableName>>(
+    kv_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<FlatKeyValue, CommitID>>,
+    amt_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<AmtNodes, CommitID>>,
+    slot_tree_with_tracker: &TreeWithTracker<PendingKeyValueConfig<SlotAllocations, CommitID>>,
+    pending_db: &Arc<P>,
+    expected_height_of_root: u64,
+) -> Result<()> {
+    if kv_tree_with_tracker.tracker != amt_tree_with_tracker.tracker
+        || kv_tree_with_tracker.tracker != slot_tree_with_tracker.tracker
+    {
+        return Err(crate::StorageError::InconsistentPendingFromRecovery);
+    }
+
+    let tracker = &kv_tree_with_tracker.tracker;
+    primitives_verify_no_newer_records::<PendingKeyValueConfig<FlatKeyValue, CommitID>, P>(
+        pending_db,
+        expected_height_of_root,
+        tracker,
+    )?;
+    primitives_verify_no_newer_records::<PendingKeyValueConfig<AmtNodes, CommitID>, P>(
+        pending_db,
+        expected_height_of_root,
+        tracker,
+    )?;
+    primitives_verify_no_newer_records::<PendingKeyValueConfig<SlotAllocations, CommitID>, P>(
+        pending_db,
+        expected_height_of_root,
+        tracker,
+    )?;
+
+    Ok(())
+}
+
+impl LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>> {
+    /// Creates a new `Arc<LvmtStorage>` instance directly from file paths for RocksDB.
+    ///
+    /// This is a convenience constructor for the most common use case. It handles:
+    /// - Creating the database directories if they don't exist.
+    /// - **Validating that the historical and pending paths are not the same.**
+    /// - Opening the RocksDB instances.
+    /// - Calling the generic `new` constructor for initialization/recovery.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - The paths are identical.
+    /// - Directory creation fails.
+    /// - The database files cannot be opened.
+    /// - The internal recovery/initialization logic fails.
+    pub fn new_from_paths<P: AsRef<Path>>(
+        historical_db_path: P,
+        pending_db_path: P,
+    ) -> Result<Arc<Self>> {
+        fs::create_dir_all(historical_db_path.as_ref()).map_err(|e| {
+            StorageError::DbInitError(format!("Failed to create historical db path: {}", e))
+        })?;
+        fs::create_dir_all(pending_db_path.as_ref()).map_err(|e| {
+            StorageError::DbInitError(format!("Failed to create pending db path: {}", e))
+        })?;
+
+        let historical_canon_path = fs::canonicalize(historical_db_path.as_ref()).map_err(|e| {
+            StorageError::DbInitError(format!("Failed to canonicalize historical path: {}", e))
+        })?;
+        let pending_canon_path = fs::canonicalize(pending_db_path.as_ref()).map_err(|e| {
+            StorageError::DbInitError(format!("Failed to canonicalize pending path: {}", e))
+        })?;
+        if historical_canon_path == pending_canon_path {
+            return Err(StorageError::InvalidConfig(
+                "Historical and pending database paths cannot be the same.".to_string(),
+            ));
+        }
+
+        let historical_db = WrappedRocksDb::open(historical_db_path).map_err(|e| {
+            StorageError::DbInitError(format!("Failed to open historical db: {}", e))
+        })?;
+        let pending_db = WrappedRocksDb::open(pending_db_path)
+            .map_err(|e| StorageError::DbInitError(format!("Failed to open pending db: {}", e)))?;
+
+        let storage = Self::new(Arc::new(historical_db), Arc::new(pending_db))?;
+
+        Ok(Arc::new(storage))
+    }
 }
 
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
+    /// Creates a new LvmtStorage instance, automatically handling recovery or initialization.
+    ///
+    /// This function first checks the state of the `pending_db`.
+    /// - If `pending_db` is empty, it initializes from the latest state of `historical_db`.
+    /// - If `pending_db` is not empty, it attempts to recover the state from it.
+    /// - If recovery fails, it automatically falls back to bootstrap mode: clearing the `pending_db`
+    ///   and re-initializing it. In this case, all unconfirmed commits in the `pending_db` will be lost.
+    pub fn new(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+        if Self::is_pending_db_empty(&pending_db)? {
+            // Scenario 1: The pending_db is empty, so initialize directly using the 'from_empty' logic.
+            Self::from_empty_pending(historical_db, pending_db)
+        } else {
+            // Scenario 2: The pending_db is not empty, so attempt recovery.
+            // Note: We clone the Arcs here because if 'from_recovery' fails, we need to
+            // pass ownership of the Arcs to 'from_bootstrap'. Cloning an Arc is cheap
+            // (it only increments the reference count).
+            match Self::from_recovery(historical_db.clone(), pending_db.clone()) {
+                Ok(instance) => Ok(instance),
+                Err(e) => {
+                    // Scenario 3: Recovery failed, fall back to bootstrap mode.
+                    // Log a critical error. This situation is severe because it implies data loss
+                    // (unconfirmed commits) and suggests a potential data corruption or a bug that
+                    // should not happen in principle.
+                    // We use `error!` as it's the highest severity level in the standard `log` crate.
+                    // We don't `panic!` because the system is designed to recover by bootstrapping,
+                    // and panicking would prevent this automatic recovery.
+                    log::error!(
+                        "Failed to recover from pending database: {}. This is a critical event. \
+                        Falling back to bootstrap mode. ALL UNCONFIRMED COMMITS in the pending database will be LOST.",
+                        e
+                    );
+                    Self::from_bootstrap(historical_db, pending_db)
+                }
+            }
+        }
+    }
+
+    /// Checks if the `pending_db` is empty.
+    ///
+    /// It is considered empty if all relevant data schemas contain no entries.
+    fn is_pending_db_empty(pending_db: &Arc<P>) -> Result<bool> {
+        let kv_is_empty = primitives_verify_schema_is_empty::<
+            PendingKeyValueConfig<FlatKeyValue, CommitID>,
+            P,
+        >(pending_db)
+        .is_ok();
+        let amt_is_empty = primitives_verify_schema_is_empty::<
+            PendingKeyValueConfig<AmtNodes, CommitID>,
+            P,
+        >(pending_db)
+        .is_ok();
+        let slot_is_empty = primitives_verify_schema_is_empty::<
+            PendingKeyValueConfig<SlotAllocations, CommitID>,
+            P,
+        >(pending_db)
+        .is_ok();
+
+        // The entire pending_db is considered empty only if all its component schemas are empty.
+        // If a situation arises where some schemas are empty and others are not, this indicates
+        // an inconsistent state. In such a case, this function will return `false`, correctly
+        // triggering the recovery process (and potentially a bootstrap if recovery fails).
+        Ok(kv_is_empty && amt_is_empty && slot_is_empty)
+    }
+
     /// Creates a new LvmtStorage instance, opening databases and running the recovery process.
-    pub fn new_from_recovery(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+    pub(super) fn from_recovery(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
         let (expected_parent_of_root, expected_height_of_root) =
             get_latest_from_history(&historical_db)?;
 
@@ -88,8 +238,14 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         // Atomically commit all changes (cleanups, initial snapshots) to the pending DB.
         pending_db.commit(pending_write_schema)?;
 
-        // TODO: verify consistency of three tree_with_tracker and the pending_db
-        todo_fn();
+        // Verify consistency of three tree_with_tracker and the pending_db
+        verify_recovery_consistency(
+            &kv_tree_with_tracker,
+            &amt_tree_with_tracker,
+            &slot_tree_with_tracker,
+            &pending_db,
+            expected_height_of_root,
+        )?;
 
         // Initialization is complete. Now, create the in-memory VersionedMap instances.
         let key_value_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
@@ -111,8 +267,38 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         })
     }
 
+    /// Performs a bootstrap recovery.
+    ///
+    /// This function is used in scenarios where `from_recovery` fails (e.g., when the pending_db
+    /// state lags behind the historical_db, making it untrustworthy). It completely clears the
+    /// `pending_db`, and then creates a new, clean pending component based on the current state
+    /// of `historical_db`.
+    ///
+    /// **Warning**: This operation will destroy all unconfirmed commits in `pending_db`.
+    pub(super) fn from_bootstrap(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+        // 1. Clear the entire pending database.
+        // Create a single WriteSchema for the entire atomic clearup operation.
+        let pending_write_schema = P::write_schema();
+        primitives_clear_pending_schema::<PendingKeyValueConfig<FlatKeyValue, CommitID>, P>(
+            &pending_db,
+            &pending_write_schema,
+        )?;
+        primitives_clear_pending_schema::<PendingKeyValueConfig<AmtNodes, CommitID>, P>(
+            &pending_db,
+            &pending_write_schema,
+        )?;
+        primitives_clear_pending_schema::<PendingKeyValueConfig<SlotAllocations, CommitID>, P>(
+            &pending_db,
+            &pending_write_schema,
+        )?;
+        pending_db.commit(pending_write_schema)?;
+
+        // 2. After clearing, this is equivalent to starting from an empty pending_db.
+        Self::from_empty_pending(historical_db, pending_db)
+    }
+
     /// Creates a new LvmtStorage instance. It is the caller's responsibility to ensure that the `pending_db` is empty.
-    pub fn new_from_empty_pending(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+    pub(super) fn from_empty_pending(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
         let (expected_parent_of_root, expected_height_of_root) =
             get_latest_from_history(&historical_db)?;
 
@@ -154,8 +340,14 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         // Atomically commit all changes (initial snapshots) to the pending DB.
         pending_db.commit(pending_write_schema)?;
 
-        // TODO: verify consistency of three tree_with_tracker and the pending_db
-        // todo_fn();
+        // Verify consistency of three tree_with_tracker and the pending_db
+        verify_recovery_consistency(
+            &kv_tree_with_tracker,
+            &amt_tree_with_tracker,
+            &slot_tree_with_tracker,
+            &pending_db,
+            expected_height_of_root,
+        )?;
 
         // Initialization is complete. Now, create the in-memory VersionedMap instances.
         let key_value_cache = Arc::new(Mutex::new(VersionedStoreCache::from_initialized_state(
@@ -256,14 +448,14 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         Ok(())
     }
 
-    pub fn commit(
+    pub fn commit_to_historical_db(
         &self,
         write_schema: <D as DatabaseTrait<HistoricalTableName>>::WriteSchema,
     ) -> Result<()> {
         self.historical_db.commit(write_schema)
     }
 
-    fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
+    pub(super) fn commit_to_pending_db(&self, pending_write_schema: P::WriteSchema) -> Result<()> {
         self.pending_db.commit(pending_write_schema)
     }
 
@@ -316,33 +508,60 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         height > height_of_root
     }
 
-    /// `new_root_height` and `pivot_commit_id` should be in the pending part.
-    /// `new_root_height` should not be newer than `pivot_commit_id`.
-    /// This function make the ancestor of `pivot_commit_id` at `new_root_height` to be the new pending root.
+    /// Promotes an ancestor of `pivot_commit_id` at `new_root_height` to become the new pending root.
+    ///
+    /// This is a convenience function that determines the new root commit ID based on the
+    /// provided `new_root_height` and `pivot_commit_id`, then calls the underlying
+    /// `confirmed_pending_to_history_with_commit_id` to execute the full operation.
+    ///
+    /// **Crucially, this function handles the entire persistence process internally.** Upon
+    /// successful return, changes to both the pending and historical components have been
+    /// committed to their respective databases. The caller does not need to manage any
+    /// database transactions.
+    ///
+    /// Preconditions:
+    /// - `pivot_commit_id` and its ancestor at `new_root_height` must exist in the pending part.
+    /// - `new_root_height` must not be greater than the height of `pivot_commit_id`.
+    ///
+    /// Note: The database commits for the pending and historical parts are not atomic and
+    /// a failure between them could lead to an inconsistent state.
     pub fn confirmed_pending_to_history_with_height(
         &self,
         new_root_height: u64,
         pivot_commit_id: CommitID,
-        write_schema: &D::WriteSchema,
     ) -> Result<()> {
         let key_value_cache = self.key_value_cache.lock();
         let new_root_commit_id =
             key_value_cache.get_ancestor_commit_at_height(new_root_height, pivot_commit_id)?;
         drop(key_value_cache);
 
-        self.confirmed_pending_to_history_with_commit_id(new_root_commit_id, write_schema)
+        self.confirmed_pending_to_history_with_commit_id(new_root_commit_id)
     }
 
-    /// The `new_root_commit_id` should be in the pending part, otherwise, an error will be returned.
+    /// Promotes the given `new_root_commit_id` to be the new root of the pending component.
+    ///
+    /// This process involves two main steps:
+    /// 1.  The pending component's in-memory state is updated to reflect the new root, and these
+    ///     changes are persisted to the `pending_db`.
+    /// 2.  The path of nodes from the old root to the new root's parent is pruned from the
+    ///     pending component and moved to the `historical_db`.
+    ///
+    /// All database write schemas (`pending_write_schema` and `historical_write_schema`) are
+    /// created and committed internally within this function.
+    ///
+    /// An error will be returned if the `new_root_commit_id` does not exist in the pending part.
+    ///
+    /// **Note**: The commits to the `pending_db` and `historical_db` are not atomic. A failure
+    /// between these two operations could result in an inconsistent state.
     pub fn confirmed_pending_to_history_with_commit_id(
         &self,
         new_root_commit_id: CommitID,
-        write_schema: &D::WriteSchema,
     ) -> Result<()> {
         let mut key_value_cache = self.key_value_cache.lock();
         let mut amt_node_cache = self.amt_node_cache.lock();
         let mut slot_alloc_cache = self.slot_alloc_cache.lock();
 
+        // pending part
         let pending_write_schema = P::write_schema();
 
         let maybe_key_value_confirmed_path =
@@ -363,32 +582,37 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 
             self.commit_to_pending_db(pending_write_schema)?;
 
+            // historical part
+            let historical_write_schema = D::write_schema();
+
             confirm_ids_to_history::<D>(
                 self.historical_db.clone(),
                 start_height,
                 commit_ids,
-                write_schema,
+                &historical_write_schema,
             )?;
 
             confirm_maps_to_history::<D, FlatKeyValue>(
                 self.historical_db.clone(),
                 start_height,
                 key_value_confirmed_path.key_value_maps,
-                write_schema,
+                &historical_write_schema,
             )?;
             confirm_maps_to_history::<D, AmtNodes>(
                 self.historical_db.clone(),
                 start_height,
                 amt_node_confirmed_path.key_value_maps,
-                write_schema,
+                &historical_write_schema,
             )?;
             confirm_maps_to_history::<D, SlotAllocations>(
                 self.historical_db.clone(),
                 start_height,
                 slot_alloc_confirmed_path.key_value_maps,
-                write_schema,
+                &historical_write_schema,
             )?;
-        }
+
+            self.commit_to_historical_db(historical_write_schema)?;
+        } // else: nothing is changed and no records are in pending_write_schema, so skip directly
 
         Ok(())
     }

@@ -1413,10 +1413,15 @@ fn test_versioned_store<
     }
 }
 
-pub fn clear_dir_then_create(dir_path: &str) {
+pub fn clear_dir(dir_path: &str) {
     if std::path::Path::new(dir_path).exists() {
         std::fs::remove_dir_all(dir_path).unwrap();
     }
+}
+
+pub fn clear_dir_then_create(dir_path: &str) {
+    clear_dir(dir_path);
+
     std::fs::create_dir_all(dir_path).unwrap();
 }
 
@@ -1447,10 +1452,6 @@ fn tests_versioned_store_rocksdb() {
 
     test_versioned_store(historical_db, pending_db, 2, 10, 1000);
 
-    if std::path::Path::new(historical_path).exists() {
-        std::fs::remove_dir_all(historical_path).unwrap();
-    }
-    if std::path::Path::new(pending_path).exists() {
-        std::fs::remove_dir_all(pending_path).unwrap();
-    }
+    clear_dir(historical_path);
+    clear_dir(pending_path);
 }

@@ -80,6 +80,15 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
         self.amt_node_store.query_commit_existence(commit)
     }
 
+    /// Commits changes to the "pending" component, updating both its in-memory instance
+    /// and persisting the changes to the underlying database (pending_db).
+    ///
+    /// Within this function, a `pending_write_schema` is initialized and then directly
+    /// applied to the `pending_db`. The update to the in-memory instance is also
+    /// performed here, making this function the designated place for these changes.
+    ///
+    /// Note: The `historical_write_schema` is used separately here, only to append
+    /// records to the AuthChangeTable.
     pub fn commit(
         &self,
         old_commit: Option<CommitID>,
@@ -188,6 +197,7 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
         self.commit_to_pending_db(pending_write_schema)?;
 
         let auth_change_bulk = auth_changes.into_iter().map(|(k, v)| (k, Some(v)));
+        // TODO: Will there be a situation where the same commit but different content occurs?
         self.auth_changes
             .commit(new_commit, auth_change_bulk, historical_write_schema)?;
 

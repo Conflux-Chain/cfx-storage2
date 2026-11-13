@@ -8,6 +8,8 @@ pub mod primitives {
 
     use std::sync::Arc;
 
+    use log::info;
+
     use crate::backends::WriteSchemaTrait;
 
     use super::super::{
@@ -27,12 +29,28 @@ pub mod primitives {
         write_schema: &P::WriteSchema,
         durable_height: u64,
     ) -> Result<()> {
+        info!(
+            "Starting background GC for pending schema {:?}. Cleaning up versions older than durable_height={}.",
+            S::KV_NAME,
+            durable_height
+        );
+
+        if durable_height == 0 {
+            info!(
+                "Skipping GC for schema {:?}: durable_height ({}) is too low, no old versions to clean.",
+                S::KV_NAME,
+                durable_height
+            );
+            return Ok(());
+        }
+
         let snapshots_view = Arc::new(db.view::<SnapshotsTable<S>>()?);
         let wal_view = Arc::new(db.view::<WalTable<S>>()?);
 
         // Forward scan from the beginning of the snapshots table
         let iter = snapshots_view.iter_from_start()?;
         let mut last_height = None;
+        let mut num_gc_snapshots = 0;
         for old_snapshot_item_res in iter {
             let old_snapshot_item = old_snapshot_item_res?;
 
@@ -46,6 +64,7 @@ pub mod primitives {
             // This is a new snapshot
             if last_height != Some(height) {
                 last_height = Some(height);
+                num_gc_snapshots += 1;
 
                 // Get the SnapshotId
                 let snapshot_id = match old_snapshot_item.1.as_ref() {
@@ -64,6 +83,12 @@ pub mod primitives {
             // Delete this snapshot record
             write_schema.write::<SnapshotsTable<S>>((old_snapshot_item.0, None));
         }
+
+        info!(
+            "Finished background GC for schema {:?}. Deleted {} old snapshots.",
+            S::KV_NAME,
+            num_gc_snapshots,
+        );
 
         Ok(())
     }
