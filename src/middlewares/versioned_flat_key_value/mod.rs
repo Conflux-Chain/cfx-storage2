@@ -1,4 +1,9 @@
+#[cfg(fuzzing)]
+pub mod history_indices;
+
+#[cfg(not(fuzzing))]
 mod history_indices;
+
 mod history_indices_cache;
 mod manager_impl;
 mod pending_part;
@@ -11,7 +16,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-pub use history_indices::PushError;
+pub use history_indices::{BitmapValidationError, PushError};
 pub use manager_impl::SnapshotView;
 use nonempty::NonEmpty;
 pub use pending_part::TreeWithTracker;

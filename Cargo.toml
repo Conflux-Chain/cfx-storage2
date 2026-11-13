@@ -57,3 +57,6 @@ env_logger = "0.11"
 [features]
 default = ["parallel-crypto"]
 parallel-crypto = ["ark-poly/parallel", "ark-ec/parallel", "amt/parallel"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }

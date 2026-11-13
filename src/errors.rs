@@ -4,7 +4,8 @@ use ark_serialize::SerializationError;
 use thiserror::Error;
 
 use crate::middlewares::{
-    BootstrapError, PendingError, PushError, RecoveryError, SnapshotReadError,
+    BitmapValidationError, BootstrapError, PendingError, PushError, RecoveryError,
+    SnapshotReadError,
 };
 
 #[derive(Error, Debug)]
@@ -76,7 +77,7 @@ pub enum DatabaseError {
 
 pub type DbResult<T> = ::std::result::Result<T, DatabaseError>;
 
-#[derive(Error, Debug, Clone, Copy, PartialEq)]
+#[derive(Error, Debug, PartialEq)]
 pub enum DecodeError {
     #[error("incorrect input length")]
     IncorrectLength,
@@ -86,6 +87,11 @@ pub enum DecodeError {
     CryptoError,
     #[error("Custom error: {0}")]
     Custom(&'static str),
+    #[error("invalid bitmap data in decoded payload")]
+    InvalidBitmap {
+        #[from]
+        source: BitmapValidationError,
+    },
 }
 
 impl From<SerializationError> for DecodeError {

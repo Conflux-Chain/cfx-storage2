@@ -1,0 +1,58 @@
+[package]
+name = "cfx-storage2-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.cfx-storage2]
+path = ".."
+
+[[bin]]
+name = "fuzz_bitmap_constructors"
+path = "fuzz_targets/fuzz_bitmap_constructors.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_valid_bitmap_logic"
+path = "fuzz_targets/fuzz_valid_bitmap_logic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_offset_based_version_range_state_transitions"
+path = "fuzz_targets/fuzz_offset_based_version_range_state_transitions.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_offset_based_version_range_queries"
+path = "fuzz_targets/fuzz_offset_based_version_range_queries.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_history_indices_serde_roundtrip"
+path = "fuzz_targets/fuzz_history_indices_serde_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_history_indices_push_simulation"
+path = "fuzz_targets/fuzz_history_indices_push_simulation.rs"
+test = false
+doc = false
+bench = false
