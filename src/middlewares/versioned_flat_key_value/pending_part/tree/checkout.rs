@@ -13,7 +13,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         target_commit_id: S::CommitId,
         maybe_current: &mut Option<CurrentMap<S>>,
-    ) -> PendResult<(), S> {
+    ) -> PendResult<()> {
         if let Some(current) = maybe_current.as_mut() {
             self.switch_current_head(target_commit_id, current)?;
         } else {
@@ -32,7 +32,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         target_commit_id: S::CommitId,
         current: &mut CurrentMap<S>,
-    ) -> PendResult<(), S> {
+    ) -> PendResult<()> {
         let (rollbacks, applys) =
             self.collect_rollback_and_apply_ops(current.get_commit_id(), target_commit_id)?;
         current.rollback(rollbacks);
@@ -41,7 +41,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         Ok(())
     }
 
-    fn make_current(&self, target_commit_id: S::CommitId) -> PendResult<CurrentMap<S>, S> {
+    fn make_current(&self, target_commit_id: S::CommitId) -> PendResult<CurrentMap<S>> {
         let applys = self.get_apply_map_from_root_included(target_commit_id)?;
         let mut new_current = CurrentMap::<S>::new(target_commit_id);
         new_current.apply(applys);
@@ -52,14 +52,14 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn get_apply_map_from_root_included_for_test(
         &self,
         target_commit_id: S::CommitId,
-    ) -> PendResult<ApplyMap<S>, S> {
+    ) -> PendResult<ApplyMap<S>> {
         self.get_apply_map_from_root_included(target_commit_id)
     }
 
     fn get_apply_map_from_root_included(
         &self,
         target_commit_id: S::CommitId,
-    ) -> PendResult<ApplyMap<S>, S> {
+    ) -> PendResult<ApplyMap<S>> {
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut commits_rev = HashMap::new();
         target_node.export_commit_data::<false>(&mut commits_rev);
@@ -76,7 +76,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         current_commit_id: S::CommitId,
         target_commit_id: S::CommitId,
-    ) -> PendResult<(HashMap<S::Key, Option<ApplyRecord<S>>>, ApplyMap<S>), S> {
+    ) -> PendResult<(HashMap<S::Key, Option<ApplyRecord<S>>>, ApplyMap<S>)> {
         let mut current_node = self.get_node_by_commit_id(current_commit_id)?;
         let mut target_node = self.get_node_by_commit_id(target_commit_id)?;
         let mut rollbacks = HashMap::new();

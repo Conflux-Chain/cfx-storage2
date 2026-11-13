@@ -10,10 +10,11 @@ use super::{node::TreeNode, Tree};
 // methods to support VersionedMap::add_node()
 impl<S: PendingKeyValueSchema> Tree<S> {
     pub fn add_root(
+        // TODO: Tree's &mut fn should only be invoked by tree_with_tracker
         &mut self,
         commit_id: S::CommitId,
         modifications: RecoverMap<S>,
-    ) -> PendResult<(), S> {
+    ) -> PendResult<()> {
         // return error if there is root
         if self.has_root() {
             return Err(PendingError::MultipleRootsNotAllowed);
@@ -35,13 +36,16 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         commit_id: S::CommitId,
         parent_commit_id: S::CommitId,
         modifications: RecoverMap<S>,
-    ) -> PendResult<(), S> {
+    ) -> PendResult<()> {
         // return error if parent_commit_id does not exist
         let parent_slab_index = self.get_slab_index_by_commit_id(parent_commit_id)?;
 
         // return error if commit_id exists
         if self.contains_commit_id(&commit_id) {
-            return Err(PendingError::CommitIdAlreadyExists(commit_id));
+            return Err(PendingError::CommitIdAlreadyExists(format!(
+                "{:?}",
+                commit_id
+            )));
         }
 
         // new node

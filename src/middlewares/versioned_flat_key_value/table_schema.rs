@@ -1,27 +1,31 @@
-use std::hash::Hash;
+use std::{fmt::Debug, hash::Hash};
 
 use crate::{
-    backends::{TableKey, TableName, TableSchema, TableValue, VersionedKVName},
+    backends::{
+        serde::{Decode, Encode},
+        HistoricalTableName, TableKey, TableSchema, TableValue, VersionedKVName,
+    },
     traits::{KeyValueStoreIterable, KeyValueStoreRead},
 };
 
 use super::{history_indices::HistoryIndices, HistoryChangeKey, HistoryIndexKey};
 
-pub trait VersionedKeyValueSchema: 'static + Copy + Send + Sync
+pub trait VersionedKeyValueSchema: 'static + Copy + Send + Sync + Debug
 where
     HistoryChangeKey<Self::Key>: TableKey,
     HistoryIndexKey<Self::Key>: TableKey,
 {
     const NAME: VersionedKVName;
     type Key: TableKey + ToOwned<Owned = Self::Key> + Clone + Hash;
-    type Value: TableValue + ToOwned<Owned = Self::Value> + Clone;
+    type Value: TableValue + ToOwned<Owned = Self::Value> + Clone + Eq + Encode + Decode;
 }
 
 #[derive(Clone, Copy)]
 pub struct HistoryChangeTable<T: VersionedKeyValueSchema>(T);
 
 impl<T: VersionedKeyValueSchema> TableSchema for HistoryChangeTable<T> {
-    const NAME: TableName = TableName::HistoryChange(T::NAME);
+    type TableName = HistoricalTableName;
+    const NAME: HistoricalTableName = HistoricalTableName::HistoryChange(T::NAME);
     type Key = HistoryChangeKey<T::Key>;
     type Value = T::Value;
 }
@@ -30,7 +34,8 @@ impl<T: VersionedKeyValueSchema> TableSchema for HistoryChangeTable<T> {
 pub struct HistoryIndicesTable<T: VersionedKeyValueSchema>(T);
 
 impl<T: VersionedKeyValueSchema> TableSchema for HistoryIndicesTable<T> {
-    const NAME: TableName = TableName::HistoryIndex(T::NAME);
+    type TableName = HistoricalTableName;
+    const NAME: HistoricalTableName = HistoricalTableName::HistoryIndex(T::NAME);
     type Key = HistoryIndexKey<T::Key>;
     type Value = HistoryIndices<T::Value>;
 }

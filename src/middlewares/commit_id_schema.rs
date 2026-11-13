@@ -1,6 +1,6 @@
 use ethereum_types::H256;
 
-use crate::backends::{TableName, TableSchema};
+use crate::backends::{HistoricalTableName, TableSchema};
 
 pub type CommitID = H256;
 pub type HistoryNumber = u64;
@@ -9,7 +9,8 @@ pub type HistoryNumber = u64;
 pub struct CommitIDSchema;
 
 impl TableSchema for CommitIDSchema {
-    const NAME: TableName = TableName::CommitID;
+    type TableName = HistoricalTableName;
+    const NAME: HistoricalTableName = HistoricalTableName::CommitID;
     type Key = CommitID;
     type Value = HistoryNumber;
 }
@@ -18,7 +19,8 @@ impl TableSchema for CommitIDSchema {
 pub struct HistoryNumberSchema;
 
 impl TableSchema for HistoryNumberSchema {
-    const NAME: TableName = TableName::HistoryNumber;
+    type TableName = HistoricalTableName;
+    const NAME: HistoricalTableName = HistoricalTableName::HistoryNumber;
     type Key = HistoryNumber;
     type Value = CommitID;
 }
@@ -30,7 +32,6 @@ pub fn height_to_history_number(height: u64) -> HistoryNumber {
 }
 
 /// Converts a `history_number` back to a `height`.
-#[cfg(test)]
 pub fn history_number_to_height(history_number: HistoryNumber) -> u64 {
     history_number
 }

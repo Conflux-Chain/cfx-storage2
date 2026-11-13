@@ -1,5 +1,6 @@
 use std::{
     borrow::{Borrow, Cow},
+    marker::PhantomData,
     path::PathBuf,
     sync::Arc,
 };
@@ -10,7 +11,10 @@ use super::super::{
     write_schema::WriteSchemaNoSubkey,
     DatabaseTrait, TableIter, TableRead,
 };
-use crate::errors::{DatabaseError, Result};
+use crate::{
+    backends::table_name::TableNameTrait,
+    errors::{DatabaseError, Result},
+};
 
 use kvdb::KeyValueDB;
 use kvdb_rocksdb::DatabaseConfig;
@@ -62,16 +66,50 @@ impl<T: TableSchema> TableRead<T> for RocksDBColumn {
 
         Ok(Box::new(iter))
     }
+
+    fn iter_rev_from_end(&self) -> Result<TableIter<T>> {
+        let iter = self.inner.iter_rev(self.col).map(|kv| match kv {
+            Ok((k, v)) => Ok((
+                Cow::Owned(<T::Key>::decode_owned(k.into_vec())?),
+                Cow::Owned(<T::Value>::decode_owned(v)?),
+            )),
+            Err(e) => Err(DatabaseError::IoError(e)),
+        });
+
+        Ok(Box::new(iter))
+    }
 }
 
-impl DatabaseTrait for kvdb_rocksdb::Database {
-    type TableID = u32;
-    type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
+// The Newtype wrapper. It's generic over the TableName enum `TN`.
+pub struct WrappedRocksDb<TN: TableNameTrait> {
+    // The actual database instance from the external crate.
+    inner: Arc<kvdb_rocksdb::Database>,
+    // A zero-sized marker to make the compiler aware of the generic type TN.
+    // This is crucial for the type system to associate WrappedRocksDb<HistoricalTableName>
+    // with HistoricalTableName.
+    _phantom: PhantomData<TN>,
+}
 
-    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T> + Send + Sync> {
+impl<TN: TableNameTrait> WrappedRocksDb<TN> {
+    pub fn open(db_path: &str) -> Result<Self> {
+        let db = open_database(TN::num_tables(), db_path)?;
+        Ok(Self {
+            inner: Arc::new(db),
+            _phantom: PhantomData,
+        })
+    }
+}
+
+impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
+    // type TableID = u32;
+    type WriteSchema = WriteSchemaNoSubkey<TN>;
+
+    fn view<T: TableSchema<TableName = TN>>(
+        self: &Arc<Self>,
+    ) -> Result<impl 'static + TableRead<T> + Send + Sync> {
         Ok(RocksDBColumn {
             col: T::NAME.into(),
-            inner: self.clone(),
+            inner: self.inner.clone(),
         })
     }
 
@@ -79,16 +117,16 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
         Self::WriteSchema::new()
     }
 
-    fn commit(&mut self, changes: Self::WriteSchema) -> Result<()> {
+    fn commit(&self, changes: Self::WriteSchema) -> Result<()> {
         let mut tx = kvdb::DBTransaction::new();
         for (col, key, value) in changes.drain() {
             if let Some(v) = value {
-                tx.put_vec(col, &key, v);
+                tx.put_vec(col.into(), &key, v);
             } else {
-                tx.delete(col, key.borrow())
+                tx.delete(col.into(), key.borrow())
             }
         }
 
-        Ok(KeyValueDB::write(self, tx)?)
+        Ok(KeyValueDB::write(&*self.inner, tx)?)
     }
 }

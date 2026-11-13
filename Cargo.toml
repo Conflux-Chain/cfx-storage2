@@ -10,8 +10,8 @@ auto_impl = "1.2"
 #kvdb-rocksdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "3fcd845", version = "0.19.0" }
 #kvdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "3fcd845" }
 
-kvdb-rocksdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "2e60465", version = "0.17.0-iter-nochecksum-partitionedindexfilter" }
-kvdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "2e60465" }
+kvdb-rocksdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "4138407", version = "0.17.0-iter-nochecksum-partitionedindexfilter" }
+kvdb = { git = "https://github.com/Conflux-Chain/parity-common-rocksdb", rev = "4138407" }
 
 parking_lot = "0.12"
 
@@ -37,6 +37,11 @@ itertools = "0.13"
 proptest = "1.5"
 
 amt = { git = "https://github.com/Conflux-Chain/amt", rev = "387995a", features = ["bls12-381"] }
+
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+
+nonempty = "0.12"
 
 [dev-dependencies]
 rand = "0.8.0"

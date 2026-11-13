@@ -9,10 +9,15 @@ use rand_chacha::ChaChaRng;
 use amt::{AmtParams, CreateMode};
 
 use crate::{
-    backends::{DatabaseTrait, InMemoryDatabase},
+    backends::{
+        impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, PendingTableName,
+        WrappedInMemoryDb,
+    },
     errors::Result,
     lvmt::types::{LvmtValue, KEY_SLOT_SIZE},
-    middlewares::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test, CommitID},
+    middlewares::{
+        clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test, CommitID,
+    },
     traits::{KeyValueStoreIterable, KeyValueStoreManager, KeyValueStoreRead},
 };
 
@@ -54,7 +59,11 @@ fn gen_novel_commit_id(rng: &mut ChaChaRng, previous: &mut HashSet<CommitID>) ->
 }
 
 // num_keys = 8 * 10^6 has been tested, but still contain no amt_node_id whose depth > 1
-fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
+fn test_lvmt_store<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>>(
+    historical_db: D,
+    pending_db: P,
+    num_keys: usize,
+) {
     let mut rng = get_rng_for_test();
 
     // Generate different commit_ids
@@ -90,10 +99,14 @@ fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
     let changes_3 = get_changes_from_updates(updates_3);
 
     // Initialize db
-    let mut db = LvmtStorage::<D>::new(Arc::new(backend).clone()).unwrap();
+    let db = LvmtStorage::<D, P>::new_from_empty_pending(
+        Arc::new(historical_db).clone(),
+        Arc::new(pending_db),
+    )
+    .unwrap();
 
     // Get a manager for db
-    let mut lvmt = db.as_manager().unwrap();
+    let lvmt = db.as_manager().unwrap();
     let write_schema = D::write_schema();
 
     // Perform non-forking commits
@@ -114,15 +127,12 @@ fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
     lvmt.check_consistency(commit_1, &AMT).unwrap();
 
     // Persist confirmed commits from caches to the backend.
-    // Must drop the manager first because it holds a read reference to the backend.
-    drop(lvmt);
     db.confirmed_pending_to_history_with_commit_id(commit_2, &write_schema)
         .unwrap();
 
     db.commit(write_schema).unwrap();
 
     // Reinitialize the manager
-    lvmt = db.as_manager().unwrap();
     let write_schema = D::write_schema();
 
     // Commit again to verify success after persisting changes to the backend
@@ -138,24 +148,43 @@ fn test_lvmt_store<D: DatabaseTrait>(backend: D, num_keys: usize) {
 
 #[test]
 fn test_lvmt_store_rocksdb() {
-    let db_path = "__test_lvmt_store";
+    let historical_path = "__test_lvmt_store_historical";
+    let pending_path = "__test_lvmt_store_pending";
 
-    let backend = empty_rocksdb(db_path).unwrap();
-    test_lvmt_store::<kvdb_rocksdb::Database>(backend, 100000);
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
 
-    if std::path::Path::new(db_path).exists() {
-        std::fs::remove_dir_all(db_path).unwrap();
+    let historical_db = WrappedRocksDb::open(historical_path).unwrap();
+    let pending_db = WrappedRocksDb::open(pending_path).unwrap();
+
+    test_lvmt_store::<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>(
+        historical_db,
+        pending_db,
+        100000,
+    );
+
+    if std::path::Path::new(historical_path).exists() {
+        std::fs::remove_dir_all(historical_path).unwrap();
+    }
+    if std::path::Path::new(pending_path).exists() {
+        std::fs::remove_dir_all(pending_path).unwrap();
     }
 }
 
 #[test]
 fn test_lvmt_store_inmemory() {
-    let backend = InMemoryDatabase::empty();
-    test_lvmt_store::<InMemoryDatabase>(backend, 100000);
+    let historical_db = WrappedInMemoryDb::empty();
+    let pending_db = WrappedInMemoryDb::empty();
+
+    test_lvmt_store::<WrappedInMemoryDb<HistoricalTableName>, WrappedInMemoryDb<PendingTableName>>(
+        historical_db,
+        pending_db,
+        1000,
+    );
 }
 
-impl<'db> LvmtStore<'db> {
-    pub fn check_consistency(&mut self, commit: CommitID, pp: &AmtParams<PE>) -> Result<()> {
+impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
+    pub fn check_consistency(&self, commit: CommitID, pp: &AmtParams<PE>) -> Result<()> {
         use std::collections::BTreeSet;
 
         use ark_ec::CurveGroup;

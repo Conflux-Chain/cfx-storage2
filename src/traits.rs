@@ -1,4 +1,7 @@
-use crate::{backends::WriteSchemaTrait, errors::Result};
+use crate::{
+    backends::{DatabaseTrait, HistoricalTableName, PendingTableName, WriteSchemaTrait},
+    errors::Result,
+};
 
 pub trait KeyValueStoreRead<K, V>
 where
@@ -19,11 +22,12 @@ where
 pub type NeedNext = bool;
 pub type IsCompleted = bool;
 
-pub trait KeyValueStoreManager<K, V, C>
+pub trait KeyValueStoreManager<K, V, C, P>
 where
     K: 'static,
     V: 'static,
     C: 'static,
+    P: DatabaseTrait<PendingTableName>,
 {
     type Store: KeyValueStoreRead<K, V>;
 
@@ -41,7 +45,7 @@ where
 
     /// make commit the unique child of its parent
     /// do nothing if commit is in history or if commit is pending root
-    fn discard(&mut self, commit: C) -> Result<()>;
+    fn discard(&mut self, commit: C, pending_write_schema: &P::WriteSchema) -> Result<()>;
 
     fn get_versioned_key(&self, commit: &C, key: &K) -> Result<Option<V>>;
 }
@@ -52,7 +56,7 @@ pub trait KeyValueStoreBulksTrait<K, V, C> {
         &self,
         commit: C,
         bulk: impl Iterator<Item = (K, Option<V>)>,
-        write_schema: &impl WriteSchemaTrait,
+        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
     ) -> Result<()>;
 
     /// Get with the given commit version and key.
@@ -62,6 +66,6 @@ pub trait KeyValueStoreBulksTrait<K, V, C> {
     fn gc_commit(
         &self,
         changes: impl Iterator<Item = (C, K, Option<V>)>,
-        write_schema: &impl WriteSchemaTrait,
+        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
     ) -> Result<()>;
 }

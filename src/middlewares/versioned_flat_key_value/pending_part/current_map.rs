@@ -8,7 +8,7 @@ use super::{
     tree::Tree,
 };
 
-pub(super) struct CurrentMap<S: PendingKeyValueSchema> {
+pub struct CurrentMap<S: PendingKeyValueSchema> {
     map: BTreeMap<S::Key, ApplyRecord<S>>,
     commit_id: S::CommitId,
 }

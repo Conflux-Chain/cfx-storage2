@@ -13,29 +13,35 @@ use std::sync::Arc;
 
 pub use history_indices::PushError;
 pub use manager_impl::SnapshotView;
+use nonempty::NonEmpty;
 use parking_lot::Mutex;
-pub use pending_part::PendingError;
+pub use pending_part::{
+    pending_schema::PendingKeyValueConfig, primitives_initialize_empty_schema,
+    primitives_recover_schema, primitives_verify_schema_is_empty, BootstrapError, PendingError,
+    RecoveryError,
+};
 
 #[cfg(test)]
-pub use tests::{empty_rocksdb, gen_random_commit_id, gen_updates, get_rng_for_test};
+pub use tests::{clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test};
 
 use self::history_indices::LATEST;
 use self::history_indices_cache::HistoryIndexCache;
-use self::pending_part::pending_schema::PendingKeyValueConfig;
 use self::table_schema::{HistoryChangeTable, HistoryIndicesTable, VersionedKeyValueSchema};
 use pending_part::VersionedMap;
 
 use super::commit_id_schema::HistoryNumberSchema;
 use super::ChangeKey;
 use super::CommitIDSchema;
-use crate::backends::{DatabaseTrait, TableRead, TableReader, WriteSchemaTrait};
+use crate::backends::{
+    DatabaseTrait, HistoricalTableName, PendingTableName, TableRead, TableReader, WriteSchemaTrait,
+};
 use crate::errors::Result;
 use crate::middlewares::commit_id_schema::height_to_history_number;
 use crate::middlewares::{CommitID, HistoryNumber, KeyValueStoreBulks};
 use crate::traits::KeyValueStoreBulksTrait;
 use crate::StorageError;
 
-pub type VersionedStoreCache<Schema> = VersionedMap<PendingKeyValueConfig<Schema, CommitID>>;
+pub type VersionedStoreCache<Schema, P> = VersionedMap<PendingKeyValueConfig<Schema, CommitID>, P>;
 
 /// Key for accessing version history records in storage.
 ///
@@ -51,15 +57,18 @@ pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 
 pub type HistoryChangeKey<K> = ChangeKey<HistoryNumber, K>;
 
-pub struct VersionedStore<'db, T: VersionedKeyValueSchema> {
-    pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
+pub struct VersionedStore<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
+    pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>, P>>>,
+
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     history_number_table: TableReader<'db, HistoryNumberSchema>,
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
+impl<'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
+    VersionedStore<'db, T, P>
+{
     pub fn query_commit_existence(&self, commit: &CommitID) -> Result<bool> {
         if self.pending_part.lock().contains_commit_id(commit) {
             return Ok(true);
@@ -77,13 +86,15 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         Ok(pending_guard.checkout_current(commit)?)
     }
 
-    pub fn into_pending_part(self) -> Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>> {
+    pub fn into_pending_part(
+        self,
+    ) -> Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>, P>>> {
         self.pending_part
     }
 
-    pub fn new<D: DatabaseTrait>(
+    pub fn new<D: DatabaseTrait<HistoricalTableName>>(
         db: Arc<D>,
-        pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
+        pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>, P>>>,
     ) -> Result<Self> {
         let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
         let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
@@ -107,13 +118,14 @@ impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
         parent_commit: Option<CommitID>,
         commit: CommitID,
         updates: HashMap<T::Key, Option<T::Value>>,
+        pending_write_schema: &P::WriteSchema,
     ) -> Result<()> {
         if self.commit_id_table.get(&commit)?.is_some() {
             return Err(StorageError::CommitIdAlreadyExistsInHistory);
         }
 
         let mut pending_part = self.pending_part.lock();
-        Ok(pending_part.add_node(updates, commit, parent_commit)?)
+        Ok(pending_part.add_node(updates, commit, parent_commit, pending_write_schema)?)
     }
 
     fn get_history_number_by_commit_id(&self, commit: CommitID) -> Result<HistoryNumber> {
@@ -318,36 +330,47 @@ fn iter_history<'db, T: VersionedKeyValueSchema>(
     Ok(history_map)
 }
 
-pub fn confirmed_pending_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
-    db: Arc<D>,
-    pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
+pub fn confirmed_pending_to_history<
+    D: DatabaseTrait<HistoricalTableName>,
+    P: DatabaseTrait<PendingTableName>,
+    T: VersionedKeyValueSchema,
+>(
+    historical_db: Arc<D>,
+    pending_part: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>, P>>>,
     new_root_commit_id: CommitID,
-    write_schema: &D::WriteSchema,
+    historical_write_schema: &D::WriteSchema,
+    pending_write_schema: &P::WriteSchema,
 ) -> Result<()> {
     let mut pending_part_guard = pending_part.lock();
-    let confirmed_path = pending_part_guard.change_root(new_root_commit_id)?;
+    let maybe_confirmed_path =
+        pending_part_guard.change_root(new_root_commit_id, pending_write_schema)?;
 
-    confirm_ids_to_history::<D>(
-        db.clone(),
-        confirmed_path.start_height,
-        &confirmed_path.commit_ids,
-        write_schema,
-    )?;
+    if let Some(confirmed_path) = maybe_confirmed_path {
+        confirm_ids_to_history::<D>(
+            historical_db.clone(),
+            confirmed_path.start_height,
+            &confirmed_path.commit_ids,
+            historical_write_schema,
+        )?;
 
-    confirm_maps_to_history::<D, T>(
-        db.clone(),
-        confirmed_path.start_height,
-        confirmed_path.key_value_maps,
-        write_schema,
-    )?;
+        confirm_maps_to_history::<D, T>(
+            historical_db.clone(),
+            confirmed_path.start_height,
+            confirmed_path.key_value_maps,
+            historical_write_schema,
+        )?;
+    }
 
     Ok(())
 }
 
-pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
+pub fn confirm_maps_to_history<
+    D: DatabaseTrait<HistoricalTableName>,
+    T: VersionedKeyValueSchema,
+>(
     db: Arc<D>,
     to_confirm_start_height: u64,
-    to_confirm_maps: Vec<HashMap<T::Key, impl Into<Option<T::Value>>>>,
+    to_confirm_maps: NonEmpty<HashMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
     let history_index_table = db.view::<HistoryIndicesTable<T>>()?;
@@ -382,10 +405,10 @@ pub fn confirm_maps_to_history<D: DatabaseTrait, T: VersionedKeyValueSchema>(
     Ok(())
 }
 
-pub fn confirm_ids_to_history<D: DatabaseTrait>(
+pub fn confirm_ids_to_history<D: DatabaseTrait<HistoricalTableName>>(
     db: Arc<D>,
     to_confirm_start_height: u64,
-    to_confirm_ids: &[CommitID],
+    to_confirm_ids: &NonEmpty<CommitID>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
     let commit_id_table = db.view::<CommitIDSchema>()?;

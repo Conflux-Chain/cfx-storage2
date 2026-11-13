@@ -1,7 +1,9 @@
+use std::fmt::Debug;
+
 use ark_serialize::SerializationError;
 use thiserror::Error;
 
-use crate::middlewares::{CommitID, PendingError, PushError};
+use crate::middlewares::{BootstrapError, PendingError, PushError, RecoveryError};
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -21,13 +23,18 @@ pub enum StorageError {
     DatabaseError(#[from] DatabaseError),
 
     #[error("pending error {0:?}")]
-    PendingError(#[from] PendingError<CommitID>),
+    PendingError(#[from] PendingError),
 
     #[error("corrupted history indices")]
     CorruptedHistoryIndices,
 
     #[error("push error {0:?}")]
     PushError(#[from] PushError),
+
+    #[error("recovery error {0:?}")]
+    RecoveryError(#[from] RecoveryError),
+    #[error("recovery error {0:?}")]
+    BootstrapError(#[from] BootstrapError),
 }
 
 impl From<DecodeError> for StorageError {
@@ -88,6 +95,8 @@ impl PartialEq for StorageError {
             (PendingError(e1), PendingError(e2)) => e1 == e2,
             (CorruptedHistoryIndices, CorruptedHistoryIndices) => true,
             (PushError(e1), PushError(e2)) => e1 == e2,
+            (BootstrapError(e1), BootstrapError(e2)) => e1 == e2,
+            (RecoveryError(e1), RecoveryError(e2)) => e1 == e2,
 
             (VersionNotFound, _) => false,
             (CommitIDNotFound, _) => false,
@@ -97,6 +106,8 @@ impl PartialEq for StorageError {
             (PendingError(_), _) => false,
             (CorruptedHistoryIndices, _) => false,
             (PushError(_), _) => false,
+            (BootstrapError(_), _) => false,
+            (RecoveryError(_), _) => false,
         }
     }
 }

@@ -6,9 +6,8 @@ mod node;
 
 pub type SlabIndex = usize;
 
-use std::collections::HashMap;
-
 use slab::Slab;
+use std::collections::HashMap;
 
 use self::node::TreeNode;
 
@@ -91,11 +90,11 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         self.index_map.contains_key(commit_id)
     }
 
-    fn get_slab_index_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<SlabIndex, S> {
+    fn get_slab_index_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<SlabIndex> {
         let slab_index = *self
             .index_map
             .get(&commit_id)
-            .ok_or(PendingError::CommitIDNotFound(commit_id))?;
+            .ok_or(PendingError::CommitIDNotFound(format!("{:?}", commit_id)))?;
         Ok(slab_index)
     }
 
@@ -107,7 +106,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &mut self.nodes[slab_index]
     }
 
-    fn get_node_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<&TreeNode<S>, S> {
+    fn get_node_by_commit_id(&self, commit_id: S::CommitId) -> PendResult<&TreeNode<S>> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
         Ok(self.get_node_by_slab_index(slab_index))
     }
@@ -125,7 +124,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         &self,
         commit_id: S::CommitId,
         key: &S::Key,
-    ) -> PendResult<Option<ValueEntry<S::Value>>, S> {
+    ) -> PendResult<Option<ValueEntry<S::Value>>> {
         let node = self.get_node_by_commit_id(commit_id)?;
         Ok(node.get_modified_value(key))
     }
