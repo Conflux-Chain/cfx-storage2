@@ -6,11 +6,11 @@
 
 use std::borrow::Cow;
 
+use crate::middlewares::versioned_flat_key_value::pending_part::tree::Tree;
+
 use super::{
-    format::{
-        SnapshotKey, SnapshotValue, SnapshotsTable, WalKey, WalKeySpecificPart, WalTable, WalValue,
-    },
-    PendingKeyValueSchema, PersistenceTracker, RecoverMap, WriteSchemaTrait,
+    format::{WalKey, WalKeySpecificPart, WalTable, WalValue},
+    write_tree_snapshot, PendingKeyValueSchema, PersistenceTracker, RecoverMap, WriteSchemaTrait,
 };
 
 /// Logs the addition of a new root node to the WAL.
@@ -52,12 +52,13 @@ pub fn log_add_non_root_node<S: PendingKeyValueSchema>(
 /// 1. Writes the `change_root` modification to the WAL under the *current* snapshot ID.
 /// 2. Advances the `PersistenceTracker` to a new snapshot.
 /// 3. Writes a new entry to the `SnapshotsTable` to persist this new snapshot.
+///
+/// **IMPORTANT**: The parameter `tree` should be obtained after executing this change_root operation.
 pub fn log_change_root<S: PendingKeyValueSchema>(
     write_schema: &impl WriteSchemaTrait<super::PendingTableName>,
     tracker: &mut PersistenceTracker,
     new_root_cid: S::CommitId,
-    new_height_of_root: u64,
-    new_parent_of_root: S::CommitId,
+    tree: &Tree<S>,
 ) {
     // Step 1: Log the `change_root` action to the WAL using the generalized helper.
     log_single_record_operation(
@@ -71,13 +72,7 @@ pub fn log_change_root<S: PendingKeyValueSchema>(
     tracker.advance_to_next_snapshot();
 
     // Step 3: Write the new snapshot record to the database.
-    let snapshot_key = SnapshotKey(new_height_of_root);
-    let snapshot_value = SnapshotValue {
-        parent_of_root: Some(new_parent_of_root),
-        snapshot_id: tracker.snapshot_id, // Use the new snapshot_id
-    };
-    let op = (Cow::Owned(snapshot_key), Some(Cow::Owned(snapshot_value)));
-    write_schema.write::<SnapshotsTable<S>>(op);
+    write_tree_snapshot(tree, tracker.snapshot_id, write_schema);
 }
 
 /// Logs a `make_pivot` operation to the WAL.
@@ -178,4 +173,449 @@ fn log_single_record_operation<S: PendingKeyValueSchema>(
 
     // Advance the tracker for the next modification.
     tracker.advance_to_next_modification();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{
+        format::{
+            ModificationId, SnapshotId, SnapshotKey, SnapshotRecordType, SnapshotValue,
+            SnapshotsTable, WalKey, WalKeySpecificPart, WalTable, WalValue,
+        },
+        test_util::{k, TestSchema},
+        DatabaseTrait, Decode, PendingTableName, PersistenceTracker, RecoverMap, RecoverRecord,
+        TableSchema, ValueEntry, WrappedInMemoryDb,
+    };
+    use super::*;
+    use ethereum_types::H256;
+
+    #[test]
+    fn test_log_change_root() {
+        // Arrange
+        let db = WrappedInMemoryDb::<PendingTableName>::empty();
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let mut tracker = PersistenceTracker {
+            snapshot_id: SnapshotId(5),
+            next_modification_id: ModificationId(10),
+        };
+
+        // 1. Initialize the tree, simulating it being built on top of a historical commit.
+        let historical_part_tip = H256::from_low_u64_be(0);
+        let mut tree = Tree::<TestSchema>::new(Some(historical_part_tip), 1);
+
+        // 2. Add an initial root node.
+        let initial_root_cid = H256::from_low_u64_be(1);
+        let mut initial_modifications = RecoverMap::<TestSchema>::new();
+        initial_modifications.insert(
+            k(b"key1"),
+            RecoverRecord {
+                value: ValueEntry::Value(k(b"val1")),
+                last_commit_id: None,
+            },
+        );
+        tree.add_root(initial_root_cid, initial_modifications)
+            .unwrap();
+
+        // 3. Add a non-root node, which will become the new root.
+        let new_root_cid = H256::from_low_u64_be(500);
+        let mut new_modifications = RecoverMap::<TestSchema>::new();
+        new_modifications.insert(
+            k(b"new_key"),
+            RecoverRecord {
+                value: ValueEntry::Value(k(b"new_val")),
+                last_commit_id: None,
+            },
+        );
+        tree.add_non_root_node(new_root_cid, initial_root_cid, new_modifications)
+            .unwrap();
+
+        // Act
+        // 4. Execute `change_root`. This will change the internal state of the tree.
+        //    Only the `new_root_cid` node will remain in the tree.
+        //    The tree's `parent_of_root` will become `initial_root_cid`.
+        tree.change_root(new_root_cid).unwrap();
+
+        // 5. Use the *updated* tree to log this operation.
+        log_change_root::<TestSchema>(&write_schema, &mut tracker, new_root_cid, &tree);
+
+        // Assert
+        // Assert tracker state
+        assert_eq!(
+            tracker.snapshot_id.0, 6,
+            "Snapshot ID should be incremented"
+        );
+        assert_eq!(
+            tracker.next_modification_id.0, 0,
+            "Next modification ID should be reset to 0"
+        );
+
+        let ops = write_schema.drain();
+        // Expect 4 write operations:
+        // 1 (WAL ChangeRootMeta) + 3 (Snapshot records)
+        // The snapshot contains only one node (new_root_cid), so there are: 1 Meta, 1 NodeMeta, 1 NodeMap
+        assert_eq!(
+            ops.len(),
+            4,
+            "Should write one WAL op and three snapshot ops"
+        );
+
+        // -- Assert WAL record --
+        let wal_op = ops
+            .iter()
+            .find(|op| op.0 == WalTable::<TestSchema>::NAME)
+            .expect("WAL record for change_root not found");
+
+        let wal_key = WalKey::<TestSchema>::decode_owned(wal_op.1.clone()).unwrap();
+        let wal_value = WalValue::<TestSchema>::decode_owned(wal_op.2.clone().unwrap()).unwrap();
+
+        assert_eq!(
+            wal_key.snapshot_id.0, 5,
+            "WAL key should use the *old* snapshot ID"
+        );
+        assert_eq!(
+            wal_key.modification_id.0, 10,
+            "WAL key should use the *old* modification ID"
+        );
+        assert_eq!(
+            wal_key.operation_specific_parts,
+            WalKeySpecificPart::ChangeRootMeta
+        );
+
+        if let WalValue::MetaValue {
+            commit_id: cid,
+            maybe_parent_cid,
+            map_value_count,
+        } = wal_value
+        {
+            assert_eq!(cid, new_root_cid);
+            assert_eq!(maybe_parent_cid, None);
+            assert_eq!(map_value_count, 0);
+        } else {
+            panic!("Expected MetaValue for the WAL record");
+        }
+
+        // -- Assert snapshot records --
+        let snapshot_ops: Vec<_> = ops
+            .iter()
+            .filter(|op| op.0 == SnapshotsTable::<TestSchema>::NAME)
+            .collect();
+
+        assert_eq!(
+            snapshot_ops.len(),
+            3,
+            "Should be 3 records for the new snapshot"
+        );
+
+        let snapshot_meta_op = snapshot_ops
+            .iter()
+            .find(|op| {
+                let key = SnapshotKey::<TestSchema>::decode_owned(op.1.clone()).unwrap();
+                matches!(key.record_type, SnapshotRecordType::Meta)
+            })
+            .expect("Snapshot meta record not found");
+
+        let meta_value =
+            SnapshotValue::<TestSchema>::decode_owned(snapshot_meta_op.2.clone().unwrap()).unwrap();
+
+        if let SnapshotValue::MetaValue {
+            parent_of_root,
+            snapshot_id,
+            nodes_count,
+        } = meta_value
+        {
+            // According to the logic of `change_root`, the new tree's parent_of_root in this example should be the old root node.
+            assert_eq!(
+                parent_of_root,
+                Some(initial_root_cid),
+                "The new tree's parent should be the old root"
+            );
+            assert_eq!(
+                snapshot_id,
+                SnapshotId(6),
+                "Snapshot ID in value should be the new ID"
+            );
+            // The snapshot should now contain only one node.
+            assert_eq!(
+                nodes_count, 1,
+                "Snapshot should contain only one node after change_root"
+            );
+        } else {
+            panic!("Expected SnapshotValue::MetaValue");
+        }
+    }
+
+    #[test]
+    fn test_log_add_root() {
+        // Arrange
+        let db = WrappedInMemoryDb::<PendingTableName>::empty();
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let mut tracker = PersistenceTracker {
+            snapshot_id: SnapshotId(0),
+            next_modification_id: ModificationId(0),
+        };
+
+        let commit_id = H256::from_low_u64_be(100);
+        let mut modifications = RecoverMap::<TestSchema>::new();
+        modifications.insert(
+            k(b"key1"),
+            RecoverRecord {
+                value: ValueEntry::Value(k(b"val1")),
+                last_commit_id: None,
+            },
+        );
+
+        // Act
+        log_add_root::<TestSchema>(&write_schema, &mut tracker, commit_id, &modifications);
+
+        // Assert
+        // 1. Check tracker state
+        assert_eq!(tracker.snapshot_id.0, 0, "Snapshot ID should not change");
+        assert_eq!(
+            tracker.next_modification_id.0, 1,
+            "Next modification ID should be incremented"
+        );
+
+        // 2. Check written data
+        let ops = write_schema.drain();
+        assert_eq!(ops.len(), 2, "Should write one meta and one map record");
+
+        let meta_op = ops
+            .iter()
+            .find(|op| {
+                let key = WalKey::<TestSchema>::decode_owned(op.1.clone()).unwrap();
+                matches!(
+                    key.operation_specific_parts,
+                    WalKeySpecificPart::AddNodeMeta
+                )
+            })
+            .expect("Meta record not found");
+
+        // Assert Meta record
+        let meta_key = WalKey::<TestSchema>::decode_owned(meta_op.1.clone()).unwrap();
+        let meta_value = WalValue::<TestSchema>::decode_owned(meta_op.2.clone().unwrap()).unwrap();
+
+        assert_eq!(meta_key.snapshot_id.0, 0);
+        assert_eq!(meta_key.modification_id.0, 0);
+        if let WalValue::MetaValue {
+            commit_id: cid,
+            maybe_parent_cid,
+            map_value_count,
+        } = meta_value
+        {
+            assert_eq!(cid, commit_id);
+            assert_eq!(maybe_parent_cid, None, "Root node should have no parent");
+            assert_eq!(map_value_count, 1);
+        } else {
+            panic!("Expected MetaValue for the meta record");
+        }
+    }
+
+    #[test]
+    fn test_log_make_pivot() {
+        // Arrange
+        let db = WrappedInMemoryDb::<PendingTableName>::empty();
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let mut tracker = PersistenceTracker {
+            snapshot_id: SnapshotId(3),
+            next_modification_id: ModificationId(8),
+        };
+        let commit_id = H256::from_low_u64_be(300);
+
+        // Act
+        log_make_pivot::<TestSchema>(&write_schema, &mut tracker, commit_id);
+
+        // Assert
+        // 1. Check tracker state
+        assert_eq!(tracker.snapshot_id.0, 3, "Snapshot ID should not change");
+        assert_eq!(
+            tracker.next_modification_id.0, 9,
+            "Next modification ID should be incremented"
+        );
+
+        // 2. Check written data
+        let ops = write_schema.drain();
+        assert_eq!(ops.len(), 1, "Should write a single WAL record");
+        let op = &ops[0];
+        assert_eq!(op.0, WalTable::<TestSchema>::NAME);
+
+        let key = WalKey::<TestSchema>::decode_owned(op.1.clone()).unwrap();
+        let value = WalValue::<TestSchema>::decode_owned(op.2.clone().unwrap()).unwrap();
+
+        // Assert Key
+        assert_eq!(key.snapshot_id.0, 3);
+        assert_eq!(key.modification_id.0, 8);
+        assert_eq!(
+            key.operation_specific_parts,
+            WalKeySpecificPart::MakePivotMeta
+        );
+
+        // Assert Value
+        if let WalValue::MetaValue {
+            commit_id: cid,
+            maybe_parent_cid,
+            map_value_count,
+        } = value
+        {
+            assert_eq!(cid, commit_id);
+            assert_eq!(maybe_parent_cid, None);
+            assert_eq!(map_value_count, 0);
+        } else {
+            panic!("Expected MetaValue");
+        }
+    }
+
+    #[test]
+    fn test_log_discard() {
+        // Arrange
+        let db = WrappedInMemoryDb::<PendingTableName>::empty();
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let mut tracker = PersistenceTracker {
+            snapshot_id: SnapshotId(4),
+            next_modification_id: ModificationId(0),
+        };
+        let commit_id = H256::from_low_u64_be(400);
+
+        // Act
+        log_discard::<TestSchema>(&write_schema, &mut tracker, commit_id);
+
+        // Assert
+        // 1. Check tracker state
+        assert_eq!(tracker.snapshot_id.0, 4, "Snapshot ID should not change");
+        assert_eq!(
+            tracker.next_modification_id.0, 1,
+            "Next modification ID should be incremented"
+        );
+
+        // 2. Check written data
+        let ops = write_schema.drain();
+        assert_eq!(ops.len(), 1, "Should write a single WAL record");
+        let op = &ops[0];
+        assert_eq!(op.0, WalTable::<TestSchema>::NAME);
+
+        let key = WalKey::<TestSchema>::decode_owned(op.1.clone()).unwrap();
+        let value = WalValue::<TestSchema>::decode_owned(op.2.clone().unwrap()).unwrap();
+
+        // Assert Key
+        assert_eq!(key.snapshot_id.0, 4);
+        assert_eq!(key.modification_id.0, 0);
+        assert_eq!(
+            key.operation_specific_parts,
+            WalKeySpecificPart::DiscardMeta
+        );
+
+        // Assert Value
+        if let WalValue::MetaValue {
+            commit_id: cid,
+            maybe_parent_cid,
+            map_value_count,
+        } = value
+        {
+            assert_eq!(cid, commit_id);
+            assert_eq!(maybe_parent_cid, None);
+            assert_eq!(map_value_count, 0);
+        } else {
+            panic!("Expected MetaValue");
+        }
+    }
+
+    #[test]
+    fn test_log_add_non_root_node() {
+        // Arrange
+        let db = WrappedInMemoryDb::<PendingTableName>::empty();
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let mut tracker = PersistenceTracker {
+            snapshot_id: SnapshotId(1),
+            next_modification_id: ModificationId(5),
+        };
+
+        let commit_id = H256::from_low_u64_be(100);
+        let parent_commit_id = H256::from_low_u64_be(99);
+        let mut modifications = RecoverMap::<TestSchema>::new();
+        modifications.insert(
+            k(b"key1"),
+            RecoverRecord {
+                value: ValueEntry::Value(k(b"val1")),
+                last_commit_id: None,
+            },
+        );
+
+        modifications.insert(
+            k(b"key2"),
+            RecoverRecord {
+                value: ValueEntry::Value(k(b"val2")),
+                last_commit_id: Some(H256::default()),
+            },
+        );
+
+        modifications.insert(
+            k(b"key3"),
+            RecoverRecord {
+                value: ValueEntry::Deleted,
+                last_commit_id: None,
+            },
+        );
+
+        // Act
+        log_add_non_root_node::<TestSchema>(
+            &write_schema,
+            &mut tracker,
+            commit_id,
+            parent_commit_id,
+            &modifications,
+        );
+
+        // Assert
+        // 1. Check tracker state
+        assert_eq!(tracker.snapshot_id.0, 1, "Snapshot ID should not change");
+        assert_eq!(
+            tracker.next_modification_id.0, 6,
+            "Next modification ID should be incremented"
+        );
+
+        // 2. Check written data
+        let ops = write_schema.drain();
+        assert_eq!(ops.len(), 4, "Should write one meta and three map records");
+
+        let mut meta_found = false;
+        let mut map_keys_found = 0;
+
+        for op in ops {
+            assert_eq!(op.0, WalTable::<TestSchema>::NAME); // All ops are for WalTable
+            let key = WalKey::<TestSchema>::decode_owned(op.1).unwrap();
+            let value = WalValue::<TestSchema>::decode_owned(op.2.unwrap()).unwrap();
+
+            assert_eq!(key.snapshot_id.0, 1);
+            assert_eq!(key.modification_id.0, 5);
+
+            match key.operation_specific_parts {
+                WalKeySpecificPart::AddNodeMeta => {
+                    meta_found = true;
+                    if let WalValue::MetaValue {
+                        commit_id: cid,
+                        maybe_parent_cid,
+                        map_value_count,
+                    } = value
+                    {
+                        assert_eq!(cid, commit_id);
+                        assert_eq!(maybe_parent_cid, Some(parent_commit_id));
+                        assert_eq!(map_value_count, 3);
+                    } else {
+                        panic!("Expected MetaValue");
+                    }
+                }
+                WalKeySpecificPart::AddNodeMapKey(map_key) => {
+                    map_keys_found += 1;
+                    let map_value = modifications.get(&map_key).unwrap();
+                    if let WalValue::MapValue(val) = value {
+                        assert_eq!(&val, map_value);
+                    } else {
+                        panic!("Expected MapValue");
+                    }
+                }
+                _ => panic!("Unexpected WAL operation type"),
+            }
+        }
+        assert!(meta_found, "Meta record was not written");
+        assert_eq!(map_keys_found, 3, "Map records were not written correctly");
+    }
 }

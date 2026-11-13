@@ -85,6 +85,10 @@ impl<S: PendingKeyValueSchema> TreeNode<S> {
         self.modifications.get(key)
     }
 
+    pub fn get_modifications(&self) -> &RecoverMap<S> {
+        &self.modifications
+    }
+
     pub fn get_updates(&self) -> KeyValueMap<S> {
         self.modifications
             .iter()

@@ -404,7 +404,7 @@ mod tests {
 
     pub type CommitId = u64;
 
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct TestSchema;
 
     impl VersionedKeyValueSchema for TestSchema {
@@ -437,8 +437,7 @@ mod tests {
         primitives_verify_schema_is_empty::<TestPendingConfig, WrappedInMemoryDb<PendingTableName>>(&pending_db).unwrap();
         let write_schema = WrappedInMemoryDb::write_schema();
         let tree_with_tracker =
-            primitives_initialize_empty_schema::<TestPendingConfig>(&write_schema, None, 0)
-                .unwrap();
+            primitives_initialize_empty_schema::<TestPendingConfig>(&write_schema, None, 0);
         (pending_db, tree_with_tracker)
     }
 
@@ -494,6 +493,24 @@ mod tests {
         db.commit(write_schema).unwrap();
 
         (forward_only_tree, versioned_map)
+    }
+
+    #[test]
+    fn test_export_and_from_snapshot_roundtrip() {
+        let num_nodes = 30;
+
+        let seed: [u8; 32] = [
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31,
+        ];
+        let mut rng = StdRng::from_seed(seed);
+
+        let (forward_only_tree, _) = generate_random_tree(num_nodes, &mut rng);
+
+        let tree_snapshot = forward_only_tree.export_snapshot();
+        let tree_from_tree_snapshot = Tree::from_snapshot(tree_snapshot.clone()).unwrap();
+        let tree_snapshot_second_hand = tree_from_tree_snapshot.export_snapshot();
+        assert_eq!(tree_snapshot, tree_snapshot_second_hand);
     }
 
     #[test]

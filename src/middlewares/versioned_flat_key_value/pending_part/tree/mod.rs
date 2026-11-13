@@ -3,6 +3,7 @@ mod change_root;
 mod checkout;
 mod commands;
 mod node;
+mod tree_snapshot;
 
 pub type SlabIndex = usize;
 
@@ -14,6 +15,8 @@ use self::node::TreeNode;
 use super::pending_schema::{PendingKeyValueSchema, Result as PendResult};
 use super::PendingError;
 use crate::types::ValueEntry;
+
+pub use tree_snapshot::{TreeSnapshot, TreeSnapshotNode};
 
 pub struct Tree<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,

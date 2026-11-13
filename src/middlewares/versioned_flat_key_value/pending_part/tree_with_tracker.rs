@@ -64,13 +64,7 @@ impl<S: PendingKeyValueSchema> TreeWithTracker<S> {
         let in_memory_res = self.tree.change_root(commit_id)?;
 
         if let Some(confirmed_path_info) = in_memory_res {
-            log_change_root::<S>(
-                write_schema,
-                &mut self.tracker,
-                commit_id,
-                confirmed_path_info.get_new_height_of_root(),
-                confirmed_path_info.get_new_parent_of_root(),
-            );
+            log_change_root::<S>(write_schema, &mut self.tracker, commit_id, &self.tree);
 
             Ok(Some(confirmed_path_info))
         } else {

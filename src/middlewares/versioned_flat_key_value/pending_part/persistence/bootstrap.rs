@@ -15,13 +15,15 @@ pub mod primitives {
     //! application (e.g., `lvmt`), unless you are building a new composite application
     //! yourself.
 
-    use std::{borrow::Cow, sync::Arc};
+    use std::sync::Arc;
+
+    use crate::middlewares::versioned_flat_key_value::pending_part::persistence::write_tree_snapshot;
 
     use super::{
         super::{
             DatabaseTrait, ModificationId, PendingKeyValueSchema, PendingTableName,
-            PersistenceTracker, Result, SnapshotId, SnapshotKey, SnapshotValue, SnapshotsTable,
-            TableRead, Tree, TreeWithTracker, WalTable, WriteSchemaTrait,
+            PersistenceTracker, Result, SnapshotId, SnapshotsTable, TableRead, Tree,
+            TreeWithTracker, WalTable, WriteSchemaTrait,
         },
         BootstrapError,
     };
@@ -34,7 +36,7 @@ pub mod primitives {
     /// A more efficient implementation could drop and recreate the Column Family.
     pub fn clear_pending_schema<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>>(
         db: &Arc<P>,
-        write_schema: &impl WriteSchemaTrait<PendingTableName>,
+        write_schema: &P::WriteSchema,
     ) -> Result<()> {
         let snapshots_view = Arc::new(db.view::<SnapshotsTable<S>>()?);
         for item in snapshots_view.iter_from_start()? {
@@ -80,25 +82,119 @@ pub mod primitives {
         write_schema: &impl WriteSchemaTrait<PendingTableName>,
         parent_of_root: Option<S::CommitId>,
         height_of_root: u64,
-    ) -> Result<TreeWithTracker<S>> {
+    ) -> TreeWithTracker<S> {
         // Create a new empty tree.
         let tree = Tree::new(parent_of_root, height_of_root);
 
         // Create the very first snapshot (id=0) for this new tree.
         let initial_snapshot_id = SnapshotId(0);
-        let key = SnapshotKey(height_of_root);
-        let value = SnapshotValue {
-            parent_of_root,
-            snapshot_id: initial_snapshot_id,
-        };
-        let snapshot_op = (Cow::Owned(key), Some(Cow::Owned(value)));
-        write_schema.write::<SnapshotsTable<S>>(snapshot_op);
+        write_tree_snapshot(&tree, initial_snapshot_id, write_schema);
 
         let tracker = PersistenceTracker {
             snapshot_id: initial_snapshot_id,
             next_modification_id: ModificationId(0), // No modifications yet.
         };
 
-        Ok(TreeWithTracker { tree, tracker })
+        TreeWithTracker { tree, tracker }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{
+        format::{
+            ModificationId, SnapshotId, SnapshotKey, SnapshotRecordType, SnapshotValue,
+            SnapshotsTable, WalKey, WalKeySpecificPart, WalTable, WalValue,
+        },
+        test_util::TestSchema,
+        DatabaseTrait, Decode, PendingTableName, StorageError, TableSchema, WrappedInMemoryDb,
+        WriteSchemaTrait,
+    };
+    use super::primitives::*;
+    use super::*;
+    use core::panic;
+    use ethereum_types::H256;
+    use std::{borrow::Cow, sync::Arc};
+
+    #[test]
+    fn test_verify_schema_is_empty_when_truly_empty() {
+        // Arrange
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+
+        // Act & Assert
+        let result = verify_schema_is_empty::<TestSchema, _>(&db);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_schema_is_empty_when_not_empty() {
+        // Arrange
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+
+        // Add some data to make it non-empty. No need to make the data valid.
+        let wal_key = WalKey::<TestSchema> {
+            snapshot_id: SnapshotId(0),
+            modification_id: ModificationId(0),
+            operation_specific_parts: WalKeySpecificPart::AddNodeMeta,
+        };
+        let wal_value = WalValue::<TestSchema>::MetaValue {
+            commit_id: H256::zero(),
+            maybe_parent_cid: None,
+            map_value_count: 0,
+        };
+        let op = (Cow::Owned(wal_key), Some(Cow::Owned(wal_value)));
+        write_schema.write::<WalTable<TestSchema>>(op);
+        db.commit(write_schema).unwrap();
+
+        // Act & Assert
+        let result = verify_schema_is_empty::<TestSchema, _>(&db);
+        assert!(matches!(
+            result,
+            Err(StorageError::BootstrapError(
+                BootstrapError::DatabaseNotEmpty
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_initialize_empty_schema() {
+        // Arrange
+        let db = WrappedInMemoryDb::<PendingTableName>::empty();
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let parent_of_root = Some(H256::from_low_u64_be(99));
+        let height_of_root = 100;
+
+        // Act
+        let result =
+            initialize_empty_schema::<TestSchema>(&write_schema, parent_of_root, height_of_root);
+
+        // Assert
+        // 1. Check returned tracker
+        assert_eq!(result.tracker.snapshot_id.0, 0);
+        assert_eq!(result.tracker.next_modification_id.0, 0);
+
+        // 2. Check written data
+        let ops = write_schema.drain();
+        assert_eq!(ops.len(), 1);
+        let op = &ops[0];
+        assert_eq!(op.0, SnapshotsTable::<TestSchema>::NAME);
+
+        let key = SnapshotKey::<TestSchema>::decode_owned(op.1.clone()).unwrap();
+        let value = SnapshotValue::<TestSchema>::decode_owned(op.2.clone().unwrap()).unwrap();
+
+        assert_eq!(key.snapshot_root_height, height_of_root);
+        assert_eq!(key.record_type, SnapshotRecordType::Meta);
+        let SnapshotValue::MetaValue {
+            parent_of_root: written_parent_of_root,
+            snapshot_id,
+            nodes_count,
+        } = value
+        else {
+            panic!()
+        };
+        assert_eq!(written_parent_of_root, parent_of_root);
+        assert_eq!(snapshot_id.0, 0);
+        assert_eq!(nodes_count, 0);
     }
 }

@@ -16,9 +16,10 @@ pub use manager_impl::SnapshotView;
 use nonempty::NonEmpty;
 use parking_lot::Mutex;
 pub use pending_part::{
-    pending_schema::PendingKeyValueConfig, primitives_initialize_empty_schema,
-    primitives_recover_schema, primitives_verify_schema_is_empty, BootstrapError, PendingError,
-    RecoveryError,
+    pending_schema::PendingKeyValueConfig, primitives_gc_until_height,
+    primitives_initialize_empty_schema, primitives_recover_schema,
+    primitives_verify_schema_is_empty, BootstrapError, PendingError, RecoveryError,
+    SnapshotReadError,
 };
 
 #[cfg(test)]
