@@ -1996,11 +1996,23 @@ fn test_lvmt_commit_dry_run() {
             assert_eq!(dry, again);
             let id = gen_novel_commit_id(&mut rng, &mut previous_commits);
             assert!(!db.as_reader().unwrap().query_commit_existence(&id).unwrap());
-            let root = db
-                .as_manager()
-                .unwrap()
-                .commit(base, id, changes.clone().into_iter(), &AMT)
-                .unwrap();
+            // Every other commit goes through `prepare_commit` + `commit_prepared`.
+            let root = if log.len() % 2 == 1 {
+                let prepared = db
+                    .prepare_commit(base, changes.clone().into_iter(), &AMT)
+                    .unwrap();
+                assert_eq!(prepared.state_root(), dry);
+                assert_eq!(prepared.base(), base);
+                db.as_manager()
+                    .unwrap()
+                    .commit_prepared(id, prepared)
+                    .unwrap()
+            } else {
+                db.as_manager()
+                    .unwrap()
+                    .commit(base, id, changes.clone().into_iter(), &AMT)
+                    .unwrap()
+            };
             assert_eq!(dry, root);
             log.push((base, changes, id));
             id
@@ -2070,6 +2082,13 @@ fn test_lvmt_commit_dry_run() {
     let b = new_commit(&mut db, a);
     let b2 = new_commit(&mut db, a);
     let before: Vec<_> = [a, b, b2].iter().map(|c| dry_on(&db, *c).unwrap()).collect();
+    let prepare_on =
+        |db: &Db, base: CommitID| db.prepare_commit(Some(base), probe.clone().into_iter(), &AMT);
+    let (prepared_a, prepared_b, prepared_b2) = (
+        prepare_on(&db, a).unwrap(),
+        prepare_on(&db, b).unwrap(),
+        prepare_on(&db, b2).unwrap(),
+    );
     assert!(db.as_manager().unwrap().make_pivot(b2).unwrap());
     assert!(dry_on(&db, b).is_err());
     assert_eq!(dry_on(&db, a).unwrap(), before[0]);
@@ -2078,6 +2097,31 @@ fn test_lvmt_commit_dry_run() {
     assert!(dry_on(&db, b).is_err());
     assert_eq!(dry_on(&db, a).unwrap(), before[0]);
     assert_eq!(dry_on(&db, b2).unwrap(), before[2]);
+
+    // Prepared before the switch and the confirmation: B is gone, A (no longer
+    // the history tip) cannot take a child, B' (the tip) commits as prepared.
+    let id = gen_novel_commit_id(&mut rng, &mut previous_commits);
+    assert_eq!(
+        db.as_manager().unwrap().commit_prepared(id, prepared_b).unwrap_err(),
+        StorageError::CommitIDNotFound
+    );
+    assert!(db.as_manager().unwrap().commit_prepared(id, prepared_a).is_err());
+    assert!(db
+        .as_manager()
+        .unwrap()
+        .commit(Some(a), id, probe.clone().into_iter(), &AMT)
+        .is_err());
+    assert!(!db.as_reader().unwrap().query_commit_existence(&id).unwrap());
+    let root = db
+        .as_manager()
+        .unwrap()
+        .commit_prepared(id, prepared_b2)
+        .unwrap();
+    assert_eq!(root, before[2]);
+    db.as_manager()
+        .unwrap()
+        .check_consistency(id, &AMT)
+        .unwrap();
 
     drop(db);
     clear_dir(historical_path);

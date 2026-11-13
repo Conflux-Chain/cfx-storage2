@@ -28,5 +28,5 @@ pub use proof::{
 };
 pub use snapshot::LvmtSnapshot;
 pub use state_root::{compute_state_root, StateRoot, EMPTY_AUTH_CHANGE_ROOT};
-pub use storage::{LvmtStore, LvmtStoreReader};
+pub use storage::{LvmtStore, LvmtStoreReader, PreparedCommit};
 pub use types::LvmtValue;

@@ -465,6 +465,18 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         self.as_reader()?.commit_dry_run(base, changes, pp)
     }
 
+    /// See [`LvmtStoreReader::prepare_commit`]: everything a commit of `changes` on
+    /// `base` would write, with a shared borrow and no writes. Commit it with
+    /// [`LvmtStore::commit_prepared`] (via [`as_manager`](Self::as_manager)).
+    pub fn prepare_commit(
+        &self,
+        base: Option<CommitID>,
+        changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
+        pp: &amt::AmtParams<super::crypto::PE>,
+    ) -> Result<super::PreparedCommit> {
+        self.as_reader()?.prepare_commit(base, changes, pp)
+    }
+
     pub fn proof_config(&self) -> ProofConfig {
         self.proof_config
     }

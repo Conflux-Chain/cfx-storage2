@@ -314,14 +314,8 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
             (None, None, None)
         };
         let (height, parent_peaks) = self.reader().mmr_parent(old_commit)?;
-        let PreparedCommit {
-            key_value_changes,
-            allocations,
-            amt_changes,
-            auth_changes,
-            state_root,
-            mmr_entry,
-        } = prepare_commit(
+        let prepared = compute_commit(
+            old_commit,
             &amt_node_view,
             &slot_alloc_view,
             &key_value_view,
@@ -330,6 +324,46 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
             changes,
             pp,
         )?;
+        drop((amt_node_view, slot_alloc_view, key_value_view));
+        self.write_prepared(new_commit, prepared)
+    }
+
+    /// Commits a [`PreparedCommit`] from [`LvmtStoreReader::prepare_commit`] under
+    /// `new_commit`, on the base it was prepared on, without computing it again.
+    /// Writes and returns the same as [`commit`](Self::commit) with that base and
+    /// those changes, and fails the same way: if the base is no longer there, or
+    /// cannot take a child.
+    ///
+    /// `prepared` must come from this storage. It stays valid while its base
+    /// exists: a commit's state never changes once written.
+    pub fn commit_prepared(
+        &mut self,
+        new_commit: CommitID,
+        prepared: PreparedCommit,
+    ) -> Result<StateRoot> {
+        // Fails with `CommitIDNotFound` if the base is gone, before anything is written.
+        let (height, _) = self.reader().mmr_parent(prepared.base)?;
+        if height != prepared.height {
+            return Err(StorageError::ConsistencyCheckFailure);
+        }
+        self.write_prepared(new_commit, prepared)
+    }
+
+    fn write_prepared(
+        &mut self,
+        new_commit: CommitID,
+        prepared: PreparedCommit,
+    ) -> Result<StateRoot> {
+        let PreparedCommit {
+            base: old_commit,
+            height,
+            key_value_changes,
+            allocations,
+            amt_changes,
+            auth_changes,
+            state_root,
+            mmr_entry,
+        } = prepared;
 
         // Write to the pending part of db.
         // TODO: Write to the history part is beyond the range of LvmtStore.
@@ -414,8 +448,11 @@ pub(super) fn delete_discarded_commit_rows<P: DatabaseTrait<PendingTableName>>(
     Ok(())
 }
 
-/// What a commit writes, computed from the parent's state without writing.
-struct PreparedCommit {
+/// What a commit of some changes on a base writes, computed without writing:
+/// see [`LvmtStoreReader::prepare_commit`] and [`LvmtStore::commit_prepared`].
+pub struct PreparedCommit {
+    base: Option<CommitID>,
+    height: u64,
     key_value_changes: Vec<(Box<[u8]>, LvmtValue)>,
     allocations: HashMap<AmtNodeId, AllocationKeyInfo>,
     amt_changes: Vec<(AmtId, CurvePointWithVersion)>,
@@ -424,13 +461,27 @@ struct PreparedCommit {
     mmr_entry: MmrEntry,
 }
 
+impl PreparedCommit {
+    /// The state root the commit gets, under any commit id.
+    pub fn state_root(&self) -> StateRoot {
+        self.state_root
+    }
+
+    /// The base it was prepared on (`None` for the first commit).
+    pub fn base(&self) -> Option<CommitID> {
+        self.base
+    }
+}
+
 /// The computation of [`LvmtStore::commit`]: versions and slot allocations of the
 /// changed keys, the new AMT commitments, the auth-change tree, the state root and
 /// the MMR entry. The views are the parent's state (`None` for the first commit);
 /// `height` is the new commit's and `parent_peaks` the MMR peaks after the parent.
 /// Pure: the result depends on the parent and the set of `changes` only, not on
 /// their order or the new commit's id.
-fn prepare_commit(
+#[allow(clippy::too_many_arguments)]
+fn compute_commit(
+    base: Option<CommitID>,
     amt_node_view: &KeyValueSnapshotRead<AmtNodes>,
     slot_alloc_view: &KeyValueSnapshotRead<SlotAllocations>,
     key_value_view: &KeyValueSnapshotRead<FlatKeyValue>,
@@ -506,6 +557,8 @@ fn prepare_commit(
     let mmr_entry = MmrEntry::append(parent_peaks, height, &state_root);
 
     Ok(PreparedCommit {
+        base,
+        height,
         key_value_changes,
         allocations: allocations.into_changes(),
         amt_changes,
@@ -984,6 +1037,18 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'd
         changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
         pp: &AmtParams<PE>,
     ) -> Result<StateRoot> {
+        Ok(self.prepare_commit(base, changes, pp)?.state_root)
+    }
+
+    /// Like [`commit_dry_run`](Self::commit_dry_run), but keeps everything the
+    /// commit would write, so that [`LvmtStore::commit_prepared`] can write it later
+    /// under the new commit's id without computing it again.
+    pub fn prepare_commit(
+        &self,
+        base: Option<CommitID>,
+        changes: impl Iterator<Item = (Box<[u8]>, Option<Box<[u8]>>)>,
+        pp: &AmtParams<PE>,
+    ) -> Result<PreparedCommit> {
         let (height, parent_peaks) = self.mmr_parent(base)?;
         let (amt_node_view, slot_alloc_view, key_value_view) = match base {
             Some(base) => (
@@ -993,7 +1058,8 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'd
             ),
             None => (None, None, None),
         };
-        Ok(prepare_commit(
+        compute_commit(
+            base,
             &amt_node_view,
             &slot_alloc_view,
             &key_value_view,
@@ -1001,8 +1067,7 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'd
             &parent_peaks,
             changes,
             pp,
-        )?
-        .state_root)
+        )
     }
 
     pub(super) fn key_value_reader(&self) -> &VersionedStoreReader<'cache, 'db, FlatKeyValue, P> {
