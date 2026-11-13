@@ -55,10 +55,16 @@ pub type VersionedStoreCache<Schema, P> = VersionedMap<PendingKeyValueConfig<Sch
 ///    - An `end_version_number` for a previous (immutable) record
 ///
 /// Used in conjunction with [`history_indices::HistoryIndices`] to maintain version history through chained records.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct HistoryIndexKey<K: Clone>(K, HistoryNumber);
 
 pub type HistoryChangeKey<K> = ChangeKey<HistoryNumber, K>;
+
+impl<K: Clone> HistoryIndexKey<K> {
+    pub fn is_latest(&self) -> bool {
+        self.1 == LATEST
+    }
+}
 
 pub struct VersionedStore<
     'cache,
@@ -67,7 +73,6 @@ pub struct VersionedStore<
     P: DatabaseTrait<PendingTableName>,
 > {
     pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>, P>,
-
     history_index_table: TableReader<'db, HistoryIndicesTable<T>>,
     commit_id_table: TableReader<'db, CommitIDSchema>,
     history_number_table: TableReader<'db, HistoryNumberSchema>,
@@ -113,11 +118,11 @@ impl<'cache, 'db, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>
         db: Arc<D>,
         pending_part: &'cache mut VersionedMap<PendingKeyValueConfig<T, CommitID>, P>,
     ) -> Result<Self> {
-        let history_index_table = Arc::new(db.view::<HistoryIndicesTable<T>>()?);
-        let commit_id_table = Arc::new(db.view::<CommitIDSchema>()?);
-        let history_number_table = Arc::new(db.view::<HistoryNumberSchema>()?);
+        let history_index_table = Arc::from(db.view::<HistoryIndicesTable<T>>()?);
+        let commit_id_table = Arc::from(db.view::<CommitIDSchema>()?);
+        let history_number_table = Arc::from(db.view::<HistoryNumberSchema>()?);
         let change_history_table =
-            KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
+            KeyValueStoreBulks::new(Arc::from(db.view::<HistoryChangeTable<T>>()?));
 
         let versioned_store = VersionedStore {
             pending_part,
@@ -393,9 +398,10 @@ pub fn confirm_maps_to_history<
     to_confirm_maps: NonEmpty<HashMap<T::Key, impl Into<Option<T::Value>>>>,
     write_schema: &D::WriteSchema,
 ) -> Result<()> {
-    let history_index_table = db.view::<HistoryIndicesTable<T>>()?;
+    let history_index_table =
+        db.view::<HistoryIndicesTable<T>>()?;
     let change_history_table =
-        KeyValueStoreBulks::new(Arc::new(db.view::<HistoryChangeTable<T>>()?));
+        KeyValueStoreBulks::new(Arc::from(db.view::<HistoryChangeTable<T>>()?));
 
     let mut history_index_cache = HistoryIndexCache::new();
     for (delta_height, updates) in to_confirm_maps.into_iter().enumerate() {
@@ -410,7 +416,7 @@ pub fn confirm_maps_to_history<
                     k.clone(),
                     value.clone(),
                     history_number,
-                    &history_index_table,
+                    &*history_index_table,
                 )?;
                 Ok((k, value))
             })

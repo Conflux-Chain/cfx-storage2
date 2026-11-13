@@ -1,5 +1,6 @@
 use core::cmp::Ordering;
 use std::borrow::Cow;
+use std::hash::{Hash, Hasher};
 
 use super::{DecResult, Decode, DecodeError, Encode, FixedLengthEncoded, PendingKeyValueSchema};
 
@@ -193,6 +194,19 @@ impl<S: PendingKeyValueSchema> Ord for SnapshotNodeDataType<S> {
     }
 }
 
+impl<S: PendingKeyValueSchema> Hash for SnapshotNodeDataType<S> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+
+        match self {
+            SnapshotNodeDataType::NodeMeta => {}
+            SnapshotNodeDataType::NodeMap { key } => {
+                key.hash(state);
+            }
+        }
+    }
+}
+
 // --------------------- SnapshotKeyTreePart ---------------------
 
 impl<S: PendingKeyValueSchema> PartialEq for SnapshotKeyTreePart<S> {
@@ -217,6 +231,16 @@ impl<S: PendingKeyValueSchema> Ord for SnapshotKeyTreePart<S> {
             .cmp(&other.node_height)
             .then_with(|| self.node_commit_id.cmp(&other.node_commit_id))
             .then_with(|| self.node_data_type.cmp(&other.node_data_type))
+    }
+}
+
+impl<S: PendingKeyValueSchema> Hash for SnapshotKeyTreePart<S> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.node_height.hash(state);
+
+        self.node_commit_id.hash(state);
+
+        self.node_data_type.hash(state);
     }
 }
 

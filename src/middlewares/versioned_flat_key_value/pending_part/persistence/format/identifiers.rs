@@ -2,10 +2,10 @@ use std::borrow::Cow;
 
 use super::super::{DecResult, Decode, Encode, FixedLengthEncoded};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
 pub struct SnapshotId(pub u64);
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
 pub struct ModificationId(pub u64);
 
 impl Encode for SnapshotId {

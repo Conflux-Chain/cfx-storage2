@@ -33,7 +33,7 @@ impl<T: VersionedKeyValueSchema> HistoryIndexCache<T> {
         k: T::Key,
         v: Option<T::Value>,
         version_number: HistoryNumber,
-        db: &impl TableRead<HistoryIndicesTable<T>>,
+        db: &dyn TableRead<HistoryIndicesTable<T>>,
     ) -> Result<()> {
         let entry = match self.cache.entry(k) {
             Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),

@@ -69,6 +69,12 @@ impl OffsetBasedVersionRange {
     }
 }
 
+impl Default for OffsetBasedVersionRange {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // These functions are correct only if self meets the following conditions:
 // - For OffsetBasedVersionRange::OnlyEnd variants, the offset must be non-zero.
 // - For OffsetBasedVersionRange::U32Vector and OffsetBasedVersionRange::U16Vector variants, the vector must be strictly increasing and contain no zero elements.
@@ -631,8 +637,7 @@ mod tests {
             let vec_u32 = unsafe { std::mem::transmute(vec) };
             OffsetBasedVersionRange::U32Vector(vec_u32)
         } else {
-            dbg!(TypeId::of::<T>());
-            panic!("T must be either u16 or u32");
+            panic!("T must be either u16 or u32, {:?}", TypeId::of::<T>());
         };
 
         assert_eq!(targets.len(), last_le.len());

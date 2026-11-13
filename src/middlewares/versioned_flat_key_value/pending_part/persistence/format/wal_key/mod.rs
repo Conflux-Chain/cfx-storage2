@@ -1,6 +1,7 @@
 mod specific_part;
 
 use std::borrow::Cow;
+use std::hash::{Hash, Hasher};
 
 pub use self::specific_part::WalKeySpecificPart;
 
@@ -114,6 +115,16 @@ where
                 self.operation_specific_parts
                     .cmp(&other.operation_specific_parts)
             })
+    }
+}
+
+impl<S: PendingKeyValueSchema> Hash for WalKey<S> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.snapshot_id.hash(state);
+
+        self.modification_id.hash(state);
+
+        self.operation_specific_parts.hash(state);
     }
 }
 

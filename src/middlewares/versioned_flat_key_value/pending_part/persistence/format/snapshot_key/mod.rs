@@ -2,6 +2,7 @@ mod tree;
 
 use core::cmp::Ordering;
 use std::borrow::Cow;
+use std::hash::{Hash, Hasher};
 
 use super::super::{
     DecResult, Decode, DecodeError, Encode, EncodeSubKey, FixedLengthEncoded,
@@ -200,6 +201,19 @@ impl<S: PendingKeyValueSchema> Ord for SnapshotRecordType<S> {
     }
 }
 
+impl<S: PendingKeyValueSchema> Hash for SnapshotRecordType<S> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+
+        match self {
+            SnapshotRecordType::Meta => {}
+            SnapshotRecordType::Map(tree_part) => {
+                tree_part.hash(state);
+            }
+        }
+    }
+}
+
 // --------------------- SnapshotKey ---------------------
 
 impl<S: PendingKeyValueSchema> PartialEq for SnapshotKey<S> {
@@ -222,6 +236,14 @@ impl<S: PendingKeyValueSchema> Ord for SnapshotKey<S> {
         self.snapshot_root_height
             .cmp(&other.snapshot_root_height)
             .then_with(|| self.record_type.cmp(&other.record_type))
+    }
+}
+
+impl<S: PendingKeyValueSchema> Hash for SnapshotKey<S> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.snapshot_root_height.hash(state);
+
+        self.record_type.hash(state);
     }
 }
 

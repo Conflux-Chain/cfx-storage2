@@ -11,7 +11,8 @@ pub use versioned_flat_key_value::{
     primitives_gc_until_height, primitives_initialize_empty_schema, primitives_recover_schema,
     primitives_verify_no_newer_records, primitives_verify_schema_is_empty, table_schema,
     BootstrapError, PendingError, PendingKeyValueConfig, PushError, RecoveryError,
-    SnapshotReadError, SnapshotView, TreeWithTracker, VersionedStore, VersionedStoreCache,
+    SnapshotReadError, SnapshotView, TreeWithTracker, VersionedStore, VersionedStoreCache, 
+    HistoryIndexKey,
 };
 
 #[cfg(test)]

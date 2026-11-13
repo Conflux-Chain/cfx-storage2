@@ -3,7 +3,7 @@ use crate::backends::serde::{Decode, Encode, FixedLengthEncoded};
 use crate::errors::{DecResult, DecodeError};
 use std::borrow::Cow;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AuthChangeKey {
     height: usize,
     index: usize,
