@@ -6,11 +6,17 @@ mod history_indices;
 
 mod history_indices_cache;
 mod manager_impl;
+
+#[cfg(fuzzing)]
+pub mod pending_part;
+
+#[cfg(not(fuzzing))]
 mod pending_part;
+
 mod serde;
 pub mod table_schema;
-#[cfg(test)]
-mod tests;
+#[cfg(any(test, fuzzing))]
+pub mod tests;
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
@@ -27,7 +33,7 @@ pub use pending_part::{
     PendingError, RecoveryError, SnapshotReadError,
 };
 
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 pub use tests::{
     clear_dir, clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test,
 };
@@ -71,6 +77,14 @@ impl<K: Clone> HistoryIndexKey<K> {
     }
 }
 
+/// # Atomicity Guarantee
+///
+/// When performing a single logical operation that spans multiple `VersionedKeyValueSchema`
+/// types (i.e., different `T`s), the caller holds the responsibility for ensuring
+/// the atomicity of the database write.
+///
+/// To achieve this, all writes related to that operation **must** be submitted via the
+/// **same** `pending_write_schema` instance provided to the functions of this store.
 pub struct VersionedStore<
     'cache,
     'db,
@@ -111,12 +125,17 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         Ok(self.pending_part.checkout_current(commit)?)
     }
 
+    /// # Atomicity
+    /// To ensure atomicity when writing to multiple schemas, see the main documentation
+    /// on [`VersionedStore`].
     pub fn make_pivot(
         &mut self,
         commit_id: CommitID,
-        write_schema: &P::WriteSchema,
+        pending_write_schema: &P::WriteSchema,
     ) -> Result<bool> {
-        Ok(self.pending_part.make_pivot(commit_id, write_schema)?)
+        Ok(self
+            .pending_part
+            .make_pivot(commit_id, pending_write_schema)?)
     }
 
     pub fn new<D: DatabaseTrait<HistoricalTableName>>(
@@ -139,6 +158,9 @@ impl<'cache, T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
         Ok(versioned_store)
     }
 
+    /// # Atomicity
+    /// To ensure atomicity when writing to multiple schemas, see the main documentation
+    /// on [`VersionedStore`].
     pub fn add_to_pending_part(
         &mut self,
         parent_commit: Option<CommitID>,
@@ -360,6 +382,9 @@ fn iter_history<'db, T: VersionedKeyValueSchema>(
     Ok(history_map)
 }
 
+/// # Atomicity
+/// To ensure atomicity when writing to multiple schemas, see the main documentation
+/// on [`VersionedStore`].
 pub fn confirmed_pending_to_history<
     D: DatabaseTrait<HistoricalTableName>,
     P: DatabaseTrait<PendingTableName>,
@@ -400,7 +425,7 @@ pub fn confirm_maps_to_history<
     db: Arc<D>,
     to_confirm_start_height: u64,
     to_confirm_maps: NonEmpty<HashMap<T::Key, impl Into<Option<T::Value>>>>,
-    write_schema: &D::WriteSchema,
+    historical_write_schema: &D::WriteSchema,
 ) -> Result<()> {
     let history_index_table = db.view::<HistoryIndicesTable<T>>()?;
     let change_history_table = KeyValueStoreBulks::new(db.view::<HistoryChangeTable<T>>()?);
@@ -424,11 +449,16 @@ pub fn confirm_maps_to_history<
             })
             .collect::<Result<Vec<_>>>()?;
 
-        change_history_table.commit(history_number, commit_data.into_iter(), &write_schema)?;
+        change_history_table.commit(
+            history_number,
+            commit_data.into_iter(),
+            &historical_write_schema,
+        )?;
     }
 
     let history_indices_table_op = history_index_cache.into_write_batch();
-    write_schema.write_batch::<HistoryIndicesTable<T>>(history_indices_table_op.into_iter());
+    historical_write_schema
+        .write_batch::<HistoryIndicesTable<T>>(history_indices_table_op.into_iter());
 
     Ok(())
 }
@@ -437,7 +467,7 @@ pub fn confirm_ids_to_history<D: DatabaseTrait<HistoricalTableName>>(
     db: Arc<D>,
     to_confirm_start_height: u64,
     to_confirm_ids: &NonEmpty<CommitID>,
-    write_schema: &D::WriteSchema,
+    historical_write_schema: &D::WriteSchema,
 ) -> Result<()> {
     let commit_id_table = db.view::<CommitIDSchema>()?;
     let history_number_table = db.view::<HistoryNumberSchema>()?;
@@ -456,13 +486,13 @@ pub fn confirm_ids_to_history<D: DatabaseTrait<HistoricalTableName>>(
             Cow::Owned(*confirmed_commit_id),
             Some(Cow::Owned(history_number)),
         );
-        write_schema.write::<CommitIDSchema>(commit_id_table_op);
+        historical_write_schema.write::<CommitIDSchema>(commit_id_table_op);
 
         let history_number_table_op = (
             Cow::Owned(history_number),
             Some(Cow::Owned(*confirmed_commit_id)),
         );
-        write_schema.write::<HistoryNumberSchema>(history_number_table_op);
+        historical_write_schema.write::<HistoryNumberSchema>(history_number_table_op);
     }
 
     Ok(())

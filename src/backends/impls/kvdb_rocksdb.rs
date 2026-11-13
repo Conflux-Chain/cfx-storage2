@@ -338,7 +338,7 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
     }
 
     fn commit(&self, changes: Self::WriteSchema) -> Result<()> {
-        self.print_cache_stats();
+        // self.print_cache_stats();
 
         let caches_map = self.caches.lock();
         let metrics_map = self.metrics.lock();
@@ -363,7 +363,7 @@ impl<TN: TableNameTrait> DatabaseTrait<TN> for WrappedRocksDb<TN> {
         drop(caches_map);
         drop(metrics_map);
 
-        self.print_cache_stats();
+        // self.print_cache_stats();
 
         Ok(KeyValueDB::write(&*self.inner, tx)?)
     }

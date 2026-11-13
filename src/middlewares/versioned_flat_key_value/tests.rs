@@ -34,7 +34,7 @@ use rand_chacha::{
 };
 
 impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedStore<'_, '_, T, P> {
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn check_consistency(&self) -> Result<()> {
         if self.check_consistency_inner().is_err() {
             Err(StorageError::ConsistencyCheckFailure)
@@ -43,7 +43,7 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedSt
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     fn check_consistency_inner(&self) -> Result<()> {
         use crate::middlewares::commit_id_schema::{
             height_to_history_number, history_number_to_height,
@@ -151,7 +151,7 @@ impl<K: 'static + Ord, V: 'static + Clone> KeyValueStoreRead<K, V> for MockOneSt
 }
 
 #[derive(Debug)]
-struct MockVersionedStore<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
+pub struct MockVersionedStore<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> {
     pending: MockTree<T>,
     history: HashMap<CommitID, (Option<CommitID>, MockStore<T>)>,
     _phantom: PhantomData<P>,
@@ -236,7 +236,8 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
     }
 
     fn discard(&mut self, commit: CommitID, _pending_write_schema: &P::WriteSchema) -> Result<()> {
-        self.discard_inner(commit)
+        self.discard_inner(commit)?;
+        Ok(())
     }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
@@ -245,13 +246,18 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>>
 }
 
 impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersionedStore<T, P> {
-    fn discard_inner(&mut self, commit: CommitID) -> Result<()> {
+    fn discard_inner(&mut self, commit: CommitID) -> Result<bool> {
+        // dbg!(commit);
+
         if self.history.contains_key(&commit) {
-            return Ok(());
+            return Ok(false);
         }
 
+        let mut has_removed_nodes = false;
         if self.pending.tree.contains_key(&commit) {
             if let Some(parent) = self.pending.tree.get(&commit).unwrap().parent {
+                // dbg!(parent);
+
                 let mut to_remove = VecDeque::new();
 
                 assert!(self
@@ -267,6 +273,11 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersion
                     }
                 }
 
+                // dbg!(&to_remove);
+                if !to_remove.is_empty() {
+                    has_removed_nodes = true;
+                }
+
                 while !to_remove.is_empty() {
                     let remove_this = to_remove.pop_front().unwrap();
                     let remove_this_node = self.pending.tree.remove(&remove_this).unwrap();
@@ -278,12 +289,44 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersion
                 self.pending.tree.get_mut(&parent).unwrap().children = HashSet::from([commit]);
             }
 
-            Ok(())
+            Ok(has_removed_nodes)
         } else {
             Err(StorageError::PendingError(PendingError::CommitIDNotFound(
                 format!("{:?}", commit),
             )))
         }
+    }
+
+    pub fn make_pivot(&mut self, commit: CommitID) -> Result<bool> {
+        if self.history.contains_key(&commit) {
+            return Ok(false);
+        }
+
+        if !self.pending.tree.contains_key(&commit) {
+            return Err(StorageError::PendingError(PendingError::CommitIDNotFound(
+                format!("{:?}", commit),
+            )));
+        }
+
+        let mut parent_cid = self
+            .pending
+            .tree
+            .get(&commit)
+            .cloned()
+            .unwrap()
+            .parent;
+        let mut commit_id = commit;
+        let mut has_removed_nodes = false;
+        while let Some(parent_commit_id) = parent_cid {
+            if self.discard_inner(commit_id).unwrap() {
+                has_removed_nodes = true;
+            };
+
+            commit_id = parent_commit_id;
+            parent_cid = self.pending.tree.get(&parent_commit_id).unwrap().parent;
+        }
+
+        Ok(has_removed_nodes)
     }
 }
 
@@ -558,6 +601,8 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersion
             )));
         }
 
+        self.make_pivot(new_root_commit_id)?;
+
         let mut parent_cid = self
             .pending
             .tree
@@ -567,8 +612,6 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersion
             .parent;
         let mut commit_id = new_root_commit_id;
         while let Some(parent_commit_id) = parent_cid {
-            self.discard_inner(commit_id).unwrap();
-
             let parent_node = self.pending.tree.remove(&parent_commit_id).unwrap();
 
             let grandparent = if let Some(grandparent) = parent_node.parent {
@@ -576,6 +619,8 @@ impl<T: VersionedKeyValueSchema, P: DatabaseTrait<PendingTableName>> MockVersion
             } else {
                 self.pending.parent_of_root
             };
+
+            // dbg!(parent_commit_id);
             self.history
                 .insert(parent_commit_id, (grandparent, parent_node.store));
 
@@ -620,7 +665,7 @@ enum Operation {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-enum CommitIDType {
+pub enum CommitIDType {
     History,
     PendingRoot,
     PendingNonRoot,
@@ -628,7 +673,7 @@ enum CommitIDType {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-enum ParentCommitType {
+pub enum ParentCommitType {
     Pending,
     ParentOfPendingRoot,
     NoneButInvalid,
@@ -1125,7 +1170,7 @@ impl<T: VersionedKeyValueSchema<Key = u64, Value = u64>, P: DatabaseTrait<Pendin
         commit: CommitID,
         pending_write_schema: &P::WriteSchema,
     ) -> bool {
-        let mock_res = self.mock_store.discard_inner(commit);
+        let mock_res = self.mock_store.discard_inner(commit).map(|_| ());
         let real_res = self.real_store.discard(commit, pending_write_schema);
 
         assert_eq!(mock_res, real_res);
@@ -1242,9 +1287,10 @@ fn test_versioned_store<
     let historical_write_schema = D::write_schema();
     let pending_write_schema = P::write_schema();
     let historical_db_arc = Arc::new(historical_db);
+    let pending_db_arc = Arc::new(pending_db);
     let (history_cids, history_updates, mut pending_part) = gen_init(
         historical_db_arc.clone(),
-        Arc::new(pending_db),
+        pending_db_arc.clone(),
         TestParams {
             num_history,
             max_num_new_keys: num_gen_new_keys,
@@ -1256,6 +1302,7 @@ fn test_versioned_store<
         &pending_write_schema,
     );
 
+    pending_db_arc.commit(pending_write_schema).unwrap();
     historical_db_arc.commit(historical_write_schema).unwrap();
 
     // build proxy
@@ -1281,6 +1328,7 @@ fn test_versioned_store<
         num_gen_previous_keys,
         &pending_write_schema,
     );
+    pending_db_arc.commit(pending_write_schema).unwrap();
 
     let operations = vec![
         Operation::GetVersionedStore,
@@ -1312,31 +1360,42 @@ fn test_versioned_store<
                 versioned_store_proxy.iter_historical_changes(&mut rng, commit_id_type, &commit_id)
             }
             Operation::Discard => {
-                versioned_store_proxy.discard(commit_id_type, commit_id, &pending_write_schema)
+                let pending_write_schema = P::write_schema();
+                let is_ok =
+                    versioned_store_proxy.discard(commit_id_type, commit_id, &pending_write_schema);
+                pending_db_arc.commit(pending_write_schema).unwrap();
+                is_ok
             }
-            Operation::AddToPendingPart => versioned_store_proxy.add_to_pending_part(
-                &mut rng,
-                commit_id_type,
-                commit_id,
-                num_gen_new_keys,
-                num_gen_previous_keys,
-                &pending_write_schema,
-            ),
+            Operation::AddToPendingPart => {
+                let pending_write_schema = P::write_schema();
+                let is_ok = versioned_store_proxy.add_to_pending_part(
+                    &mut rng,
+                    commit_id_type,
+                    commit_id,
+                    num_gen_new_keys,
+                    num_gen_previous_keys,
+                    &pending_write_schema,
+                );
+                pending_db_arc.commit(pending_write_schema).unwrap();
+                is_ok
+            }
             Operation::ConfirmedPendingToHistory => {
                 let mock_res = mock_versioned_store.confirmed_pending_to_history(commit_id);
 
                 drop(real_versioned_store);
 
-                let write_schema = D::write_schema();
+                let pending_write_schema = P::write_schema();
+                let historical_write_schema = D::write_schema();
                 let real_res = confirmed_pending_to_history(
                     historical_db_arc.clone(),
                     &mut pending_part,
                     commit_id,
-                    &write_schema,
+                    &historical_write_schema,
                     &pending_write_schema,
                 );
 
-                historical_db_arc.commit(write_schema).unwrap();
+                pending_db_arc.commit(pending_write_schema).unwrap();
+                historical_db_arc.commit(historical_write_schema).unwrap();
 
                 real_versioned_store =
                     VersionedStore::new(historical_db_arc.clone(), &mut pending_part).unwrap();

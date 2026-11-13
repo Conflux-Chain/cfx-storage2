@@ -102,7 +102,7 @@ impl From<SerializationError> for DecodeError {
 
 pub type DecResult<T> = ::std::result::Result<T, DecodeError>;
 
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 impl PartialEq for StorageError {
     fn eq(&self, other: &Self) -> bool {
         use StorageError::*;
@@ -140,7 +140,7 @@ impl PartialEq for StorageError {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 impl PartialEq for DatabaseError {
     fn eq(&self, other: &Self) -> bool {
         use DatabaseError::*;

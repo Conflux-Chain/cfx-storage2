@@ -149,6 +149,11 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         Ok(kv_is_empty && amt_is_empty && slot_is_empty)
     }
 
+    #[cfg(fuzzing)]
+    pub fn from_recovery_for_fuzzing(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+        Self::from_recovery(historical_db, pending_db)
+    }
+
     /// Creates a new LvmtStorage instance, opening databases and running the recovery process.
     pub(super) fn from_recovery(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
         let (expected_parent_of_root, expected_height_of_root) =
@@ -207,6 +212,11 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         })
     }
 
+    #[cfg(fuzzing)]
+    pub fn from_bootstrap_for_fuzzing(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
+        Self::from_bootstrap(historical_db, pending_db)
+    }
+
     /// Performs a bootstrap recovery.
     ///
     /// This function is used in scenarios where `from_recovery` fails (e.g., when the pending_db
@@ -234,6 +244,11 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         pending_db.commit(pending_write_schema)?;
 
         // 2. After clearing, this is equivalent to starting from an empty pending_db.
+        Self::from_empty_pending(historical_db, pending_db)
+    }
+
+    #[cfg(fuzzing)]
+    pub fn from_empty_pending_for_fuzzing(historical_db: Arc<D>, pending_db: Arc<P>) -> Result<Self> {
         Self::from_empty_pending(historical_db, pending_db)
     }
 

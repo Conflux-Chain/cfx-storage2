@@ -72,7 +72,7 @@ impl<S: PendingKeyValueSchema> TreeWithTracker<S> {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn change_root_without_persistence(
         &mut self,
         commit_id: S::CommitId,

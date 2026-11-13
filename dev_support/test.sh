@@ -15,6 +15,14 @@ echoStep "Download AMT parameters"
 wget -P pp/ https://conflux-rust-dev.s3.ap-east-1.amazonaws.com/amt-params/amt-prove-mont-nxssWC-16-16.bin &
 
 ( # Start of the block that should run concurrently with the download
+    # Environment setting for clang18
+    # export LIBCLANG_PATH=/usr/lib/llvm-18/lib
+    # export LD_LIBRARY_PATH=/usr/lib/llvm-18/lib:$LD_LIBRARY_PATH
+    # export CXXFLAGS="-include cstdint"
+    # echo $LIBCLANG_PATH
+    # echo $LD_LIBRARY_PATH
+    # echo $CXXFLAGS
+
     echoStep "Check fmt"
     ./cargo_fmt.sh -- --check
 

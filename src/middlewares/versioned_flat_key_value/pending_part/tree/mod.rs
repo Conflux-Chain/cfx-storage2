@@ -36,7 +36,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, fuzzing))]
     pub fn check_consistency(&self, height_of_root: u64) -> bool {
         if self.height_of_root != height_of_root {
             return false;

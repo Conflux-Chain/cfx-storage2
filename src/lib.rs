@@ -3,7 +3,13 @@
 pub mod backends;
 pub mod errors;
 mod example;
+
+#[cfg(fuzzing)]
+pub mod lvmt;
+
+#[cfg(not(fuzzing))]
 mod lvmt;
+
 mod macros;
 
 #[cfg(fuzzing)]
