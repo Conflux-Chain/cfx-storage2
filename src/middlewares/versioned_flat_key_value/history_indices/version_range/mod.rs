@@ -382,7 +382,14 @@ mod tests {
     use itertools::Itertools;
     use rand_distr::num_traits::Bounded;
 
+    use crate::middlewares::versioned_flat_key_value::history_indices::test_utils::{
+        bitmap_vec_and_start_strategy, only_end_and_start_strategy, u16_vec_and_start_strategy,
+        u32_vec_and_start_strategy,
+    };
+
     use super::*;
+
+    use proptest::prelude::*;
 
     #[test]
     fn test_u16_saturation() {
@@ -786,6 +793,30 @@ mod tests {
         test_bitmap(vec![0, 7, 8, 15], start);
     }
 
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+        #[test]
+        fn proptest_only_end((offset, start) in only_end_and_start_strategy()) {
+            test_only_end(offset, start);
+        }
+
+        #[test]
+        fn proptest_u32_vector((vec, start) in u32_vec_and_start_strategy()) {
+            test_vec::<u32>(vec, start);
+        }
+
+        #[test]
+        fn proptest_u16_vector((vec, start) in u16_vec_and_start_strategy()) {
+            test_vec::<u16>(vec, start);
+        }
+
+        #[test]
+        fn proptest_bitmap((vec, start) in bitmap_vec_and_start_strategy()) {
+            test_bitmap(vec, start);
+        }
+    }
+
     mod validate_tests {
         use super::*;
 
@@ -914,7 +945,32 @@ mod tests {
     mod push_tests {
         use std::cmp::max;
 
+        use crate::middlewares::versioned_flat_key_value::history_indices::test_utils::version_number_sequences_strategy;
+
         use super::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(1_000))]
+
+            #[test]
+            fn proptest_push(version_seqs in version_number_sequences_strategy()) {
+                let mut range = OffsetBasedVersionRange::new();
+                if version_seqs.len() > 1 {
+                    let mut start = version_seqs[0];
+                    for version in version_seqs[1..].iter() {
+                        let range_backup = range.clone();
+                        let maybe_new_range = range.try_push_or_new(version - start).unwrap();
+                        if let Some(new_range) = maybe_new_range {
+                            assert_eq!(range, range_backup);
+                            start += range.max_offset();
+                            range = new_range;
+                        }
+
+                        range.validate().unwrap();
+                    }
+                }
+            }
+        }
 
         fn push_large_offset(range: &mut OffsetBasedVersionRange) {
             let max_offset = range.max_offset();
