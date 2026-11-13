@@ -25,12 +25,12 @@ impl TableSchema for HistoryNumberSchema {
 
 /// Converts a `height` to a `history_number`.
 #[inline]
-pub fn height_to_history_number(height: usize) -> HistoryNumber {
-    height as u64
+pub fn height_to_history_number(height: u64) -> HistoryNumber {
+    height
 }
 
 /// Converts a `history_number` back to a `height`.
 #[cfg(test)]
-pub fn history_number_to_height(history_number: HistoryNumber) -> usize {
-    history_number as usize
+pub fn history_number_to_height(history_number: HistoryNumber) -> u64 {
+    history_number
 }

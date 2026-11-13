@@ -18,14 +18,14 @@ use crate::types::ValueEntry;
 
 pub struct Tree<S: PendingKeyValueSchema> {
     parent_of_root: Option<S::CommitId>,
-    height_of_root: usize,
+    height_of_root: u64,
     nodes: Slab<TreeNode<S>>,
     index_map: HashMap<S::CommitId, SlabIndex>,
 }
 
 // basic methods
 impl<S: PendingKeyValueSchema> Tree<S> {
-    pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: usize) -> Self {
+    pub fn new(parent_of_root: Option<S::CommitId>, height_of_root: u64) -> Self {
         Tree {
             parent_of_root,
             height_of_root,
@@ -35,7 +35,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
     }
 
     #[cfg(test)]
-    pub fn check_consistency(&self, height_of_root: usize) -> bool {
+    pub fn check_consistency(&self, height_of_root: u64) -> bool {
         if self.height_of_root != height_of_root {
             return false;
         };
@@ -81,6 +81,10 @@ impl<S: PendingKeyValueSchema> Tree<S> {
 
     pub fn get_parent_of_root(&self) -> Option<S::CommitId> {
         self.parent_of_root
+    }
+
+    pub fn get_height_of_root(&self) -> u64 {
+        self.height_of_root
     }
 
     pub(super) fn contains_commit_id(&self, commit_id: &S::CommitId) -> bool {

@@ -726,7 +726,10 @@ fn gen_init<D: DatabaseTrait>(
         ));
     }
 
-    let pending_part = VersionedMap::new(history_cids.items().last().copied(), history_cids.len());
+    let pending_part = VersionedMap::new(
+        history_cids.items().last().copied(),
+        history_cids.len() as u64,
+    );
 
     confirm_ids_to_history::<D>(
         db.clone(),

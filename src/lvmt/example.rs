@@ -3,11 +3,11 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::{
-    backends::DatabaseTrait,
+    backends::{DatabaseTrait, TableRead},
     errors::Result,
     middlewares::{
-        confirm_ids_to_history, confirm_maps_to_history, CommitID, KeyValueStoreBulks,
-        VersionedStore, VersionedStoreCache,
+        confirm_ids_to_history, confirm_maps_to_history, CommitID, CommitIDSchema,
+        KeyValueStoreBulks, VersionedStore, VersionedStoreCache,
     },
 };
 
@@ -34,7 +34,11 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         })
     }
 
-    pub fn as_manager(&mut self) -> Result<LvmtStore<'_>> {
+    pub fn get_backend(&self) -> Arc<D> {
+        self.backend.clone()
+    }
+
+    pub fn as_manager(&self) -> Result<LvmtStore<'_>> {
         let key_value_store =
             VersionedStore::new(self.backend.clone(), self.key_value_cache.clone())?;
         let amt_node_store =
@@ -58,8 +62,68 @@ impl<D: DatabaseTrait> LvmtStorage<D> {
         backend.commit(write_schema)
     }
 
-    pub fn confirmed_pending_to_history(
-        &mut self,
+    // check whether `commit_id` is already in historical part
+    // TODO: this function should be invoked in many interfaces
+    fn is_in_historical_part(&self, commit_id: CommitID) -> Result<bool> {
+        let commit_id_table = Arc::new(self.backend.view::<CommitIDSchema>()?);
+        if commit_id_table.get(&commit_id)?.is_some() {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// This function discards the siblings of the nodes from the root (excluded) to `commit_id` (included).
+    /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
+    /// The input `commit_id` may be already in historical part, so the first thing is to check this.
+    pub fn make_pivot(&self, commit_id: CommitID) -> Result<bool> {
+        if self.is_in_historical_part(commit_id)? {
+            return Ok(false);
+        }
+
+        let mut key_value_cache = self.key_value_cache.lock();
+        let mut amt_node_cache = self.amt_node_cache.lock();
+        let mut slot_alloc_cache = self.slot_alloc_cache.lock();
+
+        let key_value_has_discarded_nodes = key_value_cache.make_pivot(commit_id)?;
+        let amt_node_has_discarded_nodes = amt_node_cache.make_pivot(commit_id)?;
+        let slot_alloc_has_discarded_nodes = slot_alloc_cache.make_pivot(commit_id)?;
+
+        if (key_value_has_discarded_nodes != amt_node_has_discarded_nodes)
+            || (key_value_has_discarded_nodes != slot_alloc_has_discarded_nodes)
+        {
+            return Err(crate::StorageError::ConsistencyCheckFailure);
+        }
+
+        Ok(key_value_has_discarded_nodes)
+    }
+
+    pub fn is_newer_than_pending_root(&self, height: u64) -> bool {
+        let key_value_cache = self.key_value_cache.lock();
+        let height_of_root = key_value_cache.get_height_of_root();
+        height > height_of_root
+    }
+
+    /// `new_root_height` and `pivot_commit_id` should be in the pending part.
+    /// `new_root_height` should not be newer than `pivot_commit_id`.
+    /// This function make the ancestor of `pivot_commit_id` at `new_root_height` to be the new pending root.
+    pub fn confirmed_pending_to_history_with_height(
+        &self,
+        new_root_height: u64,
+        pivot_commit_id: CommitID,
+        write_schema: &D::WriteSchema,
+    ) -> Result<()> {
+        let key_value_cache = self.key_value_cache.lock();
+        let new_root_commit_id =
+            key_value_cache.get_ancestor_commit_at_height(new_root_height, pivot_commit_id)?;
+        drop(key_value_cache);
+
+        self.confirmed_pending_to_history_with_commit_id(new_root_commit_id, write_schema)
+    }
+
+    /// The `new_root_commit_id` should be in the pending part, otherwise, an error will be returned.
+    pub fn confirmed_pending_to_history_with_commit_id(
+        &self,
         new_root_commit_id: CommitID,
         write_schema: &D::WriteSchema,
     ) -> Result<()> {

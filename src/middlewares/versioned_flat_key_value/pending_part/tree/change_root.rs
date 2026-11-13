@@ -8,6 +8,28 @@ use super::{SlabIndex, Tree};
 
 // methods to support VersionedMap::change_root()
 impl<S: PendingKeyValueSchema> Tree<S> {
+    pub fn get_ancestor_commit_at_height(
+        &self,
+        ancestor_height: u64,
+        commit_id: S::CommitId,
+    ) -> PendResult<S::CommitId, S> {
+        let node = self.get_node_by_commit_id(commit_id)?;
+        let height = node.get_height();
+        if (ancestor_height < self.height_of_root) || (ancestor_height > height) {
+            return Err(crate::middlewares::PendingError::InvalidAncestorHeight);
+        }
+
+        let mut target_node = node;
+        while let Some(parent_slab_index) = target_node.get_parent() {
+            target_node = self.get_node_by_slab_index(parent_slab_index);
+            if target_node.get_height() == ancestor_height {
+                return Ok(target_node.get_commit_id());
+            }
+        }
+
+        Err(crate::middlewares::PendingError::InvalidAncestorHeight)
+    }
+
     pub fn change_root(&mut self, commit_id: S::CommitId) -> PendResult<ConfirmedPathInfo<S>, S> {
         let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
 
@@ -32,7 +54,7 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
 
         // height of old_root
-        let start_height_to_commit = self.height_of_root - to_commit.len();
+        let start_height_to_commit = self.height_of_root - to_commit.len() as u64;
         let (to_commit_ids, to_commit_maps) = to_commit.into_iter().unzip();
 
         Ok(ConfirmedPathInfo {
@@ -40,6 +62,30 @@ impl<S: PendingKeyValueSchema> Tree<S> {
             commit_ids: to_commit_ids,
             key_value_maps: to_commit_maps,
         })
+    }
+
+    /// This function discards the siblings of the nodes from the root (excluded) to `commit_id` (included).
+    /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
+    pub fn make_pivot(&mut self, commit_id: S::CommitId) -> PendResult<bool, S> {
+        let slab_index = self.get_slab_index_by_commit_id(commit_id)?;
+
+        // old_root..=new_root's parent
+        let to_check_children = self.find_path(slab_index);
+
+        let mut has_discarded_nodes = false;
+
+        if let Some(last) = to_check_children.last() {
+            for (ancester, _) in to_check_children.iter() {
+                if self.discard(*ancester)? {
+                    has_discarded_nodes = true;
+                };
+            }
+            if self.discard(commit_id)? {
+                has_discarded_nodes = true;
+            };
+        }
+
+        Ok(has_discarded_nodes)
     }
 
     // excluding target

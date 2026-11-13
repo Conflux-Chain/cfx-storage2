@@ -68,7 +68,7 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
     type TableID = u32;
     type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
 
-    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T>> {
+    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T> + Send + Sync> {
         Ok(RocksDBColumn {
             col: T::NAME.into(),
             inner: self.clone(),

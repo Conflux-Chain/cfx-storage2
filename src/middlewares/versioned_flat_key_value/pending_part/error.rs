@@ -12,4 +12,6 @@ pub enum PendingError<CommitId: Debug + Eq + Hash> {
     CommitIdAlreadyExists(CommitId),
     #[error("non_root node should have parent")]
     NonRootNodeShouldHaveParent,
+    #[error("ancestor height should be in the range of the root height and this node height")]
+    InvalidAncestorHeight,
 }
