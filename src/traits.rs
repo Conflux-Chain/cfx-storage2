@@ -25,12 +25,10 @@ where
     V: 'static,
     C: 'static,
 {
-    type Store<'a>: KeyValueStoreRead<K, V>
-    where
-        Self: 'a;
+    type Store: KeyValueStoreRead<K, V>;
 
     /// Get the key value store after the commit of given id
-    fn get_versioned_store<'a>(&'a self, commit: &C) -> Result<Self::Store<'a>>;
+    fn get_versioned_store(&self, commit: &C) -> Result<Self::Store>;
 
     /// Start from the given commit, and iter changes backforward
     #[allow(clippy::type_complexity)]

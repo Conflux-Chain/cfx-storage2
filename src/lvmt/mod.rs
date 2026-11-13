@@ -8,3 +8,5 @@ pub mod table_schema;
 #[cfg(test)]
 mod tests;
 pub mod types;
+
+pub use storage::LvmtStore;

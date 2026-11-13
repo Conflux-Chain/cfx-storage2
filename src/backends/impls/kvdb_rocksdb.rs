@@ -1,6 +1,7 @@
 use std::{
     borrow::{Borrow, Cow},
     path::PathBuf,
+    sync::Arc,
 };
 
 use super::super::{
@@ -14,9 +15,9 @@ use crate::errors::{DatabaseError, Result};
 use kvdb::KeyValueDB;
 use kvdb_rocksdb::DatabaseConfig;
 
-pub struct RocksDBColumn<'a> {
+pub struct RocksDBColumn {
     col: u32,
-    inner: &'a kvdb_rocksdb::Database,
+    inner: Arc<kvdb_rocksdb::Database>,
 }
 
 pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database> {
@@ -25,9 +26,9 @@ pub fn open_database(num_cols: u32, path: &str) -> Result<kvdb_rocksdb::Database
     Ok(kvdb_rocksdb::Database::open(&config, db_path)?)
 }
 
-impl<'b, T: TableSchema> TableRead<T> for RocksDBColumn<'b> {
+impl<T: TableSchema> TableRead<T> for RocksDBColumn {
     fn get(&self, key: &T::Key) -> Result<Option<Cow<T::Value>>> {
-        if let Some(v) = KeyValueDB::get(self.inner, self.col, key.encode().borrow())? {
+        if let Some(v) = self.inner.get(self.col, key.encode().borrow())? {
             let owned = <T::Value>::decode_owned(v)?;
             Ok(Some(Cow::Owned(owned)))
         } else {
@@ -67,10 +68,10 @@ impl DatabaseTrait for kvdb_rocksdb::Database {
     type TableID = u32;
     type WriteSchema = WriteSchemaNoSubkey<Self::TableID>;
 
-    fn view<T: TableSchema>(&self) -> Result<impl '_ + TableRead<T>> {
+    fn view<T: TableSchema>(self: &Arc<Self>) -> Result<impl 'static + TableRead<T>> {
         Ok(RocksDBColumn {
             col: T::NAME.into(),
-            inner: self,
+            inner: self.clone(),
         })
     }
 

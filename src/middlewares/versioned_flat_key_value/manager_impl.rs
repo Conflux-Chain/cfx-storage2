@@ -1,4 +1,6 @@
-use std::borrow::Borrow;
+use std::{borrow::Borrow, sync::Arc};
+
+use parking_lot::Mutex;
 
 use crate::{
     backends::TableReader,
@@ -24,22 +26,22 @@ use crate::types::ValueEntry;
 use std::collections::BTreeMap;
 
 /// Enum explicitly distinguishing between view types
-pub enum SnapshotView<'cache, 'db, T: VersionedKeyValueSchema> {
+pub enum SnapshotView<'db, T: VersionedKeyValueSchema> {
     /// Pending view can be any pending version
-    Pending(PendingSnapshot<'cache, 'db, T>),
+    Pending(PendingSnapshot<'db, T>),
     /// Historical view can be any historical version
     Historical(HistoricalSnapshot<'db, T>),
 }
 
 /// Pending view contains unconfirmed updates combined with the latest historical snapshot (if the latest historical snapshot exists)
-pub struct PendingSnapshot<'cache, 'db, T: VersionedKeyValueSchema> {
-    pending: PendingUpdates<'cache, T>,
+pub struct PendingSnapshot<'db, T: VersionedKeyValueSchema> {
+    pending: PendingUpdates<T>,
     latest: Option<LatestHistoricalSnapshot<'db, T>>,
 }
 
-struct PendingUpdates<'cache, T: VersionedKeyValueSchema> {
+struct PendingUpdates<T: VersionedKeyValueSchema> {
     commit_id: CommitID,
-    inner: &'cache VersionedMap<PendingKeyValueConfig<T, CommitID>>,
+    inner: Arc<Mutex<VersionedMap<PendingKeyValueConfig<T, CommitID>>>>,
 }
 
 /// Explicitly distinguishes historical snapshot types (Latest/Previous) with different algorithms
@@ -61,7 +63,7 @@ pub struct PreviousHistoricalSnapshot<'db, T: VersionedKeyValueSchema> {
     change_history_table: KeyValueStoreBulks<'db, HistoryChangeTable<T>>,
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema> SnapshotView<'cache, 'db, T> {
+impl<'db, T: VersionedKeyValueSchema> SnapshotView<'db, T> {
     #[cfg(test)]
     pub fn iter(&self) -> Result<impl Iterator<Item = (T::Key, ValueEntry<T::Value>)>> {
         use super::iter_history;
@@ -81,6 +83,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> SnapshotView<'cache, 'db, T> {
                 let pending_updates = &pending_snapshot.pending;
                 let pending_map = pending_updates
                     .inner
+                    .lock()
                     .get_versioned_store(pending_updates.commit_id)?;
                 for (k, v) in pending_map {
                     map.insert(k.clone(), v.clone());
@@ -142,13 +145,14 @@ impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
     }
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for PendingSnapshot<'cache, 'db, T>
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for PendingSnapshot<'db, T>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         let pending_optv = self
             .pending
             .inner
+            .lock()
             .get_versioned_key(&self.pending.commit_id, key)?;
 
         if let Some(pending_v) = pending_optv {
@@ -161,9 +165,7 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value
     }
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for SnapshotView<'cache, 'db, T>
-{
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value> for SnapshotView<'db, T> {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         match self {
             SnapshotView::Pending(pending_snapshot) => pending_snapshot.get(key),
@@ -172,8 +174,8 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value
     }
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
-    for Option<SnapshotView<'cache, 'db, T>>
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value>
+    for Option<SnapshotView<'db, T>>
 {
     fn get(&self, key: &T::Key) -> Result<Option<T::Value>> {
         if let Some(view) = self {
@@ -184,14 +186,14 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreRead<T::Key, T::Value
     }
 }
 
-impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
-    for VersionedStore<'cache, 'db, T>
+impl<'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Value, CommitID>
+    for VersionedStore<'db, T>
 {
-    type Store<'a> = SnapshotView<'a, 'db, T> where Self: 'a;
-    fn get_versioned_store<'a>(&'a self, commit: &CommitID) -> Result<Self::Store<'a>> {
-        if self.pending_part.contains_commit_id(commit) {
-            let latest_history =
-                if let Some(history_commit) = self.pending_part.get_parent_of_root() {
+    type Store = SnapshotView<'db, T>;
+    fn get_versioned_store(&self, commit: &CommitID) -> Result<Self::Store> {
+        if self.pending_part.lock().contains_commit_id(commit) {
+            let latest_history: Option<LatestHistoricalSnapshot<'_, T>> =
+                if let Some(history_commit) = self.pending_part.lock().get_parent_of_root() {
                     Some(LatestHistoricalSnapshot {
                         history_number: self.get_history_number_by_commit_id(history_commit)?,
                         history_index_table: self.history_index_table.clone(),
@@ -201,18 +203,18 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
                 };
 
             // TODO: checkout_current or not?
-            self.pending_part.checkout_current(*commit)?;
+            self.pending_part.lock().checkout_current(*commit)?;
 
             Ok(SnapshotView::Pending(PendingSnapshot {
                 pending: PendingUpdates {
                     commit_id: *commit,
-                    inner: &*self.pending_part,
+                    inner: self.pending_part.clone(),
                 },
                 latest: latest_history,
             }))
         } else {
             let history_number = self.get_history_number_by_commit_id(*commit)?;
-            let latest_history_commit = self.pending_part.get_parent_of_root().expect("The parent of pending root should exists when there is at least one commit in the historical part.");
+            let latest_history_commit = self.pending_part.lock().get_parent_of_root().expect("The parent of pending root should exists when there is at least one commit in the historical part.");
 
             if commit == &latest_history_commit {
                 Ok(SnapshotView::Historical(HistoricalSnapshot::Latest(
@@ -239,13 +241,14 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
         commit_id: &CommitID,
         key: &T::Key,
     ) -> Result<IsCompleted> {
-        let pending_res = self
-            .pending_part
-            .iter_historical_changes(&mut accept, commit_id, key);
+        let pending_res =
+            self.pending_part
+                .lock()
+                .iter_historical_changes(&mut accept, commit_id, key);
         match pending_res {
             Ok(false) => Ok(false),
             Ok(true) => {
-                if let Some(history_commit) = self.pending_part.get_parent_of_root() {
+                if let Some(history_commit) = self.pending_part.lock().get_parent_of_root() {
                     self.iter_historical_changes_history_part(&mut accept, &history_commit, key)
                 } else {
                     Ok(true)
@@ -264,17 +267,18 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
             return Ok(());
         }
 
-        Ok(self.pending_part.discard(commit)?)
+        let pending_part = Arc::get_mut(&mut self.pending_part).unwrap();
+        Ok(pending_part.lock().discard(commit)?)
     }
 
     fn get_versioned_key(&self, commit: &CommitID, key: &T::Key) -> Result<Option<T::Value>> {
-        let pending_res = self.pending_part.get_versioned_key(commit, key);
+        let pending_res = self.pending_part.lock().get_versioned_key(commit, key);
         let history_commit = match pending_res {
             Ok(Some(value)) => {
                 return Ok(value.into_option());
             }
             Ok(None) => {
-                if let Some(commit) = self.pending_part.get_parent_of_root() {
+                if let Some(commit) = self.pending_part.lock().get_parent_of_root() {
                     commit
                 } else {
                     return Ok(None);
@@ -290,14 +294,14 @@ impl<'cache, 'db, T: VersionedKeyValueSchema> KeyValueStoreManager<T::Key, T::Va
         };
 
         let history_number = self.get_history_number_by_commit_id(history_commit)?;
-        let latest_history_commit = self.pending_part.get_parent_of_root().expect("The parent of pending root should exists when there is at least one commit in the historical part.");
+        let latest_history_commit = self.pending_part.lock().get_parent_of_root().expect("The parent of pending root should exists when there is at least one commit in the historical part.");
 
         self.get_historical_part(history_number, key, latest_history_commit == history_commit)
     }
 }
 
 // Helper methods used in trait implementations
-impl<'cache, 'db, T: VersionedKeyValueSchema> VersionedStore<'cache, 'db, T> {
+impl<'db, T: VersionedKeyValueSchema> VersionedStore<'db, T> {
     fn iter_historical_changes_one_range(
         &self,
         mut accept: impl FnMut(&CommitID, &T::Key, Option<&T::Value>) -> NeedNext,
