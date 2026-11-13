@@ -15,7 +15,7 @@ pub use write_schema::WriteSchemaTrait;
 
 use crate::errors::Result;
 
-use self::table_name::TableNameTrait;
+pub use self::table_name::TableNameTrait;
 
 /// Trait defining the interface for a backend database, which provides multiple tables, each acting as a key-value store.
 pub trait DatabaseTrait<TN: TableNameTrait>: Sized + Send + Sync {

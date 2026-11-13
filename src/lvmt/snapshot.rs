@@ -7,19 +7,21 @@ use crate::{
 
 use super::{storage::LvmtStore, table_schema::FlatKeyValue};
 
-pub struct LvmtSnapshot<'db, P: DatabaseTrait<PendingTableName>> {
-    key_value_view: SnapshotView<'db, FlatKeyValue, P>,
+pub struct LvmtSnapshot<'a, 'db, P: DatabaseTrait<PendingTableName>> {
+    key_value_view: SnapshotView<'a, 'db, FlatKeyValue, P>,
 }
 
-impl<'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'db, P> {
-    pub fn get_state(&self, commit: CommitID) -> Result<LvmtSnapshot<P>> {
-        let key_value_view = self.get_key_value_store().get_versioned_store(&commit)?;
+impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStore<'cache, 'db, P> {
+    pub fn get_state(&self, commit: CommitID, checkout_current: bool) -> Result<LvmtSnapshot<P>> {
+        let key_value_view = self
+            .get_key_value_store()
+            .get_versioned_store(&commit, checkout_current)?;
 
         Ok(LvmtSnapshot { key_value_view })
     }
 }
 
-impl<'db, P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'db, P> {
+impl<'a, 'db, P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'a, 'db, P> {
     pub fn get(
         &self,
         key: &<FlatKeyValue as VersionedKeyValueSchema>::Key,
@@ -27,9 +29,10 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'db, P> {
         self.key_value_view.get(key)
     }
 
-    pub fn iter_prefix(
+    pub fn iter_range(
         &self,
-        key_prefix: Box<[u8]>,
+        lower_bound_incl: Box<[u8]>,
+        upper_bound_excl: Option<Box<[u8]>>,
     ) -> Result<
         impl '_
             + Iterator<
@@ -39,6 +42,7 @@ impl<'db, P: DatabaseTrait<PendingTableName>> LvmtSnapshot<'db, P> {
                 ),
             >,
     > {
-        self.key_value_view.iter_prefix(key_prefix)
+        self.key_value_view
+            .iter_range(lower_bound_incl, upper_bound_excl)
     }
 }

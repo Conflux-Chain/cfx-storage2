@@ -128,7 +128,7 @@ impl OffsetBasedVersionRange {
     }
 
     /// Collects the present version numbers in increasing order in this range such that version <= upper_bound.
-    /// Note that `upper_bound <= start_version_number` is possible.
+    /// Note that `upper_bound < start_version_number` is possible.
     pub fn collect_versions_le(
         &self,
         start_version_number: HistoryNumber,

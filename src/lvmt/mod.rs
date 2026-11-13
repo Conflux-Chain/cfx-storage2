@@ -3,6 +3,7 @@ mod auth_changes;
 pub mod crypto;
 mod example;
 mod snapshot;
+mod state_root;
 mod storage;
 pub mod table_schema;
 #[cfg(test)]

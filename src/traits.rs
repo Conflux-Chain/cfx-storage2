@@ -1,5 +1,5 @@
 use crate::{
-    backends::{DatabaseTrait, HistoricalTableName, PendingTableName, WriteSchemaTrait},
+    backends::{DatabaseTrait, PendingTableName, TableNameTrait, WriteSchemaTrait},
     errors::Result,
 };
 
@@ -29,10 +29,16 @@ where
     C: 'static,
     P: DatabaseTrait<PendingTableName>,
 {
-    type Store: KeyValueStoreRead<K, V>;
+    type Store<'a>: 'a + KeyValueStoreRead<K, V>
+    where
+        Self: 'a;
 
     /// Get the key value store after the commit of given id
-    fn get_versioned_store(&self, commit: &C) -> Result<Self::Store>;
+    fn get_versioned_store<'s>(
+        &'s self,
+        commit: &C,
+        checkout_current: bool,
+    ) -> Result<Self::Store<'s>>;
 
     /// Start from the given commit, and iter changes backforward
     #[allow(clippy::type_complexity)]
@@ -50,13 +56,13 @@ where
     fn get_versioned_key(&self, commit: &C, key: &K) -> Result<Option<V>>;
 }
 
-pub trait KeyValueStoreBulksTrait<K, V, C> {
+pub trait KeyValueStoreBulksTrait<K, V, C, TN: TableNameTrait> {
     /// Commit a bundle of key-values, with provided commit version
     fn commit(
         &self,
         commit: C,
         bulk: impl Iterator<Item = (K, Option<V>)>,
-        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
+        write_schema: &impl WriteSchemaTrait<TN>,
     ) -> Result<()>;
 
     /// Get with the given commit version and key.
@@ -66,6 +72,6 @@ pub trait KeyValueStoreBulksTrait<K, V, C> {
     fn gc_commit(
         &self,
         changes: impl Iterator<Item = (C, K, Option<V>)>,
-        write_schema: &impl WriteSchemaTrait<HistoricalTableName>,
+        write_schema: &impl WriteSchemaTrait<TN>,
     ) -> Result<()>;
 }
