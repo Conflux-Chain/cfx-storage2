@@ -11,6 +11,12 @@ pub struct LvmtValue {
     pub(in crate::lvmt) value: Option<Box<[u8]>>,
 }
 
+impl LvmtValue {
+    pub fn get_value(&self) -> Option<Box<[u8]>> {
+        self.value.clone()
+    }
+}
+
 impl Encode for LvmtValue {
     fn encode(&self) -> std::borrow::Cow<[u8]> {
         let mut encoded: Vec<u8> = self.allocation.encode().into_owned();

@@ -2,7 +2,7 @@ use std::hash::Hash;
 
 use crate::{
     backends::{TableKey, TableName, TableSchema, TableValue, VersionedKVName},
-    traits::KeyValueStoreRead,
+    traits::{KeyValueStoreIterable, KeyValueStoreRead},
 };
 
 use super::{history_indices::HistoryIndices, HistoryChangeKey, HistoryIndexKey};
@@ -37,3 +37,9 @@ impl<T: VersionedKeyValueSchema> TableSchema for HistoryIndicesTable<T> {
 
 pub type KeyValueSnapshotRead<'a, T> = dyn 'a
     + KeyValueStoreRead<<T as VersionedKeyValueSchema>::Key, <T as VersionedKeyValueSchema>::Value>;
+
+pub type KeyValueSnapshotIterable<'a, T> = dyn 'a
+    + KeyValueStoreIterable<
+        <T as VersionedKeyValueSchema>::Key,
+        <T as VersionedKeyValueSchema>::Value,
+    >;

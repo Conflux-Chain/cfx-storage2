@@ -13,7 +13,7 @@ where
     K: 'static,
     V: 'static,
 {
-    fn iter<'a>(&'a self, key: &K) -> Result<impl 'a + Iterator<Item = (&K, &V)>>;
+    fn iter(&self) -> Result<impl Iterator<Item = (K, V)>>;
 }
 
 pub type NeedNext = bool;

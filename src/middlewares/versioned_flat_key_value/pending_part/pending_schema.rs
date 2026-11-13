@@ -42,6 +42,7 @@ impl<S: PendingKeyValueSchema> ConfirmedPathInfo<S> {
 }
 
 pub type KeyValueMap<S> = HashMap<Key<S>, ValueEntry<Value<S>>>;
+pub type KeyValueIter<'a, S> = Box<dyn Iterator<Item = (Key<S>, ValueEntry<Value<S>>)> + 'a>;
 pub type RecoverMap<S> = HashMap<Key<S>, RecoverRecord<S>>;
 pub type ApplyMap<S> = HashMap<Key<S>, ApplyRecord<S>>;
 pub type LastCommitIdMap<S> = HashMap<Key<S>, Option<CommitId<S>>>;
