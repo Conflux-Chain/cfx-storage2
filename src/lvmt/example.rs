@@ -12,14 +12,14 @@ use crate::{
         primitives_initialize_empty_schema, primitives_recover_schema,
         primitives_verify_no_newer_records, primitives_verify_schema_is_empty, CommitID,
         HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig, TreeWithTracker,
-        VersionedStore, VersionedStoreCache,
+        VersionedStore, VersionedStoreCache, VersionedStoreReader,
     },
     StorageError,
 };
 
 use super::{
     auth_changes::AuthChangeTable,
-    storage::LvmtStore,
+    storage::{LvmtStore, LvmtStoreReader},
     table_schema::{AmtNodes, FlatKeyValue, SlotAllocations},
 };
 
@@ -31,6 +31,8 @@ pub struct LvmtStorage<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<P
     pub(super) key_value_cache: VersionedStoreCache<FlatKeyValue, P>,
     pub(super) amt_node_cache: VersionedStoreCache<AmtNodes, P>,
     pub(super) slot_alloc_cache: VersionedStoreCache<SlotAllocations, P>,
+
+    last_gc_height: u64,
 }
 
 impl LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>> {
@@ -209,6 +211,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             key_value_cache,
             amt_node_cache,
             slot_alloc_cache,
+            last_gc_height: 0,
         })
     }
 
@@ -315,6 +318,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             key_value_cache,
             amt_node_cache,
             slot_alloc_cache,
+            last_gc_height: 0,
         })
     }
 
@@ -385,13 +389,20 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     /// 1. Fetching the `durable_height` from the historical database.
     /// 2. Calling the `gc_until_height` primitive from the `persistence` module.
     /// 3. Committing the changes to the pending database to ensure atomicity.
-    pub fn background_cleanup(&self) -> Result<()> {
+    pub fn background_cleanup(&mut self) -> Result<()> {
         // Step 1: Get durable_height.
         let durable_height = self.get_durable_height()?;
 
         if durable_height == 0 {
             return Ok(());
         }
+
+        // Skip if there's nothing new to clean since last GC.
+        if self.last_gc_height >= durable_height {
+            return Ok(());
+        }
+
+        let from_height = self.last_gc_height;
 
         // Step 2: Prepare the write batch/schema for the pending DB.
         let write_schema = P::write_schema();
@@ -402,24 +413,46 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             &self.pending_db,
             &write_schema,
             durable_height,
+            from_height,
         )?;
 
         primitives_gc_until_height::<PendingKeyValueConfig<AmtNodes, CommitID>, _>(
             &self.pending_db,
             &write_schema,
             durable_height,
+            from_height,
         )?;
 
         primitives_gc_until_height::<PendingKeyValueConfig<SlotAllocations, CommitID>, _>(
             &self.pending_db,
             &write_schema,
             durable_height,
+            from_height,
         )?;
 
         // Step 4: Commit the changes atomically. The primitive itself doesn't commit.
         self.pending_db.commit(write_schema)?;
 
+        // Step 5: Update last_gc_height after successful cleanup.
+        self.last_gc_height = durable_height;
+
         Ok(())
+    }
+}
+
+impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
+    /// Creates a read-only view of the storage.
+    ///
+    /// Unlike [`as_manager`], this only requires `&self`, enabling concurrent
+    /// read access when the storage is protected by an `RwLock`.
+    pub fn as_reader(&self) -> Result<LvmtStoreReader<'_, '_, P>> {
+        let key_value_reader =
+            VersionedStoreReader::new(self.historical_db.clone(), &self.key_value_cache)?;
+
+        Ok(LvmtStoreReader::new(
+            self.pending_db.clone(),
+            key_value_reader,
+        ))
     }
 }
 

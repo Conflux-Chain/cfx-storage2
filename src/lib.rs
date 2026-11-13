@@ -23,4 +23,4 @@ pub mod types;
 mod utils;
 
 pub use errors::{Result, StorageError};
-pub use lvmt::{LvmtSnapshot, LvmtStorage, LvmtStore, LvmtValue};
+pub use lvmt::{LvmtSnapshot, LvmtStorage, LvmtStore, LvmtStoreReader, LvmtValue};

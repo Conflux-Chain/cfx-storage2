@@ -14,7 +14,7 @@ pub mod primitives {
 
     use super::super::{
         primitive::delete_wal_by_snapshot_id, DatabaseTrait, PendingKeyValueSchema,
-        PendingTableName, Result, SnapshotValue, SnapshotsTable, TableRead, WalTable,
+        PendingTableName, Result, SnapshotKey, SnapshotValue, SnapshotsTable, TableRead, WalTable,
     };
 
     /// Background GC: Cleans up all snapshots and their WALs with a height < durable_height.
@@ -28,10 +28,12 @@ pub mod primitives {
         db: &Arc<P>,
         write_schema: &P::WriteSchema,
         durable_height: u64,
+        from_height: u64,
     ) -> Result<()> {
         info!(
-            "Starting background GC for pending schema {:?}. Cleaning up versions older than durable_height={}.",
+            "Starting background GC for pending schema {:?}. Cleaning up versions from height={} to durable_height={}.",
             S::KV_NAME,
+            from_height,
             durable_height
         );
 
@@ -47,8 +49,9 @@ pub mod primitives {
         let snapshots_view = Arc::new(db.view::<SnapshotsTable<S>>()?);
         let wal_view = Arc::new(db.view::<WalTable<S>>()?);
 
-        // Forward scan from the beginning of the snapshots table
-        let iter = snapshots_view.iter_from_start()?;
+        // Forward scan from from_height, skipping already-GC'd tombstones
+        let seek_key = SnapshotKey::seek_key_for_height(from_height);
+        let iter = snapshots_view.iter(&seek_key.key)?;
         let mut last_height = None;
         let mut num_gc_snapshots = 0;
         for old_snapshot_item_res in iter {
@@ -124,6 +127,20 @@ mod tests {
         expected_deleted_snap_records: usize,
         expected_deleted_wal_records: usize,
     ) {
+        run_gc_test_case_with_from_height(
+            durable_height,
+            0,
+            expected_deleted_snap_records,
+            expected_deleted_wal_records,
+        );
+    }
+
+    fn run_gc_test_case_with_from_height(
+        durable_height: u64,
+        from_height: u64,
+        expected_deleted_snap_records: usize,
+        expected_deleted_wal_records: usize,
+    ) {
         // Arrange
         let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
         let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
@@ -132,7 +149,7 @@ mod tests {
         setup_db_with_snapshots_and_wals(&db, TEST_DATA);
 
         // Act
-        gc_until_height::<TestSchema, _>(&db, &write_schema, durable_height).unwrap();
+        gc_until_height::<TestSchema, _>(&db, &write_schema, durable_height, from_height).unwrap();
 
         // Assert
         let ops = write_schema.drain();
@@ -152,13 +169,13 @@ mod tests {
 
         assert_eq!(
             deleted_snaps, expected_deleted_snap_records,
-            "Mismatch in deleted snapshot records for durable_height={}",
-            durable_height
+            "Mismatch in deleted snapshot records for durable_height={}, from_height={}",
+            durable_height, from_height
         );
         assert_eq!(
             deleted_wals, expected_deleted_wal_records,
-            "Mismatch in deleted WAL records for durable_height={}",
-            durable_height
+            "Mismatch in deleted WAL records for durable_height={}, from_height={}",
+            durable_height, from_height
         );
     }
 
@@ -200,5 +217,60 @@ mod tests {
         // Snap records: 2 (h=10) + 3 (h=20) + 2 (h=30) = 7
         // WAL records: 2 (sid=1) + 3 (sid=2) + 1 (sid=3) = 6
         run_gc_test_case(31, 7, 6);
+    }
+
+    // --- Tests for the from_height parameter ---
+
+    #[test]
+    fn test_gc_from_height_skips_earlier_snapshots() {
+        // from_height=15 skips snapshot at h=10, only deletes h=20.
+        // durable_height=25, so h=20 < 25 is deleted.
+        // Snap records: 3 (h=20 only: 1 meta + 2 nodes)
+        // WAL records: 3 (sid=2 only)
+        run_gc_test_case_with_from_height(25, 15, 3, 3);
+    }
+
+    #[test]
+    fn test_gc_from_height_at_exact_snapshot_height() {
+        // from_height=20 starts at h=20, durable_height=25 deletes h=20.
+        // Snap records: 3 (h=20: 1 meta + 2 nodes)
+        // WAL records: 3 (sid=2)
+        run_gc_test_case_with_from_height(25, 20, 3, 3);
+    }
+
+    #[test]
+    fn test_gc_from_height_past_all_snapshots() {
+        // from_height=31 is past all snapshots, nothing to delete.
+        run_gc_test_case_with_from_height(100, 31, 0, 0);
+    }
+
+    #[test]
+    fn test_gc_from_height_zero_same_as_default() {
+        // from_height=0 should behave identically to the original iter_from_start.
+        run_gc_test_case_with_from_height(21, 0, 5, 5);
+        run_gc_test_case_with_from_height(31, 0, 7, 6);
+    }
+
+    #[test]
+    fn test_gc_from_height_equal_to_durable_height() {
+        // from_height=25, durable_height=25. Seek starts at 25, but nothing < 25 is found
+        // after seeking to 25 (h=30 >= 25), so nothing is deleted.
+        run_gc_test_case_with_from_height(25, 25, 0, 0);
+    }
+
+    #[test]
+    fn test_gc_from_height_above_durable_height() {
+        // from_height=30 > durable_height=25. Seek starts past the durable boundary,
+        // nothing qualifies (h=30 >= 25), so nothing is deleted.
+        run_gc_test_case_with_from_height(25, 30, 0, 0);
+    }
+
+    #[test]
+    fn test_gc_from_height_skips_to_last_snapshot() {
+        // from_height=25 skips h=10 and h=20, only h=30 remains.
+        // durable_height=31 deletes h=30.
+        // Snap records: 2 (h=30: 1 meta + 1 node)
+        // WAL records: 1 (sid=3)
+        run_gc_test_case_with_from_height(31, 25, 2, 1);
     }
 }

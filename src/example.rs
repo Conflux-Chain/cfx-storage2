@@ -86,6 +86,7 @@ impl Storage {
             &self.pending_db,
             &write_schema,
             durable_height,
+            0,
         )?;
 
         // Step 4: Commit the changes atomically. The primitive itself doesn't commit.

@@ -5,7 +5,10 @@ use crate::{
     traits::{KeyValueStoreManager, KeyValueStoreRead},
 };
 
-use super::{storage::LvmtStore, table_schema::FlatKeyValue};
+use super::{
+    storage::{LvmtStore, LvmtStoreReader},
+    table_schema::FlatKeyValue,
+};
 
 pub struct LvmtSnapshot<'a, 'db, P: DatabaseTrait<PendingTableName>> {
     key_value_view: SnapshotView<'a, 'db, FlatKeyValue, P>,
@@ -15,6 +18,16 @@ impl<P: DatabaseTrait<PendingTableName>> LvmtStore<'_, '_, P> {
     pub fn get_state(&self, commit: CommitID, checkout_current: bool) -> Result<LvmtSnapshot<P>> {
         let key_value_view = self
             .get_key_value_store()
+            .get_versioned_store(&commit, checkout_current)?;
+
+        Ok(LvmtSnapshot { key_value_view })
+    }
+}
+
+impl<P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'_, '_, P> {
+    pub fn get_state(&self, commit: CommitID, checkout_current: bool) -> Result<LvmtSnapshot<P>> {
+        let key_value_view = self
+            .get_key_value_reader()
             .get_versioned_store(&commit, checkout_current)?;
 
         Ok(LvmtSnapshot { key_value_view })
