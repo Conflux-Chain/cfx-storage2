@@ -35,6 +35,8 @@ mod bench_pending_reads;
 #[cfg(test)]
 mod bench_proof_reads;
 #[cfg(test)]
+mod bench_recovery;
+#[cfg(test)]
 mod bench_snapshot_phases;
 #[cfg(test)]
 mod cleanup;
