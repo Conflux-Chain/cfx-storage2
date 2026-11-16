@@ -3,7 +3,10 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::Path,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use crate::{
@@ -41,7 +44,9 @@ pub struct LvmtStorage<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<P
     pub(super) amt_node_cache: VersionedStoreCache<AmtNodes, P>,
     pub(super) slot_alloc_cache: VersionedStoreCache<SlotAllocations, P>,
 
-    last_gc_height: u64,
+    /// Shared with the [`PendingCleanup`]s it hands out, which may outlive a borrow
+    /// of the storage.
+    last_gc_height: Arc<AtomicU64>,
 
     proof_config: ProofConfig,
 }
@@ -222,7 +227,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             key_value_cache,
             amt_node_cache,
             slot_alloc_cache,
-            last_gc_height: 0,
+            last_gc_height: Arc::new(AtomicU64::new(0)),
             proof_config: ProofConfig::default(),
         })
     }
@@ -330,7 +335,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             key_value_cache,
             amt_node_cache,
             slot_alloc_cache,
-            last_gc_height: 0,
+            last_gc_height: Arc::new(AtomicU64::new(0)),
             proof_config: ProofConfig::default(),
         })
     }
@@ -395,60 +400,88 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         Ok(durable_height)
     }
 
-    /// Performs background garbage collection on the pending persistence layer.
+    /// Performs background garbage collection on the pending persistence layer:
+    /// [`pending_cleanup`](Self::pending_cleanup) followed by
+    /// [`PendingCleanup::run`].
     ///
-    /// This method acts as the "upper-level application".
-    /// It orchestrates the cleanup by:
-    /// 1. Fetching the `durable_height` from the historical database.
-    /// 2. Calling the `gc_until_height` primitive from the `persistence` module.
-    /// 3. Committing the changes to the pending database to ensure atomicity.
-    pub fn background_cleanup(&mut self) -> Result<()> {
-        // Step 1: Get durable_height.
+    /// Takes only a shared borrow, but running it under a read lock around the
+    /// storage still stalls readers: with a fair lock such as parking_lot's
+    /// `RwLock`, a writer waiting for the lock blocks readers arriving after it. To
+    /// keep the cleanup off the lock, take the task with
+    /// [`pending_cleanup`](Self::pending_cleanup) under the lock and call
+    /// [`PendingCleanup::run`] after releasing it.
+    pub fn background_cleanup(&self) -> Result<()> {
+        match self.pending_cleanup()? {
+            Some(cleanup) => cleanup.run(),
+            None => Ok(()),
+        }
+    }
+
+    /// The garbage collection due on the pending persistence layer, or `None` if
+    /// there is nothing to clean since the last one.
+    ///
+    /// The returned task holds no borrow of the storage, so it can run anywhere,
+    /// concurrently with any operation on the storage. It deletes only the pending
+    /// part's snapshots and WAL records below `durable_height`, which no operation
+    /// reads or writes: those records are only read by recovery, which needs the
+    /// snapshot at the height of the pending root (at least `durable_height`) and
+    /// the records after it, and new records are always written at or above the
+    /// height of the pending root.
+    pub fn pending_cleanup(&self) -> Result<Option<PendingCleanup<P>>> {
         let durable_height = self.get_durable_height()?;
-
-        if durable_height == 0 {
-            return Ok(());
+        let from_height = self.last_gc_height.load(Ordering::Acquire);
+        if durable_height == 0 || from_height >= durable_height {
+            return Ok(None);
         }
+        Ok(Some(PendingCleanup {
+            pending_db: self.pending_db.clone(),
+            from_height,
+            durable_height,
+            last_gc_height: self.last_gc_height.clone(),
+        }))
+    }
+}
 
-        // Skip if there's nothing new to clean since last GC.
-        if self.last_gc_height >= durable_height {
-            return Ok(());
-        }
+/// A garbage collection of the pending persistence layer, detached from the
+/// storage. See [`LvmtStorage::pending_cleanup`].
+pub struct PendingCleanup<P: DatabaseTrait<PendingTableName>> {
+    pending_db: Arc<P>,
+    from_height: u64,
+    durable_height: u64,
+    last_gc_height: Arc<AtomicU64>,
+}
 
-        let from_height = self.last_gc_height;
-
-        // Step 2: Prepare the write batch/schema for the pending DB.
+impl<P: DatabaseTrait<PendingTableName>> PendingCleanup<P> {
+    /// Deletes the pending part's snapshots and their WAL records below the
+    /// durable height, in one atomic commit to the pending db.
+    ///
+    /// Running several cleanups at once is safe: their deletions are idempotent,
+    /// and the recorded progress only moves forward.
+    pub fn run(self) -> Result<()> {
+        // All three schemas share one write schema, committed atomically.
         let write_schema = P::write_schema();
-
-        // Step 3: Call the low-level primitive to populate the write schema.
-        // Multiple tables should use the same write_schema.
         primitives_gc_until_height::<PendingKeyValueConfig<FlatKeyValue, CommitID>, _>(
             &self.pending_db,
             &write_schema,
-            durable_height,
-            from_height,
+            self.durable_height,
+            self.from_height,
         )?;
-
         primitives_gc_until_height::<PendingKeyValueConfig<AmtNodes, CommitID>, _>(
             &self.pending_db,
             &write_schema,
-            durable_height,
-            from_height,
+            self.durable_height,
+            self.from_height,
         )?;
-
         primitives_gc_until_height::<PendingKeyValueConfig<SlotAllocations, CommitID>, _>(
             &self.pending_db,
             &write_schema,
-            durable_height,
-            from_height,
+            self.durable_height,
+            self.from_height,
         )?;
-
-        // Step 4: Commit the changes atomically. The primitive itself doesn't commit.
         self.pending_db.commit(write_schema)?;
 
-        // Step 5: Update last_gc_height after successful cleanup.
-        self.last_gc_height = durable_height;
-
+        self.last_gc_height
+            .fetch_max(self.durable_height, Ordering::AcqRel);
         Ok(())
     }
 }

@@ -33,6 +33,8 @@ mod bench_pending_reads;
 #[cfg(test)]
 mod bench_proof_reads;
 #[cfg(test)]
+mod cleanup;
+#[cfg(test)]
 mod proofs;
 
 pub static AMT: Lazy<AmtParams<PE>> = Lazy::new(|| {
