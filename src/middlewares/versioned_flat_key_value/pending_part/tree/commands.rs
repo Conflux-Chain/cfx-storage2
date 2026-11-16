@@ -79,53 +79,114 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         Ok(changes)
     }
 
-    pub fn get_versioned_key(
-        &self,
-        commit_id: &S::CommitId,
-        key: &S::Key,
-        // (current_commit_id, value of key at current_commit_id)
-        // If current_commit_id is an ancestor of commit_id,
-        // the traversal can stop early and use the cached value.
-        ancestor_cache: Option<&(S::CommitId, Option<ValueEntry<S::Value>>)>,
-    ) -> PendResult<Option<ValueEntry<S::Value>>> {
-        let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
-        while let Some(node) = node_option {
-            if let Some((cached_commit_id, cached_value)) = ancestor_cache {
-                if node.get_commit_id() == *cached_commit_id {
-                    return Ok(cached_value.clone());
-                }
-            }
-            if let Some(value) = node.get_modified_value(key) {
-                return Ok(Some(value));
-            }
-            node_option = self.get_parent_node(node);
-        }
-        Ok(None)
-    }
-
-    /// Like [`Self::get_versioned_key`], but also returns the commit at which the
-    /// returned value was written, i.e. the closest ancestor-or-self of `commit_id`
-    /// that modified `key`.
+    /// The value of `key` as of `commit_id` together with the commit that wrote it,
+    /// i.e. the closest ancestor-or-self of `commit_id` that modified `key`. `None`
+    /// means `key` is not modified anywhere on the pending path from the root to
+    /// `commit_id`.
+    ///
+    /// Visits each node of that path once.
     pub fn get_versioned_key_with_commit(
         &self,
         commit_id: &S::CommitId,
         key: &S::Key,
-        // (current_commit_id, (modifying commit, value) of key at current_commit_id)
-        ancestor_cache: Option<&(S::CommitId, Option<(S::CommitId, ValueEntry<S::Value>)>)>,
     ) -> PendResult<Option<(S::CommitId, ValueEntry<S::Value>)>> {
         let mut node_option = Some(self.get_node_by_commit_id(*commit_id)?);
         while let Some(node) = node_option {
-            if let Some((cached_commit_id, cached)) = ancestor_cache {
-                if node.get_commit_id() == *cached_commit_id {
-                    return Ok(cached.clone());
-                }
-            }
             if let Some(value) = node.get_modified_value(key) {
                 return Ok(Some((node.get_commit_id(), value)));
             }
             node_option = self.get_parent_node(node);
         }
         Ok(None)
+    }
+
+    /// Like [`Self::get_versioned_key_with_commit`], but uses a snapshot of the
+    /// checked-out state at another commit `current`: `current_record` is its entry
+    /// for `key`, i.e. the closest ancestor-or-self of `current` that modified `key`
+    /// and the value written there.
+    ///
+    /// Let L be the lowest common ancestor of `commit_id` and `current`. A
+    /// modification of `key` between L (exclusive) and `commit_id` is the answer.
+    /// Otherwise the answer is the value as of L, which lies on the path of
+    /// `current`: it is `current_record` or an earlier modification on that path,
+    /// reached through the `last_commit_id` links of `key`'s records.
+    ///
+    /// So the cost is the distance between the two commits plus the number of
+    /// modifications of `key` between L and `current`, instead of the distance from
+    /// `commit_id` to the root. When the search for L has taken as many steps as
+    /// that plain walk would, it falls back to the plain walk, so it never takes
+    /// more than about twice as long.
+    pub fn get_versioned_key_with_current(
+        &self,
+        commit_id: &S::CommitId,
+        key: &S::Key,
+        current: S::CommitId,
+        current_record: Option<&(S::CommitId, ValueEntry<S::Value>)>,
+    ) -> PendResult<Option<(S::CommitId, ValueEntry<S::Value>)>> {
+        let mut node = self.get_node_by_commit_id(*commit_id)?;
+        let Ok(mut current_node) = self.get_node_by_commit_id(current) else {
+            return self.get_versioned_key_with_commit(commit_id, key);
+        };
+        let mut budget = node.get_height() - self.height_of_root;
+
+        // Bring `current_node` down to the height of `node`.
+        while current_node.get_height() > node.get_height() {
+            if budget == 0 {
+                return self.get_versioned_key_with_commit(commit_id, key);
+            }
+            budget -= 1;
+            current_node = self.get_parent_node(current_node).unwrap();
+        }
+        // Walk up from `node` until it meets the path of `current`.
+        while node.get_commit_id() != current_node.get_commit_id() {
+            if let Some(value) = node.get_modified_value(key) {
+                return Ok(Some((node.get_commit_id(), value)));
+            }
+            if budget == 0 {
+                return self.get_versioned_key_with_commit(commit_id, key);
+            }
+            budget -= 1;
+            // Above `current_node` means it has a parent, as the tree has one root.
+            let at_same_height = node.get_height() == current_node.get_height();
+            node = self.get_parent_node(node).unwrap();
+            if at_same_height {
+                current_node = self.get_parent_node(current_node).unwrap();
+            }
+        }
+
+        // `node` is L. Find the last modification of `key` at or above it on the
+        // path of `current`.
+        let lca_height = node.get_height();
+        let Some((mut modified_at, value)) = current_record.cloned() else {
+            // Not modified anywhere on the path of `current`.
+            return Ok(None);
+        };
+        let mut value = Some(value);
+        loop {
+            // A commit missing from the tree has been moved to the historical part,
+            // and so have all earlier ones.
+            let Ok(modifier) = self.get_node_by_commit_id(modified_at) else {
+                return Ok(None);
+            };
+            if modifier.get_height() <= lca_height {
+                let value = value.unwrap_or_else(|| {
+                    modifier
+                        .get_modified_value(key)
+                        .expect("a commit linked as modifying a key modifies it")
+                });
+                return Ok(Some((modified_at, value)));
+            }
+            let record = modifier
+                .get_recover_record(key)
+                .expect("a commit linked as modifying a key modifies it");
+            match record.last_commit_id {
+                Some(previous) => {
+                    modified_at = previous;
+                    value = None;
+                }
+                None => return Ok(None),
+            }
+        }
     }
 
     /// This function discards the siblings of the node at `commit_id`.

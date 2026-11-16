@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 use std::ops::Bound;
 
 use crate::backends::{DatabaseTrait, PendingTableName};
-use crate::traits::{IsCompleted, NeedNext};
 use crate::middlewares::table_schema::EncodingOrderedKey;
+use crate::traits::{IsCompleted, NeedNext};
 use crate::types::ValueEntry;
 
 use super::pending_schema::{ConfirmedPathInfo, KeyValueMap};
@@ -311,50 +311,45 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
         commit_id: &S::CommitId,
         key: &S::Key,
     ) -> PendResult<Option<ValueEntry<S::Value>>> {
-        let guard = self.current.read();
-
-        let ancestor_cache = if let Some(current) = guard.as_ref() {
-            if current.get_commit_id() == *commit_id {
-                return Ok(current.get(key).map(|c| c.value.clone()));
-            }
-            let cached_value = current.get(key).map(|c| c.value.clone());
-            Some((current.get_commit_id(), cached_value))
-        } else {
-            None
-        };
-        drop(guard);
-
-        self.tree_with_tracker
-            .tree
-            .get_versioned_key(commit_id, key, ancestor_cache.as_ref())
+        Ok(self
+            .get_versioned_key_with_commit(commit_id, key)?
+            .map(|(_, value)| value))
     }
 
     /// Like [`Self::get_versioned_key`], but also returns the commit at which the
     /// returned value was written. `None` means `key` is not modified anywhere on
     /// the pending path from the root to `commit_id`.
+    ///
+    /// Fastest at the checked-out commit. At any other commit it uses the
+    /// checked-out state as a shortcut, see [`super::tree::Tree::get_versioned_key_with_current`].
     pub fn get_versioned_key_with_commit(
         &self,
         commit_id: &S::CommitId,
         key: &S::Key,
     ) -> PendResult<Option<(S::CommitId, ValueEntry<S::Value>)>> {
         let guard = self.current.read();
-
-        let ancestor_cache = if let Some(current) = guard.as_ref() {
-            let cached = current.get(key).map(|c| (c.commit_id, c.value.clone()));
-            if current.get_commit_id() == *commit_id {
-                return Ok(cached);
+        // Copy what is needed out of the checked-out state, so that the tree walk
+        // below does not hold the lock. The copy stays valid if the state is checked
+        // out elsewhere meanwhile, as it describes an immutable commit.
+        let snapshot = match guard.as_ref() {
+            Some(current) => {
+                let record = current.get(key).map(|c| (c.commit_id, c.value.clone()));
+                if current.get_commit_id() == *commit_id {
+                    return Ok(record);
+                }
+                Some((current.get_commit_id(), record))
             }
-            Some((current.get_commit_id(), cached))
-        } else {
-            None
+            None => None,
         };
         drop(guard);
 
-        self.tree_with_tracker.tree.get_versioned_key_with_commit(
-            commit_id,
-            key,
-            ancestor_cache.as_ref(),
-        )
+        let tree = &self.tree_with_tracker.tree;
+        match snapshot {
+            Some((current, record)) => {
+                tree.get_versioned_key_with_current(commit_id, key, current, record.as_ref())
+            }
+            None => tree.get_versioned_key_with_commit(commit_id, key),
+        }
     }
 
     // alternative method of self.get_versioned_key(),
@@ -837,8 +832,8 @@ mod tests {
         // as a fresh query without any CurrentMap.
         let num_nodes = 30;
         let seed: [u8; 32] = [
-            42, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-            23, 24, 25, 26, 27, 28, 29, 30, 31,
+            42, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31,
         ];
         let mut rng = StdRng::from_seed(seed);
 
@@ -874,6 +869,74 @@ mod tests {
         }
     }
 
+    /// For every (checked-out commit, queried commit, key), the read through the
+    /// checked-out state returns the same value and modifying commit as the plain
+    /// walk from the queried commit to the root.
+    fn assert_reads_match_plain_walk(
+        vm: &VersionedMap<TestPendingConfig, WrappedInMemoryDb<PendingTableName>>,
+        commits: &[CommitId],
+    ) {
+        let tree = &vm.tree_with_tracker.tree;
+        for &current in commits {
+            vm.checkout_current(current).unwrap();
+            for &query in commits {
+                for key in 0..10u64 {
+                    let expected = tree.get_versioned_key_with_commit(&query, &key).unwrap();
+                    assert_eq!(
+                        vm.get_versioned_key_with_commit(&query, &key).unwrap(),
+                        expected,
+                        "current={current}, query={query}, key={key}"
+                    );
+                    assert_eq!(
+                        vm.get_versioned_key(&query, &key).unwrap(),
+                        expected.map(|(_, value)| value),
+                        "current={current}, query={query}, key={key}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_reads_through_current_match_plain_walk() {
+        let mut rng = StdRng::seed_from_u64(7);
+        // `span` bounds how far back a node's parent is: 1 is a chain, larger
+        // values give more and shorter forks.
+        for span in [1u64, 2, 3, 8, 1000] {
+            for _ in 0..4 {
+                let num_nodes = 60u64;
+                let nodes = (1..=num_nodes)
+                    .map(|i| {
+                        let parent =
+                            (i > 1).then(|| rng.gen_range(i.saturating_sub(span).max(1)..i));
+                        let updates = (0..3).map(|_| random_key_value(&mut rng)).collect();
+                        (i, parent, updates)
+                    })
+                    .collect();
+                let mut vm = build_versioned_map(nodes);
+                let all: Vec<CommitId> = (1..=num_nodes).collect();
+                assert_reads_match_plain_walk(&vm, &all);
+
+                // Move the root down, so that some keys' earlier modifications are
+                // no longer in the tree.
+                let deepest = *all
+                    .iter()
+                    .max_by_key(|c| vm.get_height_of_commit(c).unwrap())
+                    .unwrap();
+                let height = vm.get_height_of_commit(&deepest).unwrap();
+                let new_root = vm
+                    .get_ancestor_commit_at_height(height / 2, deepest)
+                    .unwrap();
+                vm.change_root_without_persistence(new_root).unwrap();
+                let kept: Vec<CommitId> = all
+                    .into_iter()
+                    .filter(|c| vm.contains_commit_id(c))
+                    .collect();
+                assert_reads_match_plain_walk(&vm, &kept);
+            }
+        }
+    }
+
     #[test]
     fn test_ancestor_cache_safe_after_current_checked_out() {
         // Simulates the scenario where another thread checks out CurrentMap
@@ -882,7 +945,7 @@ mod tests {
         // Timeline:
         //   1. Thread A: reads CurrentMap at commit 2, copies cache (commit_id=2, key=2 => Some(200))
         //   2. Thread B: checks out CurrentMap to commit 3 (different branch)
-        //   3. Thread A: uses the stale cache to query Tree::get_versioned_key(commit=5, key=2)
+        //   3. Thread A: uses the stale cache to query Tree::get_versioned_key_with_current(commit=5, key=2)
         //
         // The stale cache must still produce the correct result, because the cached
         // data is a snapshot of an immutable commit state.
@@ -895,8 +958,8 @@ mod tests {
             let guard = vm.current.read();
             let current = guard.as_ref().unwrap();
             assert_eq!(current.get_commit_id(), 2);
-            let cached_value = current.get(&2u64).map(|c| c.value.clone());
-            (current.get_commit_id(), cached_value)
+            let record = current.get(&2u64).map(|c| (c.commit_id, c.value.clone()));
+            (current.get_commit_id(), record)
         };
 
         // Step 2: another thread checks out CurrentMap to commit 3
@@ -910,8 +973,9 @@ mod tests {
         let result = vm
             .tree_with_tracker
             .tree
-            .get_versioned_key(&5, &2, Some(&stale_cache))
-            .unwrap();
+            .get_versioned_key_with_current(&5, &2, stale_cache.0, stale_cache.1.as_ref())
+            .unwrap()
+            .map(|(_, value)| value);
         assert_eq!(result, Some(ValueEntry::from_option(Some(200))));
 
         // Also test the three-level return semantics with stale cache:
@@ -921,15 +985,21 @@ mod tests {
             vm.checkout_current(2).unwrap();
             let guard = vm.current.read();
             let current = guard.as_ref().unwrap();
-            let cached_value = current.get(&3u64).map(|c| c.value.clone());
-            (current.get_commit_id(), cached_value)
+            let record = current.get(&3u64).map(|c| (c.commit_id, c.value.clone()));
+            (current.get_commit_id(), record)
         };
         vm.checkout_current(3).unwrap(); // move CurrentMap away again
         let result = vm
             .tree_with_tracker
             .tree
-            .get_versioned_key(&5, &3, Some(&stale_cache_deleted))
-            .unwrap();
+            .get_versioned_key_with_current(
+                &5,
+                &3,
+                stale_cache_deleted.0,
+                stale_cache_deleted.1.as_ref(),
+            )
+            .unwrap()
+            .map(|(_, value)| value);
         assert_eq!(result, Some(ValueEntry::from_option(None)));
 
         // key=99 never modified => None (pending part doesn't know)
@@ -937,15 +1007,21 @@ mod tests {
             vm.checkout_current(2).unwrap();
             let guard = vm.current.read();
             let current = guard.as_ref().unwrap();
-            let cached_value = current.get(&99u64).map(|c| c.value.clone());
-            (current.get_commit_id(), cached_value)
+            let record = current.get(&99u64).map(|c| (c.commit_id, c.value.clone()));
+            (current.get_commit_id(), record)
         };
         vm.checkout_current(3).unwrap();
         let result = vm
             .tree_with_tracker
             .tree
-            .get_versioned_key(&5, &99, Some(&stale_cache_unknown))
-            .unwrap();
+            .get_versioned_key_with_current(
+                &5,
+                &99,
+                stale_cache_unknown.0,
+                stale_cache_unknown.1.as_ref(),
+            )
+            .unwrap()
+            .map(|(_, value)| value);
         assert_eq!(result, None);
     }
 
