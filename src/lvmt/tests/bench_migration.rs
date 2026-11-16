@@ -1,7 +1,8 @@
-//! Cost of a confirmation (`confirmed_pending_to_history_with_height`) and of the
-//! cleanup after it, for a fixed number of confirmed commits and a varying number
-//! of commits left pending, over enough confirmations to cover two snapshots of
-//! the pending part. Not run by default:
+//! Cost of a confirmation (`confirmed_pending_to_history_with_height_deferring_snapshot`),
+//! of the pending snapshot it defers, and of the cleanup after it, for a fixed
+//! number of confirmed commits and a varying number of commits left pending, over
+//! enough confirmations to cover two snapshots of the pending part. Not run by
+//! default:
 //!
 //! ```text
 //! BENCH_DIR=/some/dir cargo test -r --lib bench_migration -- --ignored --nocapture
@@ -56,24 +57,37 @@ fn bench_migration() {
                 chain.push(id);
             }
             let tip = *chain.last().unwrap();
+            // The confirmation with the snapshot due deferred, which is what needs
+            // the storage borrowed, then that snapshot.
             let start = Instant::now();
-            db.confirmed_pending_to_history_with_height(round * confirm, tip)
+            let snapshot = db
+                .confirmed_pending_to_history_with_height_deferring_snapshot(round * confirm, tip)
                 .unwrap();
             let migrate = start.elapsed().as_secs_f64() * 1e3;
+            let start = Instant::now();
+            if let Some(snapshot) = snapshot {
+                snapshot.run().unwrap();
+            }
+            let snapshot = start.elapsed().as_secs_f64() * 1e3;
             let start = Instant::now();
             db.background_cleanup().unwrap();
             let cleanup = start.elapsed().as_secs_f64() * 1e3;
             if round > 1 {
-                timings.push((migrate, cleanup));
+                timings.push((migrate, snapshot, cleanup));
             }
         }
-        let stats = |f: fn(&(f64, f64)) -> f64| {
+        let stats = |f: fn(&(f64, f64, f64)) -> f64| {
             let values: Vec<f64> = timings.iter().map(f).collect();
             let mean = values.iter().sum::<f64>() / values.len() as f64;
             let max = values.iter().cloned().fold(0.0, f64::max);
             format!("mean {mean:.0} ms, max {max:.0} ms")
         };
-        let s = format!("migrate {} | cleanup {}", stats(|t| t.0), stats(|t| t.1));
+        let s = format!(
+            "migrate {} | snapshot {} | cleanup {}",
+            stats(|t| t.0),
+            stats(|t| t.1),
+            stats(|t| t.2)
+        );
         eprintln!(
             "confirm {confirm}, remaining {remaining}, {} confirmations: {s}",
             timings.len()
