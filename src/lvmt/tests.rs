@@ -29,6 +29,8 @@ use super::{compute_state_root, crypto::PE, example::LvmtStorage, storage::LvmtS
 pub const TEST_LEVEL: usize = 16;
 
 #[cfg(test)]
+mod bench_pending_reads;
+#[cfg(test)]
 mod bench_proof_reads;
 #[cfg(test)]
 mod proofs;
