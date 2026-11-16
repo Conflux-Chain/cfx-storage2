@@ -79,13 +79,25 @@ pub struct PersistenceTracker {
     /// The sequence ID to be assigned to the next modification record. This counter
     /// increments for each operation logged after the last snapshot.
     next_modification_id: ModificationId,
+    /// The number of `change_root` operations logged since the last snapshot. A
+    /// `change_root` writes a new snapshot only when this reaches
+    /// [`CHANGE_ROOTS_PER_SNAPSHOT`]` - 1`; the others are logged to the WAL only.
+    change_roots_since_snapshot: u64,
 }
+
+/// A `change_root` writes a snapshot of the whole tree after it once every this
+/// many `change_root`s; the others only log a WAL record. Recovery starts from the
+/// latest snapshot at or below the height of the pending root and replays the
+/// `change_root`s logged after it, so a larger value makes `change_root` and the
+/// cleanup of old snapshots cheaper and recovery slower.
+pub const CHANGE_ROOTS_PER_SNAPSHOT: u64 = 8;
 
 impl PersistenceTracker {
     /// Advances the tracker to a new snapshot.
     pub fn advance_to_next_snapshot(&mut self) {
         self.snapshot_id.0 += 1;
         self.next_modification_id = ModificationId(0);
+        self.change_roots_since_snapshot = 0;
     }
 
     /// Increments the modification ID counter for the next operation.

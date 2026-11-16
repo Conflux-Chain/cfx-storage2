@@ -38,6 +38,8 @@ mod bench_proof_reads;
 mod cleanup;
 #[cfg(test)]
 mod proofs;
+#[cfg(test)]
+mod sparse_snapshots;
 
 pub static AMT: Lazy<AmtParams<PE>> = Lazy::new(|| {
     AmtParams::from_dir_mont("./pp", TEST_LEVEL, TEST_LEVEL, CreateMode::Neither, None)

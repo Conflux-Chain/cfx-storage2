@@ -11,6 +11,7 @@ use crate::middlewares::versioned_flat_key_value::pending_part::tree::Tree;
 use super::{
     format::{WalKey, WalKeySpecificPart, WalTable, WalValue},
     write_tree_snapshot, PendingKeyValueSchema, PersistenceTracker, RecoverMap, WriteSchemaTrait,
+    CHANGE_ROOTS_PER_SNAPSHOT,
 };
 
 /// Logs the addition of a new root node to the WAL.
@@ -48,10 +49,12 @@ pub fn log_add_non_root_node<S: PendingKeyValueSchema>(
 
 /// Logs a `change_root` operation, which is a special case.
 ///
-/// This function performs three key actions:
+/// This function:
 /// 1. Writes the `change_root` modification to the WAL under the *current* snapshot ID.
-/// 2. Advances the `PersistenceTracker` to a new snapshot.
-/// 3. Writes a new entry to the `SnapshotsTable` to persist this new snapshot.
+/// 2. Once every [`CHANGE_ROOTS_PER_SNAPSHOT`] `change_root`s, advances the
+///    `PersistenceTracker` to a new snapshot and writes the whole tree to the
+///    `SnapshotsTable` as that snapshot. Otherwise later operations keep being logged
+///    under the current snapshot ID.
 ///
 /// **IMPORTANT**: The parameter `tree` should be obtained after executing this change_root operation.
 pub fn log_change_root<S: PendingKeyValueSchema>(
@@ -67,6 +70,11 @@ pub fn log_change_root<S: PendingKeyValueSchema>(
         new_root_cid,
         WalKeySpecificPart::<S>::ChangeRootMeta,
     );
+
+    if tracker.change_roots_since_snapshot + 1 < CHANGE_ROOTS_PER_SNAPSHOT {
+        tracker.change_roots_since_snapshot += 1;
+        return;
+    }
 
     // Step 2: Advance the tracker to a new snapshot state.
     tracker.advance_to_next_snapshot();
@@ -194,9 +202,11 @@ mod tests {
         // Arrange
         let db = WrappedInMemoryDb::<PendingTableName>::empty();
         let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        // The last `change_root` before a new snapshot.
         let mut tracker = PersistenceTracker {
             snapshot_id: SnapshotId(5),
             next_modification_id: ModificationId(10),
+            change_roots_since_snapshot: CHANGE_ROOTS_PER_SNAPSHOT - 1,
         };
 
         // 1. Initialize the tree, simulating it being built on top of a historical commit.
@@ -345,6 +355,45 @@ mod tests {
     }
 
     #[test]
+    fn test_log_change_root_without_snapshot() {
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let mut tracker = PersistenceTracker {
+            snapshot_id: SnapshotId(5),
+            next_modification_id: ModificationId(10),
+            change_roots_since_snapshot: CHANGE_ROOTS_PER_SNAPSHOT - 2,
+        };
+        let root_cid = H256::from_low_u64_be(1);
+        let new_root_cid = H256::from_low_u64_be(2);
+        let mut tree = Tree::<TestSchema>::new(None, 0);
+        tree.add_root(root_cid, RecoverMap::new()).unwrap();
+        tree.add_non_root_node(new_root_cid, root_cid, RecoverMap::new())
+            .unwrap();
+        tree.change_root(new_root_cid).unwrap();
+
+        log_change_root::<TestSchema>(&write_schema, &mut tracker, new_root_cid, &tree);
+
+        // Only the WAL record, under the current snapshot.
+        assert_eq!(
+            tracker,
+            PersistenceTracker {
+                snapshot_id: SnapshotId(5),
+                next_modification_id: ModificationId(11),
+                change_roots_since_snapshot: CHANGE_ROOTS_PER_SNAPSHOT - 1,
+            }
+        );
+        let ops = write_schema.drain();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].0, WalTable::<TestSchema>::NAME);
+        let wal_key = WalKey::<TestSchema>::decode_owned(ops[0].1.clone()).unwrap();
+        assert_eq!(wal_key.snapshot_id, SnapshotId(5));
+        assert_eq!(wal_key.modification_id, ModificationId(10));
+        assert_eq!(
+            wal_key.operation_specific_parts,
+            WalKeySpecificPart::ChangeRootMeta
+        );
+    }
+
+    #[test]
     fn test_log_add_root() {
         // Arrange
         let db = WrappedInMemoryDb::<PendingTableName>::empty();
@@ -352,6 +401,7 @@ mod tests {
         let mut tracker = PersistenceTracker {
             snapshot_id: SnapshotId(0),
             next_modification_id: ModificationId(0),
+            change_roots_since_snapshot: 0,
         };
 
         let commit_id = H256::from_low_u64_be(100);
@@ -418,6 +468,7 @@ mod tests {
         let mut tracker = PersistenceTracker {
             snapshot_id: SnapshotId(3),
             next_modification_id: ModificationId(8),
+            change_roots_since_snapshot: 0,
         };
         let commit_id = H256::from_low_u64_be(300);
 
@@ -472,6 +523,7 @@ mod tests {
         let mut tracker = PersistenceTracker {
             snapshot_id: SnapshotId(4),
             next_modification_id: ModificationId(0),
+            change_roots_since_snapshot: 0,
         };
         let commit_id = H256::from_low_u64_be(400);
 
@@ -526,6 +578,7 @@ mod tests {
         let mut tracker = PersistenceTracker {
             snapshot_id: SnapshotId(1),
             next_modification_id: ModificationId(5),
+            change_roots_since_snapshot: 0,
         };
 
         let commit_id = H256::from_low_u64_be(100);

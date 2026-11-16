@@ -3,9 +3,11 @@ use thiserror::Error;
 /// Errors that can occur during the state recovery process from the database.
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecoveryError {
-    #[error("No valid snapshot found at or after the specified recovery height.")]
+    #[error(
+        "No valid snapshot found: the pending db does not reach the specified recovery height."
+    )]
     NoValidSnapshotFound,
-    #[error("Inconsistent snapshot state: Found a snapshot at or after the recovery height, but it's not a valid recovery point.")]
+    #[error("Inconsistent snapshot state: the snapshots and WAL do not lead to the recovery height and parent of root.")]
     InconsistentSnapshotState,
 
     #[error("First snapshot record is not a Meta record")]
@@ -64,181 +66,194 @@ pub mod primitives {
         let snapshots_view = Arc::new(db.view::<SnapshotsTable<S>>()?);
         let wal_view = Arc::new(db.view::<WalTable<S>>()?);
 
-        // Seek to the first snapshot with height >= height_of_root.
-        let seek_key = SnapshotKey::seek_key_for_height(height_of_root);
+        // Snapshots are written only once every few `change_root`s (see
+        // `CHANGE_ROOTS_PER_SNAPSHOT`), so recovery starts from the latest snapshot at
+        // or below `height_of_root` and replays the `change_root`s logged after it.
+        // Snapshot records are ordered by height with each snapshot's meta record
+        // first, so jump from one snapshot's meta record to the next.
+        let mut base_height = None;
+        let mut has_newer_snapshot = false;
+        let mut next_height = Some(0u64);
+        while let Some(height) = next_height {
+            let seek_key = SnapshotKey::seek_key_for_height(height);
+            let Some(item) = snapshots_view.iter(&seek_key.key)?.next() else {
+                break;
+            };
+            let found = item?.0.as_ref().snapshot_root_height;
+            if found > height_of_root {
+                has_newer_snapshot = true;
+                break;
+            }
+            base_height = Some(found);
+            next_height = found.checked_add(1);
+        }
+        let Some(base_height) = base_height else {
+            if has_newer_snapshot {
+                Err(RecoveryError::InconsistentSnapshotState)?
+            }
+            Err(RecoveryError::NoValidSnapshotFound)?
+        };
+
+        let seek_key = SnapshotKey::seek_key_for_height(base_height);
         let mut iter = snapshots_view.iter(&seek_key.key)?;
-        match iter.next() {
-            None => Err(RecoveryError::NoValidSnapshotFound)?,
-            Some(item) => {
-                let (snap_key_cow, snap_value_cow) = item?;
-                let snap_height = snap_key_cow.as_ref().snapshot_root_height;
-                let (snap_parent_cid, snapshot_id, nodes_count) = match snap_value_cow.as_ref() {
-                    SnapshotValue::MetaValue {
-                        parent_of_root,
-                        snapshot_id,
-                        nodes_count,
-                    } => (*parent_of_root, *snapshot_id, *nodes_count),
-                    SnapshotValue::MapValue(_) => Err(RecoveryError::FirstRecordIsNotMeta)?,
-                };
+        let (_, snap_value_cow) = iter
+            .next()
+            .expect("the snapshot was just found at this height")?;
+        let (snap_parent_cid, snapshot_id, nodes_count) = match snap_value_cow.as_ref() {
+            SnapshotValue::MetaValue {
+                parent_of_root,
+                snapshot_id,
+                nodes_count,
+            } => (*parent_of_root, *snapshot_id, *nodes_count),
+            SnapshotValue::MapValue(_) => Err(RecoveryError::FirstRecordIsNotMeta)?,
+        };
 
-                // Check if the found snapshot is a perfect match.
-                if snap_height == height_of_root && snap_parent_cid == parent_of_root {
-                    // --- Path A: Found a valid recovery point. Restore and replay WAL. ---
+        // Rebuild the tree from the snapshot's base info.
+        let (mut tree, maybe_first_invalid_snapshot_item) =
+            read_tree_snapshot::read_tree_from_snapshot_iter(
+                base_height,
+                snap_parent_cid,
+                snapshot_id,
+                nodes_count,
+                &mut iter,
+            )?;
 
-                    // Rebuild the tree from the snapshot's base info.
-                    let (mut tree, maybe_first_invalid_snapshot_item) =
-                        read_tree_snapshot::read_tree_from_snapshot_iter(
-                            snap_height,
-                            snap_parent_cid,
-                            snapshot_id,
-                            nodes_count,
-                            &mut iter,
-                        )?;
+        // Replay WAL records in a loop until the replayer signals to stop.
+        let mut mod_id = 0;
+        let mut change_roots_since_snapshot = 0;
+        loop {
+            let status = wal_player::replay_one_modification(
+                &*wal_view,
+                &mut tree,
+                snapshot_id,
+                ModificationId(mod_id),
+            )?;
 
-                    // Replay WAL records in a loop until the replayer signals to stop.
-                    let mut mod_id = 0;
-                    loop {
-                        let status = wal_player::replay_one_modification(
-                            &*wal_view,
-                            &mut tree,
-                            snapshot_id,
-                            ModificationId(mod_id),
-                        )?;
-
-                        match status {
-                            // A standard operation was applied. Continue to the next modification.
-                            wal_player::ReplayStatus::Applied => {
-                                mod_id += 1;
-                            }
-                            // No more WAL records for this snapshot. Replay is cleanly finished.
-                            wal_player::ReplayStatus::NoMoreModifications => {
-                                break;
-                            }
-                            // An incomplete `change_root` transaction was found. Roll it back.
-                            wal_player::ReplayStatus::ChangeRootEncountered => {
-                                // --- Rollback Logic ---
-                                // 1. Delete all WAL records for this failed modification.
-                                let wal_seek_key = WalKey::seek_key_for_snap_mod_id(
-                                    snapshot_id,
-                                    ModificationId(mod_id),
-                                );
-                                for wal_item in wal_view.iter(&wal_seek_key.key)? {
-                                    let (wal_key_cow, _) = wal_item?;
-                                    if wal_key_cow.as_ref().snapshot_id != snapshot_id
-                                        || wal_key_cow.as_ref().modification_id
-                                            != ModificationId(mod_id)
-                                    {
-                                        break;
-                                    }
-
-                                    warn!(
-                                        "Rolling back WAL entry for incomplete 'change_root' transaction. \
-                                        schema_name={:?}, snapshot_id={}, modification_id={}, deleting_wal_key={:?}",
-                                        S::KV_NAME,
-                                        snapshot_id.0,
-                                        mod_id,
-                                        wal_key_cow.as_ref()
-                                    );
-
-                                    write_schema.write::<WalTable<S>>((wal_key_cow, None));
-                                }
-
-                                // 2. (Crucial Sanity Check) Verify no more WAL records exist for this snapshot_id.
-                                // A `change_root` must be the final operation.
-                                let next_mod_seek_key = WalKey::seek_key_for_snap_mod_id(
-                                    snapshot_id,
-                                    ModificationId(mod_id + 1),
-                                );
-                                if let Some(next_item) =
-                                    wal_view.iter(&next_mod_seek_key.key)?.next()
-                                {
-                                    let (next_key, _) = next_item?;
-                                    if next_key.as_ref().snapshot_id == snapshot_id {
-                                        Err(RecoveryError::InconsistentWalRecord(
-                                            "WAL data found after a change_root operation for the same snapshot.",
-                                        ))?;
-                                    }
-                                }
-
-                                // 3. Stop the replay loop. The `mod_id` is NOT incremented,
-                                // because this modification was rolled back.
-                                break;
-                            }
-                        }
+            match status {
+                // A standard operation was applied. Continue to the next modification.
+                wal_player::ReplayStatus::Applied => {
+                    mod_id += 1;
+                }
+                // No more WAL records for this snapshot. Replay is cleanly finished.
+                wal_player::ReplayStatus::NoMoreModifications => {
+                    break;
+                }
+                wal_player::ReplayStatus::ChangeRootEncountered(new_root) => {
+                    let Some(new_root_height) = tree.get_height_of_commit(&new_root) else {
+                        Err(RecoveryError::InconsistentWalRecord(
+                            "change_root to a commit not in the tree",
+                        ))?
+                    };
+                    // The pending db is committed before the historical db, and a
+                    // `change_root` is not started before the previous one is committed
+                    // to both. So every `change_root` up to `height_of_root` completed,
+                    // and one beyond it can only be the last, incomplete one.
+                    if new_root_height <= height_of_root {
+                        tree.change_root(new_root)?;
+                        change_roots_since_snapshot += 1;
+                        mod_id += 1;
+                        continue;
                     }
 
-                    // Clean up any newer, now-invalid snapshots and their WALs.
-                    if let Some(first_invalid_snapshot_item) = maybe_first_invalid_snapshot_item {
-                        // The `last_invalid_height` is used to determine whether the record is meta in subsequent traversals.
-                        let mut last_invalid_height =
-                            first_invalid_snapshot_item.0.as_ref().snapshot_root_height;
-
-                        // The `first_invalid_snapshot_item` must be a meta.
-                        let SnapshotValue::MetaValue {
-                            snapshot_id: invalid_snapshot_id,
-                            ..
-                        } = first_invalid_snapshot_item.1.as_ref()
-                        else {
-                            Err(RecoveryError::FirstRecordIsNotMeta)?
-                        };
+                    // --- Rollback Logic ---
+                    // 1. Delete all WAL records for this failed modification.
+                    let wal_seek_key =
+                        WalKey::seek_key_for_snap_mod_id(snapshot_id, ModificationId(mod_id));
+                    for wal_item in wal_view.iter(&wal_seek_key.key)? {
+                        let (wal_key_cow, _) = wal_item?;
+                        if wal_key_cow.as_ref().snapshot_id != snapshot_id
+                            || wal_key_cow.as_ref().modification_id != ModificationId(mod_id)
+                        {
+                            break;
+                        }
 
                         warn!(
-                            "WAL replay finished for schema {:?}. Found newer, invalid snapshots. \
-                            Starting cleanup from snapshot_id {} onwards.",
+                            "Rolling back WAL entry for incomplete 'change_root' transaction. \
+                            schema_name={:?}, snapshot_id={}, modification_id={}, deleting_wal_key={:?}",
                             S::KV_NAME,
-                            invalid_snapshot_id.0
+                            snapshot_id.0,
+                            mod_id,
+                            wal_key_cow.as_ref()
                         );
 
-                        // For the meta snapshot record, delete the corresponding WAL records.
-                        delete_wal_by_snapshot_id::<S, P>(
-                            &wal_view,
-                            write_schema,
-                            *invalid_snapshot_id,
-                        )?;
-                        // Delete this snapshot record.
-                        write_schema
-                            .write::<SnapshotsTable<S>>((first_invalid_snapshot_item.0, None));
+                        write_schema.write::<WalTable<S>>((wal_key_cow, None));
+                    }
 
-                        // Continue to iter snapshot records.
-                        for invalid_snapshot_item_res in iter {
-                            let invalid_snapshot_item = invalid_snapshot_item_res?;
-
-                            // If the record is a meta, delete the corresponding WAL records.
-                            let invalid_height =
-                                invalid_snapshot_item.0.as_ref().snapshot_root_height;
-                            if invalid_height != last_invalid_height {
-                                last_invalid_height = invalid_height;
-                                let SnapshotValue::MetaValue {
-                                    snapshot_id: invalid_snapshot_id,
-                                    ..
-                                } = invalid_snapshot_item.1.as_ref()
-                                else {
-                                    Err(RecoveryError::FirstRecordIsNotMeta)?
-                                };
-                                delete_wal_by_snapshot_id::<S, P>(
-                                    &wal_view,
-                                    write_schema,
-                                    *invalid_snapshot_id,
-                                )?;
-                            }
-
-                            // Delete this record.
-                            write_schema
-                                .write::<SnapshotsTable<S>>((invalid_snapshot_item.0, None));
+                    // 2. (Crucial Sanity Check) Verify no more WAL records exist for this snapshot_id.
+                    // An incomplete `change_root` must be the final operation.
+                    let next_mod_seek_key =
+                        WalKey::seek_key_for_snap_mod_id(snapshot_id, ModificationId(mod_id + 1));
+                    if let Some(next_item) = wal_view.iter(&next_mod_seek_key.key)?.next() {
+                        let (next_key, _) = next_item?;
+                        if next_key.as_ref().snapshot_id == snapshot_id {
+                            Err(RecoveryError::InconsistentWalRecord(
+                                "WAL data found after a change_root operation for the same snapshot.",
+                            ))?;
                         }
                     }
 
-                    let tracker = PersistenceTracker {
-                        snapshot_id,
-                        next_modification_id: ModificationId(mod_id),
-                    };
-
-                    Ok(TreeWithTracker { tree, tracker })
-                } else {
-                    Err(RecoveryError::InconsistentSnapshotState)?
+                    // 3. Stop the replay loop. The `mod_id` is NOT incremented,
+                    // because this modification was rolled back.
+                    break;
                 }
             }
         }
+
+        // The replayed tree must end at the root recorded by the historical part. Below
+        // it, the pending db is behind the historical db.
+        if tree.get_height_of_root() < height_of_root {
+            Err(RecoveryError::NoValidSnapshotFound)?
+        }
+        if tree.get_height_of_root() != height_of_root
+            || tree.get_parent_of_root() != parent_of_root
+        {
+            Err(RecoveryError::InconsistentSnapshotState)?
+        }
+
+        // Clean up any newer, now-invalid snapshots and their WALs.
+        if let Some(first_invalid_snapshot_item) = maybe_first_invalid_snapshot_item {
+            let mut iter = std::iter::once(Ok(first_invalid_snapshot_item)).chain(iter);
+            let mut last_invalid_height = None;
+            warn!(
+                "WAL replay finished for schema {:?}. Found newer, invalid snapshots above height {}. \
+                Deleting them.",
+                S::KV_NAME,
+                base_height
+            );
+            for invalid_snapshot_item_res in &mut iter {
+                let invalid_snapshot_item = invalid_snapshot_item_res?;
+
+                // The first record of each snapshot is its meta record: delete the
+                // snapshot's WAL records along with it.
+                let invalid_height = invalid_snapshot_item.0.as_ref().snapshot_root_height;
+                if last_invalid_height != Some(invalid_height) {
+                    last_invalid_height = Some(invalid_height);
+                    let SnapshotValue::MetaValue {
+                        snapshot_id: invalid_snapshot_id,
+                        ..
+                    } = invalid_snapshot_item.1.as_ref()
+                    else {
+                        Err(RecoveryError::FirstRecordIsNotMeta)?
+                    };
+                    delete_wal_by_snapshot_id::<S, P>(
+                        &wal_view,
+                        write_schema,
+                        *invalid_snapshot_id,
+                    )?;
+                }
+
+                // Delete this record.
+                write_schema.write::<SnapshotsTable<S>>((invalid_snapshot_item.0, None));
+            }
+        }
+
+        let tracker = PersistenceTracker {
+            snapshot_id,
+            next_modification_id: ModificationId(mod_id),
+            change_roots_since_snapshot,
+        };
+
+        Ok(TreeWithTracker { tree, tracker })
     }
 
     /// Verifies that no records newer than the recovery point exist in the database for a specific schema.
@@ -323,8 +338,9 @@ mod tests {
         // Arrange
         let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
 
-        // No need to ensure the data is valid.
-        setup_db_with_snapshots_and_wals(&db, &[(99, 1, 2, 1)]);
+        // An empty snapshot below the recovery height and nothing after it: the
+        // pending db does not reach the recovery height.
+        setup_db_with_snapshots_and_wals(&db, &[(99, 1, 0, 0)]);
 
         let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
         let parent_of_root = Some(H256::from_low_u64_be(99));
@@ -773,6 +789,7 @@ mod tests {
         let tracker = PersistenceTracker {
             snapshot_id: sid,
             next_modification_id: ModificationId(3),
+            change_roots_since_snapshot: 0,
         };
         let res = verify_no_newer_records::<TestSchema, _>(&db, height, &tracker);
 
@@ -809,6 +826,7 @@ mod tests {
         let tracker = PersistenceTracker {
             snapshot_id: newest_sid,
             next_modification_id: next_mod_id,
+            change_roots_since_snapshot: 0,
         };
         let res = verify_no_newer_records::<TestSchema, _>(&db, newest_height, &tracker);
 
@@ -851,6 +869,7 @@ mod tests {
         let tracker = PersistenceTracker {
             snapshot_id: newest_sid,
             next_modification_id: next_mod_id,
+            change_roots_since_snapshot: 0,
         };
         let res = verify_no_newer_records::<TestSchema, _>(&db, newest_height, &tracker);
 
@@ -892,6 +911,7 @@ mod tests {
         let tracker = PersistenceTracker {
             snapshot_id: newest_sid,
             next_modification_id: next_mod_id,
+            change_roots_since_snapshot: 0,
         };
         let res = verify_no_newer_records::<TestSchema, _>(&db, newest_height, &tracker);
 
@@ -933,6 +953,7 @@ mod tests {
         let tracker = PersistenceTracker {
             snapshot_id: newest_sid,
             next_modification_id: next_mod_id,
+            change_roots_since_snapshot: 0,
         };
         let res = verify_no_newer_records::<TestSchema, _>(&db, newest_height, &tracker);
 

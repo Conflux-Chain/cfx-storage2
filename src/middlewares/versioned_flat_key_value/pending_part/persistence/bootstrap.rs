@@ -102,6 +102,7 @@ pub mod primitives {
         let tracker = PersistenceTracker {
             snapshot_id: initial_snapshot_id,
             next_modification_id: ModificationId(0), // No modifications yet.
+            change_roots_since_snapshot: 0,
         };
 
         TreeWithTracker { tree, tracker }

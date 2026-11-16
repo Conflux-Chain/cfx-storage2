@@ -30,14 +30,14 @@ pub enum OneModificationForTree<S: PendingKeyValueSchema> {
 }
 
 /// The status of a single WAL modification replay attempt.
-pub(super) enum ReplayStatus {
+pub(super) enum ReplayStatus<S: PendingKeyValueSchema> {
     /// A modification was successfully found and applied to the tree.
     Applied,
     /// No more modifications were found for the current snapshot_id.
     NoMoreModifications,
-    /// A `change_root` operation was encountered, signaling the end of this snapshot's valid WAL.
-    /// This represents an incomplete transaction that needs to be rolled back.
-    ChangeRootEncountered,
+    /// A `change_root` to the given commit was encountered and NOT applied: the
+    /// caller decides whether it completed (and applies it) or must be rolled back.
+    ChangeRootEncountered(S::CommitId),
 }
 
 /// Attempts to replay all WAL records corresponding to a single modification_id.
@@ -51,7 +51,7 @@ pub(super) fn replay_one_modification<S: PendingKeyValueSchema, P: TableRead<Wal
     tree: &mut Tree<S>,
     snapshot_id: SnapshotId,
     modification_id: ModificationId,
-) -> Result<ReplayStatus> {
+) -> Result<ReplayStatus<S>> {
     let mut this_modification: Option<OneModificationForTree<S>> = None;
     let wal_seek_key = WalKey::seek_key_for_snap_mod_id(snapshot_id, modification_id);
 
@@ -75,7 +75,9 @@ pub(super) fn replay_one_modification<S: PendingKeyValueSchema, P: TableRead<Wal
         match modification {
             // For a ChangeRoot operation, we do NOT apply it.
             // Instead, we signal that an incomplete transaction was found.
-            OneModificationForTree::ChangeRoot { .. } => Ok(ReplayStatus::ChangeRootEncountered),
+            OneModificationForTree::ChangeRoot { commit_id } => {
+                Ok(ReplayStatus::ChangeRootEncountered(commit_id))
+            }
             // For all other valid operations, apply them to the tree.
             _ => {
                 check_modification_info(&modification)?;

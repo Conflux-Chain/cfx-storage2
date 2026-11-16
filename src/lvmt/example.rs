@@ -422,11 +422,11 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     ///
     /// The returned task holds no borrow of the storage, so it can run anywhere,
     /// concurrently with any operation on the storage. It deletes only the pending
-    /// part's snapshots and WAL records below `durable_height`, which no operation
-    /// reads or writes: those records are only read by recovery, which needs the
-    /// snapshot at the height of the pending root (at least `durable_height`) and
-    /// the records after it, and new records are always written at or above the
-    /// height of the pending root.
+    /// part's snapshots older than the latest one at or below `durable_height`, with
+    /// their WAL records, which no operation reads or writes: those records are only
+    /// read by recovery, which starts from the latest snapshot at or below the
+    /// height of the pending root (at least `durable_height`, and it only grows),
+    /// and new records are always written under the latest snapshot.
     pub fn pending_cleanup(&self) -> Result<Option<PendingCleanup<P>>> {
         let durable_height = self.get_durable_height()?;
         let from_height = self.last_gc_height.load(Ordering::Acquire);
@@ -452,36 +452,44 @@ pub struct PendingCleanup<P: DatabaseTrait<PendingTableName>> {
 }
 
 impl<P: DatabaseTrait<PendingTableName>> PendingCleanup<P> {
-    /// Deletes the pending part's snapshots and their WAL records below the
-    /// durable height, in one atomic commit to the pending db.
+    /// Deletes the pending part's snapshots older than the latest one at or below
+    /// the durable height, with their WAL records, in one atomic commit to the
+    /// pending db.
     ///
     /// Running several cleanups at once is safe: their deletions are idempotent,
     /// and the recorded progress only moves forward.
     pub fn run(self) -> Result<()> {
         // All three schemas share one write schema, committed atomically.
         let write_schema = P::write_schema();
-        primitives_gc_until_height::<PendingKeyValueConfig<FlatKeyValue, CommitID>, _>(
-            &self.pending_db,
-            &write_schema,
-            self.durable_height,
-            self.from_height,
-        )?;
-        primitives_gc_until_height::<PendingKeyValueConfig<AmtNodes, CommitID>, _>(
-            &self.pending_db,
-            &write_schema,
-            self.durable_height,
-            self.from_height,
-        )?;
-        primitives_gc_until_height::<PendingKeyValueConfig<SlotAllocations, CommitID>, _>(
-            &self.pending_db,
-            &write_schema,
-            self.durable_height,
-            self.from_height,
-        )?;
+        let kept = [
+            primitives_gc_until_height::<PendingKeyValueConfig<FlatKeyValue, CommitID>, _>(
+                &self.pending_db,
+                &write_schema,
+                self.durable_height,
+                self.from_height,
+            )?,
+            primitives_gc_until_height::<PendingKeyValueConfig<AmtNodes, CommitID>, _>(
+                &self.pending_db,
+                &write_schema,
+                self.durable_height,
+                self.from_height,
+            )?,
+            primitives_gc_until_height::<PendingKeyValueConfig<SlotAllocations, CommitID>, _>(
+                &self.pending_db,
+                &write_schema,
+                self.durable_height,
+                self.from_height,
+            )?,
+        ];
         self.pending_db.commit(write_schema)?;
 
-        self.last_gc_height
-            .fetch_max(self.durable_height, Ordering::AcqRel);
+        // The next cleanup starts from the kept snapshot, so that it is deleted once
+        // a newer one is at or below the durable height. The three schemas see the
+        // same `change_root`s and so keep snapshots at the same heights.
+        if let [Some(a), Some(b), Some(c)] = kept {
+            self.last_gc_height
+                .fetch_max(a.min(b).min(c), Ordering::AcqRel);
+        }
         Ok(())
     }
 }
