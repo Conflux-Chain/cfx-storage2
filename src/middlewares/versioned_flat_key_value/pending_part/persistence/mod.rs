@@ -27,8 +27,10 @@ pub use recovery::primitives::{
     verify_no_newer_records as primitives_verify_no_newer_records,
 };
 
+pub use writer::DeferredSnapshot;
 pub(super) use writer::{
-    log_add_non_root_node, log_add_root, log_change_root, log_discard, log_make_pivot,
+    log_add_non_root_node, log_add_root, log_change_root, log_change_root_deferring_snapshot,
+    log_discard, log_make_pivot,
 };
 
 use self::format::{
@@ -229,4 +231,24 @@ pub(super) fn time_tree_snapshot<S: PendingKeyValueSchema, P: DatabaseTrait<Pend
         commit,
         records,
     })
+}
+
+/// The heights of the snapshots of schema `S` in `db`, in increasing order.
+#[cfg(test)]
+pub fn snapshot_heights<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>>(
+    db: &std::sync::Arc<P>,
+) -> Result<Vec<u64>> {
+    let view = db.view::<SnapshotsTable<S>>()?;
+    let mut heights = Vec::new();
+    let mut next_height = Some(0u64);
+    while let Some(height) = next_height {
+        let seek_key = SnapshotKey::seek_key_for_height(height);
+        let Some(item) = view.iter(&seek_key.key)?.next() else {
+            break;
+        };
+        let found = item?.0.as_ref().snapshot_root_height;
+        heights.push(found);
+        next_height = found.checked_add(1);
+    }
+    Ok(heights)
 }

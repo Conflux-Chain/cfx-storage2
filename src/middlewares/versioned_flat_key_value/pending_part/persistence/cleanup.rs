@@ -14,8 +14,8 @@ pub mod primitives {
 
     use super::super::{
         primitive::delete_wal_by_snapshot_id, DatabaseTrait, PendingKeyValueSchema,
-        PendingTableName, RecoveryError, Result, SnapshotKey, SnapshotValue, SnapshotsTable,
-        TableRead, WalTable,
+        PendingTableName, RecoveryError, Result, SnapshotId, SnapshotKey, SnapshotValue,
+        SnapshotsTable, TableRead, WalTable,
     };
 
     /// Background GC: deletes the snapshots, with their WALs, that recovery no longer
@@ -70,11 +70,20 @@ pub mod primitives {
             next_height = found.checked_add(1);
         }
 
-        let Some((&(kept_height, _), to_delete)) = snapshots.split_last() else {
+        let Some((&(kept_height, kept_snapshot_id), to_delete)) = snapshots.split_last() else {
             return Ok(None);
         };
-        for &(height, snapshot_id) in to_delete {
-            delete_wal_by_snapshot_id::<S, P>(&wal_view, write_schema, snapshot_id)?;
+        // The WAL records of every snapshot ID from the first deleted snapshot up to the
+        // kept one, including IDs whose snapshot was never written (see
+        // `DeferredSnapshot`): recovery starts from the kept snapshot or a later one.
+        // Earlier IDs were deleted by previous cleanups, which kept the first snapshot
+        // here.
+        if let Some(&(_, first_snapshot_id)) = to_delete.first() {
+            for id in first_snapshot_id.0..kept_snapshot_id.0 {
+                delete_wal_by_snapshot_id::<S, P>(&wal_view, write_schema, SnapshotId(id))?;
+            }
+        }
+        for &(height, _) in to_delete {
             let seek_key = SnapshotKey::seek_key_for_height(height);
             for item in snapshots_view.iter(&seek_key.key)? {
                 let (key, _) = item?;
@@ -101,10 +110,13 @@ mod tests {
     use super::super::{
         format::{SnapshotsTable, WalTable},
         test_util::{setup_db_with_snapshots_and_wals, TestSchema},
-        DatabaseTrait, PendingTableName, TableSchema, WrappedInMemoryDb,
+        DatabaseTrait, ModificationId, PendingTableName, SnapshotId, TableSchema, WalKey,
+        WalKeySpecificPart, WalValue, WrappedInMemoryDb, WriteSchemaTrait,
     };
     use super::primitives::*;
-    use std::sync::Arc;
+    use crate::backends::serde::Decode;
+    use ethereum_types::H256;
+    use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
     // This is the mock data we will use for all GC tests.
     // Format: (height, snapshot_id, num_wal_records, num_snapshot_node_records)
@@ -213,5 +225,47 @@ mod tests {
     fn test_gc_from_height_above_durable_height() {
         run_gc_test_case(25, 25, 0, 0, None);
         run_gc_test_case(25, 30, 0, 0, None);
+    }
+
+    #[test]
+    fn test_gc_deletes_the_wal_of_a_snapshot_never_written() {
+        // Snapshot ID 2 has WAL records but its snapshot was never written (see
+        // `DeferredSnapshot`), and ID 4 is the latest, with records only.
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+        setup_db_with_snapshots_and_wals(&db, &[(10, 1, 2, 1), (30, 3, 1, 1)]);
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        for (snapshot_id, count) in [(2, 3), (4, 2)] {
+            for i in 0..count {
+                write_schema.write::<WalTable<TestSchema>>((
+                    Cow::Owned(WalKey {
+                        snapshot_id: SnapshotId(snapshot_id),
+                        modification_id: ModificationId(i),
+                        operation_specific_parts: WalKeySpecificPart::DiscardMeta,
+                    }),
+                    Some(Cow::Owned(WalValue::MetaValue {
+                        commit_id: H256::from_low_u64_be(i + 1),
+                        maybe_parent_cid: None,
+                        map_value_count: 0,
+                    })),
+                ));
+            }
+        }
+        db.commit(write_schema).unwrap();
+
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let kept = gc_until_height::<TestSchema, _>(&db, &write_schema, 35, 0).unwrap();
+        assert_eq!(kept, Some(30));
+        let mut deleted_wals = HashMap::new();
+        for (table, key, value) in write_schema.drain() {
+            if table == WalTable::<TestSchema>::NAME {
+                assert!(value.is_none());
+                let key = WalKey::<TestSchema>::decode_owned(key).unwrap();
+                *deleted_wals.entry(key.snapshot_id).or_insert(0) += 1;
+            }
+        }
+        assert_eq!(
+            deleted_wals,
+            HashMap::from([(SnapshotId(1), 2), (SnapshotId(2), 3)])
+        );
     }
 }

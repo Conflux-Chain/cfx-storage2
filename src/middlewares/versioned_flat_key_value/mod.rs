@@ -25,12 +25,14 @@ use std::sync::Arc;
 pub use history_indices::{BitmapValidationError, PushError};
 pub use manager_impl::SnapshotView;
 use nonempty::NonEmpty;
+#[cfg(test)]
+pub use pending_part::snapshot_heights;
 pub use pending_part::TreeWithTracker;
 pub use pending_part::{
     pending_schema::PendingKeyValueConfig, primitives_clear_pending_schema,
     primitives_gc_until_height, primitives_initialize_empty_schema, primitives_recover_schema,
     primitives_verify_no_newer_records, primitives_verify_schema_is_empty, BootstrapError,
-    PendingError, RecoveryError, SnapshotReadError, CHANGE_ROOTS_PER_SNAPSHOT,
+    DeferredSnapshot, PendingError, RecoveryError, SnapshotReadError, CHANGE_ROOTS_PER_SNAPSHOT,
 };
 
 #[cfg(any(test, fuzzing))]

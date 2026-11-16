@@ -1,17 +1,35 @@
 //! Garbage collection of the pending persistence layer running without any borrow
-//! of the storage, concurrently with commits and confirmations.
+//! of the storage, concurrently with commits and confirmations, and with the
+//! pending snapshots of those confirmations, written without any borrow too.
 
 use std::{
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
+    },
     thread,
 };
 
 use parking_lot::RwLock;
 
+use crate::lvmt::PendingSnapshot;
+
 use super::*;
 
 #[test]
 fn test_cleanup_concurrent_with_writes_then_recover() {
+    run_concurrent_with_writes_then_recover(false);
+}
+
+#[test]
+fn test_cleanup_and_snapshots_concurrent_with_writes_then_recover() {
+    run_concurrent_with_writes_then_recover(true);
+}
+
+/// Commits and confirmations under a write lock, with cleanups taken under a read
+/// lock and run outside it on another thread, and if `defer_snapshots`, the
+/// snapshots of the confirmations written outside the lock on a third thread.
+fn run_concurrent_with_writes_then_recover(defer_snapshots: bool) {
     let historical_db = Arc::new(WrappedInMemoryDb::<HistoricalTableName>::empty());
     let pending_db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
     let db = RwLock::new(LvmtStorage::new(historical_db.clone(), pending_db.clone()).unwrap());
@@ -20,6 +38,8 @@ fn test_cleanup_concurrent_with_writes_then_recover() {
     let num_keys = 40u64;
     let done = AtomicBool::new(false);
     let cleanups = AtomicUsize::new(0);
+    let snapshots = AtomicUsize::new(0);
+    let (snapshot_sender, snapshot_receiver) = mpsc::channel::<PendingSnapshot<_>>();
     let mut chain: Vec<CommitID> = vec![];
     let mut rng = get_rng_for_test();
     let mut previous = HashSet::new();
@@ -36,6 +56,12 @@ fn test_cleanup_concurrent_with_writes_then_recover() {
                     }
                     None => thread::yield_now(),
                 }
+            }
+        });
+        s.spawn(|| {
+            for snapshot in snapshot_receiver {
+                snapshot.run().unwrap();
+                snapshots.fetch_add(1, Ordering::Relaxed);
             }
         });
 
@@ -57,14 +83,32 @@ fn test_cleanup_concurrent_with_writes_then_recover() {
             chain.push(id);
             // Keep about 15 commits pending, confirming 5 at a time.
             if i >= 20 && i % 5 == 0 {
-                guard
-                    .confirmed_pending_to_history_with_height(i - 15, id)
-                    .unwrap();
+                if defer_snapshots {
+                    let snapshot = guard
+                        .confirmed_pending_to_history_with_height_deferring_snapshot(i - 15, id)
+                        .unwrap();
+                    drop(guard);
+                    if let Some(snapshot) = snapshot {
+                        snapshot_sender.send(snapshot).unwrap();
+                    }
+                } else {
+                    guard
+                        .confirmed_pending_to_history_with_height(i - 15, id)
+                        .unwrap();
+                }
             }
         }
+        drop(snapshot_sender);
         done.store(true, Ordering::Release);
     });
     assert!(cleanups.load(Ordering::Relaxed) > 0);
+    // 26 confirmations.
+    let expected_snapshots = if defer_snapshots {
+        26 / crate::middlewares::CHANGE_ROOTS_PER_SNAPSHOT as usize
+    } else {
+        0
+    };
+    assert_eq!(snapshots.load(Ordering::Relaxed), expected_snapshots);
 
     let db = db.into_inner();
     db.background_cleanup().unwrap();

@@ -20,7 +20,7 @@ pub mod tests;
 pub mod types;
 
 pub use checkpoint::ProofConfig;
-pub use example::{LvmtStorage, PendingCleanup};
+pub use example::{LvmtStorage, PendingCleanup, PendingSnapshot};
 pub use mmr::{MmrProof, EMPTY_HROOT};
 pub use proof::{
     verify_lvmt_proof, Anchor, AnchoredAmt, AnchoredKey, AuthChangeProof, LayerProof, LvmtProof,

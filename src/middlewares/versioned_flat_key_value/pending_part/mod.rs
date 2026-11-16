@@ -9,10 +9,12 @@ pub mod versioned_map;
 pub use error::PendingError;
 pub use versioned_map::VersionedMap;
 
+#[cfg(test)]
+pub use persistence::snapshot_heights;
 pub use persistence::{
     primitives_clear_pending_schema, primitives_gc_until_height,
     primitives_initialize_empty_schema, primitives_recover_schema,
     primitives_verify_no_newer_records, primitives_verify_schema_is_empty, BootstrapError,
-    RecoveryError, SnapshotReadError, CHANGE_ROOTS_PER_SNAPSHOT,
+    DeferredSnapshot, RecoveryError, SnapshotReadError, CHANGE_ROOTS_PER_SNAPSHOT,
 };
 pub use tree_with_tracker::TreeWithTracker;

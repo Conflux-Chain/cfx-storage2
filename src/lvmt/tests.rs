@@ -1345,24 +1345,22 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         // pending part
         let pending_write_schema = P::write_schema();
 
+        // A snapshot due is written only after the historical db is, so never here.
         let maybe_key_value_confirmed_path = self
             .key_value_cache
-            .change_root(new_root_commit_id, &pending_write_schema)?;
-        if let Some(key_value_confirmed_path) = maybe_key_value_confirmed_path {
-            let amt_node_confirmed_path = self
+            .change_root_deferring_snapshot(new_root_commit_id, &pending_write_schema)?;
+        if let Some((key_value_confirmed_path, _)) = maybe_key_value_confirmed_path {
+            let (amt_node_confirmed_path, _) = self
                 .amt_node_cache
-                .change_root(new_root_commit_id, &pending_write_schema)?
+                .change_root_deferring_snapshot(new_root_commit_id, &pending_write_schema)?
                 .expect("AMT node cache should have changed root if key-value cache did");
-            let slot_alloc_confirmed_path = self
+            let (slot_alloc_confirmed_path, _) = self
                 .slot_alloc_cache
-                .change_root(new_root_commit_id, &pending_write_schema)?
+                .change_root_deferring_snapshot(new_root_commit_id, &pending_write_schema)?
                 .expect("Slot alloc cache should have changed root if key-value cache did");
 
             assert!(key_value_confirmed_path.is_same_path(&amt_node_confirmed_path));
             assert!(key_value_confirmed_path.is_same_path(&slot_alloc_confirmed_path));
-
-            let start_height = key_value_confirmed_path.start_height;
-            let commit_ids = &key_value_confirmed_path.commit_ids;
 
             self.commit_to_pending_db(pending_write_schema)?;
 

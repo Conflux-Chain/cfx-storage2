@@ -8,6 +8,7 @@ use crate::traits::{IsCompleted, NeedNext};
 use crate::types::ValueEntry;
 
 use super::pending_schema::{ConfirmedPathInfo, KeyValueMap};
+use super::persistence::DeferredSnapshot;
 use super::tree_with_tracker::TreeWithTracker;
 use super::{
     current_map::CurrentMap,
@@ -218,18 +219,41 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
             .change_root::<P>(commit_id, write_schema)?;
 
         if confirm_path_info.is_some() {
-            // clear current is necessary
-            // because apply_commit_id in current.map may be removed from pending part
-
-            // Take a single write lock and do both operations under it
-            let mut guard = self.current.write();
-            self.clear_removed_current_with_guard(&mut guard);
-            if let Some(current) = guard.as_mut() {
-                current.update_rerooted(&self.tree_with_tracker.tree);
-            }
+            self.update_current_after_change_root();
         }
 
         Ok(confirm_path_info)
+    }
+
+    /// Like [`change_root`](Self::change_root), but if a new snapshot is due, returns
+    /// the copy of the tree to write as it instead of writing it, see
+    /// [`DeferredSnapshot`].
+    pub fn change_root_deferring_snapshot(
+        &mut self,
+        commit_id: S::CommitId,
+        write_schema: &P::WriteSchema,
+    ) -> PendResult<Option<(ConfirmedPathInfo<S>, Option<DeferredSnapshot<S>>)>> {
+        let res = self
+            .tree_with_tracker
+            .change_root_deferring_snapshot::<P>(commit_id, write_schema)?;
+
+        if res.is_some() {
+            self.update_current_after_change_root();
+        }
+
+        Ok(res)
+    }
+
+    fn update_current_after_change_root(&mut self) {
+        // clear current is necessary
+        // because apply_commit_id in current.map may be removed from pending part
+
+        // Take a single write lock and do both operations under it
+        let mut guard = self.current.write();
+        self.clear_removed_current_with_guard(&mut guard);
+        if let Some(current) = guard.as_mut() {
+            current.update_rerooted(&self.tree_with_tracker.tree);
+        }
     }
 
     #[cfg(any(test, fuzzing))]

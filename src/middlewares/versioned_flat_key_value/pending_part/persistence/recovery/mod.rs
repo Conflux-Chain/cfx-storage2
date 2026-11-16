@@ -119,8 +119,17 @@ pub mod primitives {
             )?;
 
         // Replay WAL records in a loop until the replayer signals to stop.
+        //
+        // A `change_root` that moves on to a new snapshot ID may leave the snapshot to be
+        // written later, or never (see `DeferredSnapshot`), while operations after it are
+        // logged under the new ID. So once the records of an ID run out right after a
+        // completed `change_root`, the replay goes on with the records of the next ID,
+        // if any. This does not depend on `CHANGE_ROOTS_PER_SNAPSHOT`, which may differ
+        // from the one the records were written with.
+        let mut snapshot_id = snapshot_id;
         let mut mod_id = 0;
         let mut change_roots_since_snapshot = 0;
+        let mut last_is_change_root = false;
         loop {
             let status = wal_player::replay_one_modification(
                 &*wal_view,
@@ -133,10 +142,23 @@ pub mod primitives {
                 // A standard operation was applied. Continue to the next modification.
                 wal_player::ReplayStatus::Applied => {
                     mod_id += 1;
+                    last_is_change_root = false;
                 }
-                // No more WAL records for this snapshot. Replay is cleanly finished.
+                // No more WAL records for this snapshot ID.
                 wal_player::ReplayStatus::NoMoreModifications => {
-                    break;
+                    // Only a `change_root` moves on to a new snapshot ID, and a snapshot
+                    // written for it would be at or below `height_of_root`, so it would be
+                    // the base. Records under the next ID otherwise belong to a newer,
+                    // invalid snapshot, deleted below.
+                    let next_snapshot_id = SnapshotId(snapshot_id.0 + 1);
+                    if !last_is_change_root || !has_wal_records(&*wal_view, next_snapshot_id)? {
+                        // Replay is cleanly finished.
+                        break;
+                    }
+                    snapshot_id = next_snapshot_id;
+                    mod_id = 0;
+                    change_roots_since_snapshot = 0;
+                    last_is_change_root = false;
                 }
                 wal_player::ReplayStatus::ChangeRootEncountered(new_root) => {
                     let Some(new_root_height) = tree.get_height_of_commit(&new_root) else {
@@ -152,6 +174,7 @@ pub mod primitives {
                         tree.change_root(new_root)?;
                         change_roots_since_snapshot += 1;
                         mod_id += 1;
+                        last_is_change_root = true;
                         continue;
                     }
 
@@ -192,7 +215,19 @@ pub mod primitives {
                         }
                     }
 
-                    // 3. Stop the replay loop. The `mod_id` is NOT incremented,
+                    // 3. Delete the WAL records under later snapshot IDs. They were
+                    // logged after this `change_root` moved on to a new snapshot ID,
+                    // which can be found here only if the historical db lost the
+                    // `change_root` after the pending db kept them. If the new snapshot
+                    // was written, it is deleted below as a newer, invalid snapshot.
+                    let later_seek_key =
+                        WalKey::seek_key_for_snapshot(SnapshotId(snapshot_id.0 + 1));
+                    for wal_item in wal_view.iter(&later_seek_key.key)? {
+                        let (wal_key_cow, _) = wal_item?;
+                        write_schema.write::<WalTable<S>>((wal_key_cow, None));
+                    }
+
+                    // 4. Stop the replay loop. The `mod_id` is NOT incremented,
                     // because this modification was rolled back.
                     break;
                 }
@@ -256,6 +291,18 @@ pub mod primitives {
         Ok(TreeWithTracker { tree, tracker })
     }
 
+    /// Whether the WAL holds any record under `snapshot_id`.
+    fn has_wal_records<S: PendingKeyValueSchema>(
+        wal_view: &impl TableRead<WalTable<S>>,
+        snapshot_id: SnapshotId,
+    ) -> Result<bool> {
+        let seek_key = WalKey::seek_key_for_snapshot(snapshot_id);
+        match wal_view.iter(&seek_key.key)?.next() {
+            Some(item) => Ok(item?.0.as_ref().snapshot_id == snapshot_id),
+            None => Ok(false),
+        }
+    }
+
     /// Verifies that no records newer than the recovery point exist in the database for a specific schema.
     ///
     /// The `recover_schema` function generates a `write_schema` containing operations to delete any
@@ -304,7 +351,8 @@ mod tests {
         DatabaseTrait, ModificationId, PendingTableName, PersistenceTracker, RecoverRecord,
         RecoveryError, SnapshotId, SnapshotKey, SnapshotKeyTreePart, SnapshotMapValue,
         SnapshotNodeDataType, SnapshotRecordType, SnapshotValue, StorageError, TableSchema,
-        ValueEntry, WalKey, WalKeySpecificPart, WalValue, WrappedInMemoryDb, WriteSchemaTrait,
+        TreeWithTracker, ValueEntry, WalKey, WalKeySpecificPart, WalValue, WrappedInMemoryDb,
+        WriteSchemaTrait,
     };
     use super::primitives::*;
     use crate::backends::serde::Decode;
@@ -756,6 +804,179 @@ mod tests {
         assert_eq!(
             deleted_wals,
             HashMap::from([(SnapshotId(6), 2), (SnapshotId(7), 3)])
+        );
+    }
+
+    // --------------------- deferred snapshots ---------------------
+
+    fn cid(i: u64) -> H256 {
+        H256::from_low_u64_be(i + 1)
+    }
+
+    /// Logs a chain of commits 0..`commits` on an empty schema, then `change_root`s to
+    /// heights 1..=`change_roots`, deferring the snapshots due and writing them iff
+    /// `write_snapshots`, then commits `commits_after` more. Each operation is committed
+    /// on its own. Returns the in-memory state.
+    fn log_with_deferred_snapshots(
+        db: &Arc<WrappedInMemoryDb<PendingTableName>>,
+        commits: u64,
+        change_roots: u64,
+        commits_after: u64,
+        write_snapshots: bool,
+    ) -> TreeWithTracker<TestSchema> {
+        type Db = WrappedInMemoryDb<PendingTableName>;
+        let write_schema = Db::write_schema();
+        let mut state =
+            super::super::primitives_initialize_empty_schema::<TestSchema>(&write_schema, None, 0);
+        db.commit(write_schema).unwrap();
+        let modifications = |i: u64| {
+            HashMap::from([(
+                k(&i.to_be_bytes()),
+                RecoverRecord {
+                    value: ValueEntry::Value(k(b"v")),
+                    last_commit_id: None,
+                },
+            )])
+        };
+        let add = |state: &mut TreeWithTracker<TestSchema>, i: u64| {
+            let write_schema = Db::write_schema();
+            if i == 0 {
+                state
+                    .add_root::<Db>(cid(0), modifications(0), &write_schema)
+                    .unwrap();
+            } else {
+                state
+                    .add_non_root_node::<Db>(cid(i), cid(i - 1), modifications(i), &write_schema)
+                    .unwrap();
+            }
+            db.commit(write_schema).unwrap();
+        };
+        for i in 0..commits {
+            add(&mut state, i);
+        }
+        for h in 1..=change_roots {
+            let write_schema = Db::write_schema();
+            let (_, snapshot) = state
+                .change_root_deferring_snapshot::<Db>(cid(h), &write_schema)
+                .unwrap()
+                .unwrap();
+            db.commit(write_schema).unwrap();
+            if let Some(snapshot) = snapshot.filter(|_| write_snapshots) {
+                assert_eq!(snapshot.height(), h);
+                let write_schema = Db::write_schema();
+                snapshot.write(&write_schema);
+                db.commit(write_schema).unwrap();
+            }
+        }
+        for i in commits..commits + commits_after {
+            add(&mut state, i);
+        }
+        state
+    }
+
+    /// Recovers at the root of `expected` and checks it is recovered exactly, with
+    /// nothing to delete, except for the tracker if `expected_tracker` is given.
+    fn assert_recovers_to(
+        db: &Arc<WrappedInMemoryDb<PendingTableName>>,
+        expected: &TreeWithTracker<TestSchema>,
+        expected_tracker: Option<PersistenceTracker>,
+    ) {
+        let expected_tracker = expected_tracker.as_ref().unwrap_or(&expected.tracker);
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let recovered = recover_schema::<TestSchema, _>(
+            db,
+            &write_schema,
+            expected.tree.get_parent_of_root(),
+            expected.tree.get_height_of_root(),
+        )
+        .unwrap();
+        assert_eq!(&recovered.tracker, expected_tracker);
+        assert_eq!(
+            recovered.tree.export_snapshot(),
+            expected.tree.export_snapshot()
+        );
+        assert!(write_schema.drain().is_empty());
+        verify_no_newer_records::<TestSchema, _>(
+            db,
+            expected.tree.get_height_of_root(),
+            &recovered.tracker,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_recover_replays_the_wal_of_a_snapshot_never_written() {
+        let n = crate::middlewares::CHANGE_ROOTS_PER_SNAPSHOT;
+        // The last change_root moves on to a new snapshot ID, then more commits are
+        // logged under it; or a few more change_roots are as well.
+        for (change_roots, commits_after) in [(n, 0), (n, 2), (n + 2, 2), (2 * n + 1, 1)] {
+            let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+            let state = log_with_deferred_snapshots(&db, 3 * n, change_roots, commits_after, false);
+            assert_eq!(state.tracker.snapshot_id, SnapshotId(change_roots / n));
+            // Nothing logged under the new snapshot ID yet: recovery cannot tell it was
+            // moved on to, and stays at the previous one, which the next change_root
+            // moves on from.
+            let expected_tracker = (commits_after == 0).then(|| PersistenceTracker {
+                snapshot_id: SnapshotId(0),
+                next_modification_id: ModificationId(3 * n + n),
+                change_roots_since_snapshot: n,
+            });
+            assert_recovers_to(&db, &state, expected_tracker);
+        }
+    }
+
+    #[test]
+    fn test_recover_from_a_deferred_snapshot_written() {
+        let n = crate::middlewares::CHANGE_ROOTS_PER_SNAPSHOT;
+        for (change_roots, commits_after) in [(n, 0), (n, 2), (n + 2, 2), (2 * n + 1, 1)] {
+            let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+            let state = log_with_deferred_snapshots(&db, 3 * n, change_roots, commits_after, true);
+            assert_recovers_to(&db, &state, None);
+        }
+    }
+
+    #[test]
+    fn test_recover_rolls_back_a_change_root_and_the_wal_after_it() {
+        // The pending db kept the change_root that moved on to a new snapshot ID, never
+        // written, and commits logged after it, but the historical db lost it.
+        let n = crate::middlewares::CHANGE_ROOTS_PER_SNAPSHOT;
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+        log_with_deferred_snapshots(&db, 3 * n, n, 2, false);
+        let expected = log_with_deferred_snapshots(
+            &Arc::new(WrappedInMemoryDb::<PendingTableName>::empty()),
+            3 * n,
+            n - 1,
+            0,
+            false,
+        );
+
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let recovered =
+            recover_schema::<TestSchema, _>(&db, &write_schema, Some(cid(n - 2)), n - 1).unwrap();
+        assert_eq!(recovered.tracker, expected.tracker);
+        assert_eq!(
+            recovered.tree.export_snapshot(),
+            expected.tree.export_snapshot()
+        );
+
+        // The change_root and the two commits after it are deleted.
+        let mut deleted_wals = HashMap::new();
+        for (table, key, value) in write_schema.drain() {
+            assert_eq!(table, WalTable::<TestSchema>::NAME);
+            assert!(value.is_none());
+            let key = WalKey::<TestSchema>::decode_owned(key).unwrap();
+            deleted_wals
+                .entry(key.snapshot_id)
+                .or_insert_with(Vec::new)
+                .push(key.modification_id);
+        }
+        deleted_wals.values_mut().for_each(|ids| ids.dedup());
+        assert_eq!(
+            deleted_wals,
+            HashMap::from([
+                (SnapshotId(0), vec![recovered.tracker.next_modification_id]),
+                (SnapshotId(1), vec![ModificationId(0), ModificationId(1)]),
+            ])
         );
     }
 

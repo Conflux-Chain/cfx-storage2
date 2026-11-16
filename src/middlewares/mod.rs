@@ -20,11 +20,14 @@ pub use versioned_flat_key_value::{
     confirm_ids_to_history, confirm_maps_to_history, primitives_clear_pending_schema,
     primitives_gc_until_height, primitives_initialize_empty_schema, primitives_recover_schema,
     primitives_verify_no_newer_records, primitives_verify_schema_is_empty, table_schema,
-    BitmapValidationError, BootstrapError, HistoryIndexKey, PendingError, PendingKeyValueConfig,
-    PushError, RecoveryError, SnapshotReadError, SnapshotView, TreeWithTracker, VersionedStore,
-    VersionedStoreCache, VersionedStoreReader, CHANGE_ROOTS_PER_SNAPSHOT,
+    BitmapValidationError, BootstrapError, DeferredSnapshot, HistoryIndexKey, PendingError,
+    PendingKeyValueConfig, PushError, RecoveryError, SnapshotReadError, SnapshotView,
+    TreeWithTracker, VersionedStore, VersionedStoreCache, VersionedStoreReader,
+    CHANGE_ROOTS_PER_SNAPSHOT,
 };
 
+#[cfg(test)]
+pub use versioned_flat_key_value::snapshot_heights;
 #[cfg(any(test, fuzzing))]
 pub use versioned_flat_key_value::{
     clear_dir, clear_dir_then_create, gen_random_commit_id, gen_updates, get_rng_for_test,

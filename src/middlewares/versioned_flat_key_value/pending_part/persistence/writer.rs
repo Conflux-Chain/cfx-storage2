@@ -6,12 +6,12 @@
 
 use std::borrow::Cow;
 
-use crate::middlewares::versioned_flat_key_value::pending_part::tree::Tree;
+use crate::middlewares::versioned_flat_key_value::pending_part::tree::{Tree, TreeSnapshot};
 
 use super::{
-    format::{WalKey, WalKeySpecificPart, WalTable, WalValue},
-    write_tree_snapshot, PendingKeyValueSchema, PersistenceTracker, RecoverMap, WriteSchemaTrait,
-    CHANGE_ROOTS_PER_SNAPSHOT,
+    format::{SnapshotId, WalKey, WalKeySpecificPart, WalTable, WalValue},
+    write_exported_snapshot, PendingKeyValueSchema, PersistenceTracker, RecoverMap,
+    WriteSchemaTrait, CHANGE_ROOTS_PER_SNAPSHOT,
 };
 
 /// Logs the addition of a new root node to the WAL.
@@ -63,6 +63,23 @@ pub fn log_change_root<S: PendingKeyValueSchema>(
     new_root_cid: S::CommitId,
     tree: &Tree<S>,
 ) {
+    if let Some(snapshot) =
+        log_change_root_deferring_snapshot(write_schema, tracker, new_root_cid, tree)
+    {
+        snapshot.write(write_schema);
+    }
+}
+
+/// Like [`log_change_root`], but instead of writing the new snapshot, returns a copy
+/// of the tree to write as that snapshot later, see [`DeferredSnapshot`].
+///
+/// **IMPORTANT**: The parameter `tree` should be obtained after executing this change_root operation.
+pub fn log_change_root_deferring_snapshot<S: PendingKeyValueSchema>(
+    write_schema: &impl WriteSchemaTrait<super::PendingTableName>,
+    tracker: &mut PersistenceTracker,
+    new_root_cid: S::CommitId,
+    tree: &Tree<S>,
+) -> Option<DeferredSnapshot<S>> {
     // Step 1: Log the `change_root` action to the WAL using the generalized helper.
     log_single_record_operation(
         write_schema,
@@ -73,14 +90,44 @@ pub fn log_change_root<S: PendingKeyValueSchema>(
 
     if tracker.change_roots_since_snapshot + 1 < CHANGE_ROOTS_PER_SNAPSHOT {
         tracker.change_roots_since_snapshot += 1;
-        return;
+        return None;
     }
 
     // Step 2: Advance the tracker to a new snapshot state.
     tracker.advance_to_next_snapshot();
 
-    // Step 3: Write the new snapshot record to the database.
-    write_tree_snapshot(tree, tracker.snapshot_id, write_schema);
+    // Step 3: Copy the tree, to write as the new snapshot.
+    Some(DeferredSnapshot {
+        snapshot_id: tracker.snapshot_id,
+        snapshot: tree.export_snapshot(),
+    })
+}
+
+/// A copy of the tree taken by a `change_root`, to write as the snapshot that the
+/// operations logged after it are relative to.
+///
+/// It may be written in a later commit than the `change_root`, or never. Until it
+/// is, recovery starts from the previous snapshot and replays the WAL records of
+/// both snapshot IDs, and the cleanup of old snapshots keeps the previous snapshot.
+/// But it must be written only once the `change_root` is committed to both the
+/// pending and the historical db: a snapshot above the height of the historical
+/// part is taken by recovery as left by an incomplete `change_root`, and deleted
+/// along with the WAL records logged after it.
+pub struct DeferredSnapshot<S: PendingKeyValueSchema> {
+    snapshot_id: SnapshotId,
+    snapshot: TreeSnapshot<S>,
+}
+
+impl<S: PendingKeyValueSchema> DeferredSnapshot<S> {
+    /// The height of the pending root in the snapshot.
+    pub fn height(&self) -> u64 {
+        self.snapshot.height_of_root
+    }
+
+    /// Adds the snapshot to `write_schema`. Does not commit.
+    pub fn write(self, write_schema: &impl WriteSchemaTrait<super::PendingTableName>) {
+        write_exported_snapshot(self.snapshot, self.snapshot_id, write_schema);
+    }
 }
 
 /// Logs a `make_pivot` operation to the WAL.

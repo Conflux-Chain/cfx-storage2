@@ -9,6 +9,8 @@ use std::{
     },
 };
 
+use parking_lot::Mutex;
+
 use crate::{
     backends::{
         impls::kvdb_rocksdb::WrappedRocksDb, DatabaseTrait, HistoricalTableName, PendingTableName,
@@ -20,8 +22,8 @@ use crate::{
         history_number_to_height, primitives_clear_pending_schema, primitives_gc_until_height,
         primitives_initialize_empty_schema, primitives_recover_schema,
         primitives_verify_no_newer_records, primitives_verify_schema_is_empty, CommitID,
-        HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig, TreeWithTracker,
-        VersionedStore, VersionedStoreCache, VersionedStoreReader,
+        DeferredSnapshot, HistoryNumberSchema, KeyValueStoreBulks, PendingKeyValueConfig,
+        TreeWithTracker, VersionedStore, VersionedStoreCache, VersionedStoreReader,
     },
     StorageError,
 };
@@ -47,6 +49,10 @@ pub struct LvmtStorage<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<P
     /// Shared with the [`PendingCleanup`]s it hands out, which may outlive a borrow
     /// of the storage.
     last_gc_height: Arc<AtomicU64>,
+
+    /// Shared with the [`PendingSnapshot`]s it hands out: the height of the latest
+    /// pending snapshot they wrote, held while one is written.
+    snapshot_written_height: Arc<Mutex<u64>>,
 
     proof_config: ProofConfig,
 }
@@ -228,6 +234,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             amt_node_cache,
             slot_alloc_cache,
             last_gc_height: Arc::new(AtomicU64::new(0)),
+            snapshot_written_height: Arc::new(Mutex::new(0)),
             proof_config: ProofConfig::default(),
         })
     }
@@ -336,6 +343,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             amt_node_cache,
             slot_alloc_cache,
             last_gc_height: Arc::new(AtomicU64::new(0)),
+            snapshot_written_height: Arc::new(Mutex::new(0)),
             proof_config: ProofConfig::default(),
         })
     }
@@ -426,7 +434,8 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
     /// their WAL records, which no operation reads or writes: those records are only
     /// read by recovery, which starts from the latest snapshot at or below the
     /// height of the pending root (at least `durable_height`, and it only grows),
-    /// and new records are always written under the latest snapshot.
+    /// and new records are always written under the latest snapshot ID, whose
+    /// snapshot may not be written yet (see [`PendingSnapshot`]).
     pub fn pending_cleanup(&self) -> Result<Option<PendingCleanup<P>>> {
         let durable_height = self.get_durable_height()?;
         let from_height = self.last_gc_height.load(Ordering::Acquire);
@@ -632,6 +641,27 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         self.confirmed_pending_to_history_with_commit_id_inner(new_root_commit_id)
     }
 
+    /// Like [`confirmed_pending_to_history_with_height`](Self::confirmed_pending_to_history_with_height),
+    /// but if the pending part is due for a new snapshot, does not write it: it
+    /// returns it as a task to run after releasing any lock held around the storage.
+    ///
+    /// A snapshot of the pending part is written once every
+    /// [`CHANGE_ROOTS_PER_SNAPSHOT`](crate::middlewares::CHANGE_ROOTS_PER_SNAPSHOT)
+    /// confirmations, and costs time linear in the whole pending part. This keeps
+    /// only copying the pending part in memory under the borrow, and leaves encoding
+    /// and writing the copy to [`PendingSnapshot::run`].
+    pub fn confirmed_pending_to_history_with_height_deferring_snapshot(
+        &mut self,
+        new_root_height: u64,
+        pivot_commit_id: CommitID,
+    ) -> Result<Option<PendingSnapshot<P>>> {
+        let new_root_commit_id = self
+            .key_value_cache
+            .get_ancestor_commit_at_height(new_root_height, pivot_commit_id)?;
+
+        self.confirm_deferring_snapshot(new_root_commit_id)
+    }
+
     /// Promotes the given `new_root_commit_id` to be the new root of the pending component.
     ///
     /// This process involves two main steps:
@@ -651,6 +681,18 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         &mut self,
         new_root_commit_id: CommitID,
     ) -> Result<()> {
+        match self.confirm_deferring_snapshot(new_root_commit_id)? {
+            Some(snapshot) => snapshot.run(),
+            None => Ok(()),
+        }
+    }
+
+    /// [`confirmed_pending_to_history_with_commit_id_inner`](Self::confirmed_pending_to_history_with_commit_id_inner),
+    /// returning the pending snapshot due instead of writing it.
+    fn confirm_deferring_snapshot(
+        &mut self,
+        new_root_commit_id: CommitID,
+    ) -> Result<Option<PendingSnapshot<P>>> {
         // Root leaf versions at the latest historical commit, if the path to confirm
         // reaches a checkpoint height. Read before the pending root moves, while the
         // latest historical commit still takes the fast lookup path.
@@ -663,19 +705,35 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 
         let maybe_key_value_confirmed_path = self
             .key_value_cache
-            .change_root(new_root_commit_id, &pending_write_schema)?;
-        if let Some(key_value_confirmed_path) = maybe_key_value_confirmed_path {
-            let amt_node_confirmed_path = self
+            .change_root_deferring_snapshot(new_root_commit_id, &pending_write_schema)?;
+        let mut snapshot = None;
+        if let Some((key_value_confirmed_path, key_value_snapshot)) = maybe_key_value_confirmed_path
+        {
+            let (amt_node_confirmed_path, amt_node_snapshot) = self
                 .amt_node_cache
-                .change_root(new_root_commit_id, &pending_write_schema)?
+                .change_root_deferring_snapshot(new_root_commit_id, &pending_write_schema)?
                 .expect("AMT node cache should have changed root if key-value cache did");
-            let slot_alloc_confirmed_path = self
+            let (slot_alloc_confirmed_path, slot_alloc_snapshot) = self
                 .slot_alloc_cache
-                .change_root(new_root_commit_id, &pending_write_schema)?
+                .change_root_deferring_snapshot(new_root_commit_id, &pending_write_schema)?
                 .expect("Slot alloc cache should have changed root if key-value cache did");
 
             assert!(key_value_confirmed_path.is_same_path(&amt_node_confirmed_path));
             assert!(key_value_confirmed_path.is_same_path(&slot_alloc_confirmed_path));
+
+            if key_value_snapshot.is_some()
+                || amt_node_snapshot.is_some()
+                || slot_alloc_snapshot.is_some()
+            {
+                snapshot = Some(PendingSnapshot {
+                    pending_db: self.pending_db.clone(),
+                    height: key_value_confirmed_path.get_new_height_of_root(),
+                    key_value: key_value_snapshot,
+                    amt_node: amt_node_snapshot,
+                    slot_alloc: slot_alloc_snapshot,
+                    written_height: self.snapshot_written_height.clone(),
+                });
+            }
 
             // Commits on forks dropped by the root change.
             let kept: HashSet<_> = self
@@ -738,6 +796,57 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             self.commit_to_historical_db(historical_write_schema)?;
         } // else: nothing is changed and no records are in pending_write_schema, so skip directly
 
+        // Only now that the root change is committed to both dbs may its snapshot be
+        // written, see [`DeferredSnapshot`].
+        Ok(snapshot)
+    }
+}
+
+/// A snapshot of the pending part due after a confirmation, detached from the
+/// storage. See
+/// [`LvmtStorage::confirmed_pending_to_history_with_height_deferring_snapshot`].
+///
+/// Until it is written, operations on the storage are logged relative to it all
+/// the same: recovery then starts from the previous snapshot and replays the WAL
+/// records logged since, and the cleanup of old snapshots keeps the previous one.
+/// So it may run at any time, concurrently with any operation on the storage, or
+/// never; the cost of not running it is a longer recovery and more records kept,
+/// until a later snapshot is written.
+pub struct PendingSnapshot<P: DatabaseTrait<PendingTableName>> {
+    pending_db: Arc<P>,
+    /// The height of the pending root in the snapshot.
+    height: u64,
+    key_value: Option<DeferredSnapshot<PendingKeyValueConfig<FlatKeyValue, CommitID>>>,
+    amt_node: Option<DeferredSnapshot<PendingKeyValueConfig<AmtNodes, CommitID>>>,
+    slot_alloc: Option<DeferredSnapshot<PendingKeyValueConfig<SlotAllocations, CommitID>>>,
+    written_height: Arc<Mutex<u64>>,
+}
+
+impl<P: DatabaseTrait<PendingTableName>> PendingSnapshot<P> {
+    /// Writes the snapshot to the pending db in one atomic commit.
+    ///
+    /// Does nothing if a later snapshot was already written: the cleanup of old
+    /// snapshots may already have passed this height and deleted the WAL records
+    /// relative to it, so it would never be read nor deleted. Snapshots are written
+    /// one at a time to keep this check valid.
+    pub fn run(self) -> Result<()> {
+        let mut written_height = self.written_height.lock();
+        if *written_height >= self.height {
+            return Ok(());
+        }
+        // All three schemas share one write schema, committed atomically.
+        let write_schema = P::write_schema();
+        if let Some(snapshot) = self.key_value {
+            snapshot.write(&write_schema);
+        }
+        if let Some(snapshot) = self.amt_node {
+            snapshot.write(&write_schema);
+        }
+        if let Some(snapshot) = self.slot_alloc {
+            snapshot.write(&write_schema);
+        }
+        self.pending_db.commit(write_schema)?;
+        *written_height = self.height;
         Ok(())
     }
 }

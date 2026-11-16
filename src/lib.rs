@@ -28,6 +28,6 @@ pub use lvmt::{
     types::{AuthChangeKey, AuthChangeNode, CurvePointWithVersion},
     verify_lvmt_proof, Anchor, AnchoredAmt, AnchoredKey, AuthChangeProof, LayerProof, LvmtProof,
     LvmtProofError, LvmtSnapshot, LvmtStorage, LvmtStore, LvmtStoreReader, LvmtValue, MmrProof,
-    PendingCleanup, PreparedCommit, ProofConfig, StateRoot, StateRootParts, EMPTY_AUTH_CHANGE_ROOT,
-    EMPTY_HROOT,
+    PendingCleanup, PendingSnapshot, PreparedCommit, ProofConfig, StateRoot, StateRootParts,
+    EMPTY_AUTH_CHANGE_ROOT, EMPTY_HROOT,
 };

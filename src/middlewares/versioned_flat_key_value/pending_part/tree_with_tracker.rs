@@ -2,7 +2,8 @@ use crate::backends::{DatabaseTrait, PendingTableName};
 
 use super::pending_schema::ConfirmedPathInfo;
 use super::persistence::{
-    log_add_non_root_node, log_add_root, log_change_root, log_discard, log_make_pivot,
+    log_add_non_root_node, log_add_root, log_change_root, log_change_root_deferring_snapshot,
+    log_discard, log_make_pivot, DeferredSnapshot,
 };
 use super::{
     pending_schema::{PendingKeyValueSchema, RecoverMap, Result as PendResult},
@@ -71,6 +72,26 @@ impl<S: PendingKeyValueSchema> TreeWithTracker<S> {
         } else {
             Ok(None)
         }
+    }
+
+    /// Like [`change_root`](Self::change_root), but if the tracker moves on to a new
+    /// snapshot, returns the copy of the tree to write as that snapshot instead of
+    /// writing it, see [`DeferredSnapshot`].
+    pub fn change_root_deferring_snapshot<P: DatabaseTrait<PendingTableName>>(
+        &mut self,
+        commit_id: S::CommitId,
+        write_schema: &P::WriteSchema,
+    ) -> PendResult<Option<(ConfirmedPathInfo<S>, Option<DeferredSnapshot<S>>)>> {
+        let Some(confirmed_path_info) = self.tree.change_root(commit_id)? else {
+            return Ok(None);
+        };
+        let snapshot = log_change_root_deferring_snapshot::<S>(
+            write_schema,
+            &mut self.tracker,
+            commit_id,
+            &self.tree,
+        );
+        Ok(Some((confirmed_path_info, snapshot)))
     }
 
     #[cfg(any(test, fuzzing))]
