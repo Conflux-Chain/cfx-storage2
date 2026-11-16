@@ -352,6 +352,16 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
         }
     }
 
+    /// Writes a snapshot of the tree to `db`, a database used only for this, and
+    /// times each step. The tree and the persisted state are not changed.
+    #[cfg(test)]
+    pub fn time_snapshot<Q: DatabaseTrait<PendingTableName>>(
+        &self,
+        db: &Q,
+    ) -> crate::errors::Result<super::persistence::SnapshotTiming> {
+        super::persistence::time_tree_snapshot(&self.tree_with_tracker.tree, db)
+    }
+
     // alternative method of self.get_versioned_key(),
     // but it invokes self.checkout_current(),
     // thus is only suitable for frequent commit_id

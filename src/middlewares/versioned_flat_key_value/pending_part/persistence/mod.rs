@@ -111,11 +111,20 @@ fn write_tree_snapshot<S: PendingKeyValueSchema>(
     snapshot_id: SnapshotId,
     write_schema: &impl WriteSchemaTrait<PendingTableName>,
 ) {
+    write_exported_snapshot(tree.export_snapshot(), snapshot_id, write_schema);
+}
+
+/// Writes a snapshot already exported from a tree, see [`write_tree_snapshot`].
+fn write_exported_snapshot<S: PendingKeyValueSchema>(
+    snapshot: TreeSnapshot<S>,
+    snapshot_id: SnapshotId,
+    write_schema: &impl WriteSchemaTrait<PendingTableName>,
+) {
     let TreeSnapshot {
         parent_of_root,
         height_of_root: snapshot_root_height,
         nodes,
-    } = tree.export_snapshot();
+    } = snapshot;
 
     // Emit meta record first.
     let meta_key = SnapshotKey::<S> {
@@ -173,4 +182,51 @@ fn write_tree_snapshot<S: PendingKeyValueSchema>(
     let snapshot_op_iter = meta_op.chain(map_iter);
 
     write_schema.write_batch::<SnapshotsTable<S>>(snapshot_op_iter);
+}
+
+/// Wall-clock time of each step of writing a snapshot of a tree, see
+/// [`time_tree_snapshot`].
+#[cfg(test)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SnapshotTiming {
+    /// Copying the tree out of memory.
+    pub export: std::time::Duration,
+    /// Encoding the copy into a write batch.
+    pub encode: std::time::Duration,
+    /// Committing that batch to the database.
+    pub commit: std::time::Duration,
+    /// Number of key-value records in the copy, over all nodes.
+    pub records: usize,
+}
+
+/// Writes a snapshot of `tree` to `db`, a database used only for this, and times
+/// each step. For benches deciding which steps of a snapshot could leave the lock
+/// held during a root change.
+#[cfg(test)]
+pub(super) fn time_tree_snapshot<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>>(
+    tree: &Tree<S>,
+    db: &P,
+) -> Result<SnapshotTiming> {
+    use std::time::Instant;
+
+    let start = Instant::now();
+    let snapshot = tree.export_snapshot();
+    let export = start.elapsed();
+    let records = snapshot.nodes.iter().map(|n| n.modifications.len()).sum();
+
+    let start = Instant::now();
+    let write_schema = P::write_schema();
+    write_exported_snapshot(snapshot, SnapshotId(0), &write_schema);
+    let encode = start.elapsed();
+
+    let start = Instant::now();
+    db.commit(write_schema)?;
+    let commit = start.elapsed();
+
+    Ok(SnapshotTiming {
+        export,
+        encode,
+        commit,
+        records,
+    })
 }
