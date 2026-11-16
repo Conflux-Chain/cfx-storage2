@@ -1,11 +1,14 @@
 //! Cost of a confirmation (`confirmed_pending_to_history_with_height`) and of the
 //! cleanup after it, for a fixed number of confirmed commits and a varying number
-//! of commits left pending. Not run by default:
+//! of commits left pending, over enough confirmations to cover two snapshots of
+//! the pending part. Not run by default:
 //!
 //! ```text
 //! BENCH_DIR=/some/dir cargo test -r --lib bench_migration -- --ignored --nocapture
 //! ```
 use std::time::Instant;
+
+use crate::middlewares::CHANGE_ROOTS_PER_SNAPSHOT;
 
 use super::*;
 
@@ -14,6 +17,8 @@ use super::*;
 fn bench_migration() {
     let dir = std::env::var("BENCH_DIR").expect("set BENCH_DIR");
     let confirm = 200u64;
+    // Enough confirmations to cover two snapshots.
+    let rounds = 2 * CHANGE_ROOTS_PER_SNAPSHOT + 2;
     for remaining in [200u64, 1000, 2000, 4000] {
         let historical_path = format!("{dir}/historical");
         let pending_path = format!("{dir}/pending");
@@ -33,9 +38,9 @@ fn bench_migration() {
         let mut next_key = 1_000_000u64;
         let hot = u64_to_boxed_u8(1);
         let mut timings = vec![];
-        // Three confirmations of `confirm` commits each, with `remaining` commits
+        // `rounds` confirmations of `confirm` commits each, with `remaining` commits
         // left pending after each; the first one is a warm-up.
-        for round in 1..=3u64 {
+        for round in 1..=rounds {
             while (chain.len() as u64) < round * confirm + remaining {
                 let mut changes: Vec<(Box<[u8]>, Option<Box<[u8]>>)> =
                     vec![(hot.clone(), Some(u64_to_boxed_u8(chain.len() as u64)))];
@@ -62,11 +67,16 @@ fn bench_migration() {
                 timings.push((migrate, cleanup));
             }
         }
-        let s = timings
-            .iter()
-            .map(|(m, c)| format!("migrate {m:.0} ms, cleanup {c:.0} ms"))
-            .collect::<Vec<_>>()
-            .join(" | ");
-        eprintln!("confirm {confirm}, remaining {remaining}: {s}");
+        let stats = |f: fn(&(f64, f64)) -> f64| {
+            let values: Vec<f64> = timings.iter().map(f).collect();
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let max = values.iter().cloned().fold(0.0, f64::max);
+            format!("mean {mean:.0} ms, max {max:.0} ms")
+        };
+        let s = format!("migrate {} | cleanup {}", stats(|t| t.0), stats(|t| t.1));
+        eprintln!(
+            "confirm {confirm}, remaining {remaining}, {} confirmations: {s}",
+            timings.len()
+        );
     }
 }
