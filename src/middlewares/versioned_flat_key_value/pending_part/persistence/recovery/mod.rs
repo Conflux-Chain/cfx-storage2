@@ -218,7 +218,7 @@ pub mod primitives {
                                 delete_wal_by_snapshot_id::<S, P>(
                                     &wal_view,
                                     write_schema,
-                                    snapshot_id,
+                                    *invalid_snapshot_id,
                                 )?;
                             }
 
@@ -292,6 +292,7 @@ mod tests {
         ValueEntry, WalKey, WalKeySpecificPart, WalValue, WrappedInMemoryDb, WriteSchemaTrait,
     };
     use super::primitives::*;
+    use crate::backends::serde::Decode;
     use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
     // --------------------- recover_schema ---------------------
@@ -714,6 +715,32 @@ mod tests {
         );
         // The invalid snapshot had one associated WAL record. It should be deleted.
         assert_eq!(deleted_wals, 1, "Should delete 1 invalid WAL record");
+    }
+
+    #[test]
+    fn test_recover_cleans_up_the_wal_of_every_newer_snapshot() {
+        // A valid (empty) snapshot at the recovery height and two newer, invalid
+        // ones. Format: (height, snapshot_id, num_wal_records, num_node_records).
+        let db = Arc::new(WrappedInMemoryDb::<PendingTableName>::empty());
+        setup_db_with_snapshots_and_wals(&db, &[(10, 5, 0, 0), (20, 6, 2, 1), (30, 7, 3, 1)]);
+
+        let write_schema = WrappedInMemoryDb::<PendingTableName>::write_schema();
+        let result = recover_schema::<TestSchema, _>(&db, &write_schema, None, 10).unwrap();
+        assert_eq!(result.tracker.snapshot_id, SnapshotId(5));
+
+        // Each invalid snapshot's WAL records are deleted, and only those.
+        let mut deleted_wals = HashMap::new();
+        for (table, key, value) in write_schema.drain() {
+            if table == WalTable::<TestSchema>::NAME {
+                assert!(value.is_none());
+                let key = WalKey::<TestSchema>::decode_owned(key).unwrap();
+                *deleted_wals.entry(key.snapshot_id).or_insert(0) += 1;
+            }
+        }
+        assert_eq!(
+            deleted_wals,
+            HashMap::from([(SnapshotId(6), 2), (SnapshotId(7), 3)])
+        );
     }
 
     // --------------------- verify_no_newer_records ---------------------
