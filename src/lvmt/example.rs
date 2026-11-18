@@ -693,6 +693,7 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
         &mut self,
         new_root_commit_id: CommitID,
     ) -> Result<Option<PendingSnapshot<P>>> {
+        let started = std::time::Instant::now();
         // Root leaf versions at the latest historical commit, if the path to confirm
         // reaches a checkpoint height. Read before the pending root moves, while the
         // latest historical commit still takes the fast lookup path.
@@ -720,6 +721,14 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
 
             assert!(key_value_confirmed_path.is_same_path(&amt_node_confirmed_path));
             assert!(key_value_confirmed_path.is_same_path(&slot_alloc_confirmed_path));
+
+            // Entries the confirmed commits hold in each table, written to history
+            // below. For an experiment only.
+            let entries = [
+                key_value_confirmed_path.key_value_maps.iter().map(|m| m.len()).sum::<usize>(),
+                amt_node_confirmed_path.key_value_maps.iter().map(|m| m.len()).sum::<usize>(),
+                slot_alloc_confirmed_path.key_value_maps.iter().map(|m| m.len()).sum::<usize>(),
+            ];
 
             if key_value_snapshot.is_some()
                 || amt_node_snapshot.is_some()
@@ -794,6 +803,17 @@ impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> 
             )?;
 
             self.commit_to_historical_db(historical_write_schema)?;
+
+            log::info!(
+                "STORAGE2_MIGRATION commits {} key_value {} amt_nodes {} slot_allocations {} \
+                 snapshot_due {} us {}",
+                commit_ids.len(),
+                entries[0],
+                entries[1],
+                entries[2],
+                snapshot.is_some(),
+                started.elapsed().as_micros(),
+            );
         } // else: nothing is changed and no records are in pending_write_schema, so skip directly
 
         // Only now that the root change is committed to both dbs may its snapshot be
