@@ -31,6 +31,8 @@ pub const TEST_LEVEL: usize = 16;
 #[cfg(test)]
 mod bench_migration;
 #[cfg(test)]
+mod bench_migration_keys;
+#[cfg(test)]
 mod bench_pending_reads;
 #[cfg(test)]
 mod bench_proof_reads;
