@@ -189,6 +189,12 @@ impl<S: PendingKeyValueSchema> Tree<S> {
         }
     }
 
+    /// The number of keys modified by the commit `commit_id`, for benches.
+    #[cfg(test)]
+    pub fn modification_count(&self, commit_id: S::CommitId) -> PendResult<usize> {
+        Ok(self.get_node_by_commit_id(commit_id)?.get_modifications().len())
+    }
+
     /// This function discards the siblings of the node at `commit_id`.
     /// If there is at least one node discarded, return `Ok(true)`; otherwise, return `Ok(false)`.
     pub(super) fn discard_inner(&mut self, commit_id: S::CommitId) -> PendResult<bool> {

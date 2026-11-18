@@ -316,6 +316,12 @@ impl<S: PendingKeyValueSchema, P: DatabaseTrait<PendingTableName>> VersionedMap<
             .iter_historical_changes(&mut accept, commit_id, key)
     }
 
+    /// See [`super::tree::Tree::modification_count`].
+    #[cfg(test)]
+    pub fn modification_count(&self, commit_id: S::CommitId) -> PendResult<usize> {
+        self.tree_with_tracker.tree.modification_count(commit_id)
+    }
+
     /// See [`super::tree::Tree::get_path_changes`].
     pub fn get_path_changes(
         &self,
