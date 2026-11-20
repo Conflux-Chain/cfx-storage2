@@ -14,6 +14,7 @@
 //! every 100 commits are confirmed, keeping the last 10 pending. `N` is the
 //! latest historical commit. `BENCH_BUDGET` is `max_chunk_bytes` (262144).
 //! The database is kept; `BENCH_REUSE` opens it instead of building it.
+//! `BENCH_SKIP_LOAD` stops after `prepare_snapshot`.
 
 use std::time::Instant;
 
@@ -34,15 +35,33 @@ fn mb(bytes: u64) -> String {
     }
 }
 
-/// Peak resident memory of this process, from `/proc/self/status`.
-fn peak_rss() -> u64 {
+/// Resident memory of this process, from `/proc/self/status`.
+fn rss() -> u64 {
     let status = std::fs::read_to_string("/proc/self/status").unwrap();
-    let line = status.lines().find(|l| l.starts_with("VmHWM:")).unwrap();
+    let line = status.lines().find(|l| l.starts_with("VmRSS:")).unwrap();
     line.split_whitespace().nth(1).unwrap().parse::<u64>().unwrap() * 1024
 }
 
-fn reset_peak_rss() {
-    std::fs::write("/proc/self/clear_refs", "5").unwrap();
+/// Runs `f` while sampling the resident memory every 100 ms; returns its result
+/// and the highest sample.
+fn with_peak_rss<T>(f: impl FnOnce() -> T) -> (T, u64) {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    let done = Arc::new(AtomicBool::new(false));
+    let peak = Arc::new(AtomicU64::new(rss()));
+    let sampler = {
+        let (done, peak) = (done.clone(), peak.clone());
+        std::thread::spawn(move || {
+            while !done.load(Ordering::Relaxed) {
+                peak.fetch_max(rss(), Ordering::Relaxed);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        })
+    };
+    let result = f();
+    peak.fetch_max(rss(), Ordering::Relaxed);
+    done.store(true, Ordering::Relaxed);
+    sampler.join().unwrap();
+    (result, peak.load(Ordering::Relaxed))
 }
 
 fn report_sizes(name: &str, mut sizes: Vec<u64>, budget: u64) {
@@ -156,15 +175,15 @@ fn bench_snapshot_export() {
         mb(budget as u64)
     );
 
-    reset_peak_rss();
-    let rss_before = peak_rss();
+    let rss_before = rss();
     let t = Instant::now();
-    let export = reader.prepare_snapshot(n, budget).unwrap();
+    let (export, peak) = with_peak_rss(|| reader.prepare_snapshot(n, budget).unwrap());
     eprintln!(
-        "prepare_snapshot: {:.1} s, peak RSS {} (from {} before)",
+        "prepare_snapshot: {:.1} s; RSS {} before, peak {} during, {} after (export kept)",
         t.elapsed().as_secs_f64(),
-        mb(peak_rss()),
-        mb(rss_before)
+        mb(rss_before),
+        mb(peak),
+        mb(rss())
     );
     let manifest: &Manifest = export.manifest();
     let manifest_bytes = export.manifest_bytes(usize::MAX).unwrap();
@@ -176,6 +195,9 @@ fn bench_snapshot_export() {
         manifest.chunks.len()
     );
 
+    if std::env::var("BENCH_SKIP_LOAD").is_ok() {
+        return;
+    }
     let t = Instant::now();
     let (mut anchor_sizes, mut data_sizes) = (vec![], vec![]);
     let (mut anchor_time, mut data_time) = (0f64, 0f64);
@@ -195,11 +217,11 @@ fn bench_snapshot_export() {
         }
     }
     eprintln!(
-        "load every chunk: {:.1} s (anchor {:.1} s, data {:.1} s), peak RSS {}",
+        "load every chunk: {:.1} s (anchor {:.1} s, data {:.1} s), RSS {}",
         t.elapsed().as_secs_f64(),
         anchor_time,
         data_time,
-        mb(peak_rss())
+        mb(rss())
     );
     report_sizes("anchor", anchor_sizes, budget as u64);
     report_sizes("data", data_sizes, budget as u64);
