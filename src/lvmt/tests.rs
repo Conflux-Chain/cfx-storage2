@@ -41,6 +41,8 @@ mod bench_recovery;
 #[cfg(test)]
 mod bench_snapshot_phases;
 #[cfg(test)]
+mod bench_snapshot_anchors;
+#[cfg(test)]
 mod cleanup;
 #[cfg(test)]
 mod proofs;
