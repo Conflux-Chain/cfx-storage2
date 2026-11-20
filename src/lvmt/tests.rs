@@ -43,6 +43,8 @@ mod bench_snapshot_phases;
 #[cfg(test)]
 mod bench_snapshot_anchors;
 #[cfg(test)]
+mod bench_snapshot_export;
+#[cfg(test)]
 mod cleanup;
 #[cfg(test)]
 mod proofs;
