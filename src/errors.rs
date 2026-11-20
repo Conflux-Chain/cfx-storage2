@@ -52,6 +52,27 @@ pub enum StorageError {
     MmrEntryNotFound(crate::middlewares::CommitID),
     #[error("proof unavailable: {0}")]
     ProofUnavailable(String),
+    #[error("snapshot sync: {0}")]
+    SnapshotSync(#[from] SnapshotSyncError),
+}
+
+/// Errors of the LVMT chain-level snapshot sync (`lvmt::snapshot_sync`).
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum SnapshotSyncError {
+    #[error("unsupported snapshot format version {0}")]
+    UnsupportedFormatVersion(u8),
+    #[error("malformed snapshot bytes: {0}")]
+    Malformed(&'static str),
+    #[error("commit {0:?} is not in the store")]
+    CommitNotFound(crate::middlewares::CommitID),
+    #[error("manifest is {size} bytes, over the limit of {max}")]
+    ManifestTooLarge { size: usize, max: usize },
+    #[error("chunk is {size} bytes, over the limit of {max}")]
+    ChunkTooLarge { size: usize, max: usize },
+    #[error("chunk is not listed in the manifest")]
+    UnknownChunk,
+    #[error("{0} chunks of the manifest have not been applied")]
+    Incomplete(usize),
 }
 
 impl From<DecodeError> for StorageError {
@@ -128,6 +149,7 @@ impl PartialEq for StorageError {
             (DbInitError(e1), DbInitError(e2)) => e1 == e2,
             (MmrEntryNotFound(e1), MmrEntryNotFound(e2)) => e1 == e2,
             (ProofUnavailable(e1), ProofUnavailable(e2)) => e1 == e2,
+            (SnapshotSync(e1), SnapshotSync(e2)) => e1 == e2,
 
             (VersionNotFound, _) => false,
             (CommitIDNotFound, _) => false,
@@ -145,6 +167,7 @@ impl PartialEq for StorageError {
             (DbInitError(_), _) => false,
             (MmrEntryNotFound(_), _) => false,
             (ProofUnavailable(_), _) => false,
+            (SnapshotSync(_), _) => false,
         }
     }
 }

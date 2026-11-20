@@ -12,6 +12,7 @@ mod example;
 mod mmr;
 mod proof;
 mod snapshot;
+mod snapshot_sync;
 mod state_root;
 mod storage;
 pub mod table_schema;
@@ -27,6 +28,10 @@ pub use proof::{
     LvmtProofError, StateRootParts,
 };
 pub use snapshot::LvmtSnapshot;
+pub use snapshot_sync::{
+    Applied, ChunkId, ImportSession, Manifest, ManifestHeader, SnapshotChunk,
+    SNAPSHOT_FORMAT_VERSION,
+};
 pub use state_root::{compute_state_root, StateRoot, EMPTY_AUTH_CHANGE_ROOT};
 pub use storage::{LvmtStore, LvmtStoreReader, PreparedCommit};
 pub use types::LvmtValue;

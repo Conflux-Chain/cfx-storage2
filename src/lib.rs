@@ -22,12 +22,13 @@ pub mod traits;
 pub mod types;
 mod utils;
 
-pub use errors::{Result, StorageError};
+pub use errors::{Result, SnapshotSyncError, StorageError};
 pub use lvmt::{
     compute_state_root,
     types::{AuthChangeKey, AuthChangeNode, CurvePointWithVersion},
-    verify_lvmt_proof, Anchor, AnchoredAmt, AnchoredKey, AuthChangeProof, LayerProof, LvmtProof,
-    LvmtProofError, LvmtSnapshot, LvmtStorage, LvmtStore, LvmtStoreReader, LvmtValue, MmrProof,
-    PendingCleanup, PendingSnapshot, PreparedCommit, ProofConfig, StateRoot, StateRootParts,
-    EMPTY_AUTH_CHANGE_ROOT, EMPTY_HROOT,
+    verify_lvmt_proof, Anchor, AnchoredAmt, AnchoredKey, Applied, AuthChangeProof, ChunkId,
+    ImportSession, LayerProof, LvmtProof, LvmtProofError, LvmtSnapshot, LvmtStorage, LvmtStore,
+    LvmtStoreReader, LvmtValue, Manifest, ManifestHeader, MmrProof, PendingCleanup,
+    PendingSnapshot, PreparedCommit, ProofConfig, SnapshotChunk, StateRoot, StateRootParts,
+    EMPTY_AUTH_CHANGE_ROOT, EMPTY_HROOT, SNAPSHOT_FORMAT_VERSION,
 };

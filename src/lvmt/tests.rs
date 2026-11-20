@@ -47,6 +47,8 @@ mod cleanup;
 #[cfg(test)]
 mod proofs;
 #[cfg(test)]
+mod snapshot_sync;
+#[cfg(test)]
 mod sparse_snapshots;
 
 pub static AMT: Lazy<AmtParams<PE>> = Lazy::new(|| {
