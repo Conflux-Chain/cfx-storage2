@@ -2218,3 +2218,179 @@ fn test_lvmt_commit_order_independent() {
     clear_dir(historical_path);
     clear_dir(pending_path);
 }
+
+/// Rebuilds the slot allocations of `commit` from its flat key-values alone: each
+/// key goes to the slot its `LvmtValue::allocation` names, and the slots of every
+/// leaf must be filled from 0 without a gap.
+fn slot_allocations_from_flat_kv<P: DatabaseTrait<PendingTableName>>(
+    lvmt: &LvmtStore<'_, '_, P>,
+    commit: CommitID,
+) -> BTreeMap<super::types::AmtNodeId, super::types::AllocationKeyInfo> {
+    use super::types::AllocationKeyInfo;
+
+    let key_value_view = lvmt
+        .get_key_value_store()
+        .get_versioned_store(&commit, false)
+        .unwrap();
+    let mut slots: BTreeMap<_, BTreeMap<u8, Box<[u8]>>> = BTreeMap::new();
+    for (key, value) in key_value_view.iter().unwrap() {
+        let (mut amt_node_id, node_index, slot_index) = value.allocation.amt_info(&key);
+        amt_node_id.push(node_index);
+        let prev = slots
+            .entry(amt_node_id)
+            .or_default()
+            .insert(slot_index, key);
+        assert!(prev.is_none(), "two keys allocated to one slot");
+    }
+    slots
+        .into_iter()
+        .map(|(amt_node_id, slots)| {
+            let mut keys = slots.into_iter().enumerate().map(|(i, (slot, key))| {
+                assert_eq!(i, slot as usize, "gap in the allocated slots of a leaf");
+                key
+            });
+            let mut info = AllocationKeyInfo::first(keys.next().unwrap());
+            for key in keys {
+                info = info.with_next(key);
+            }
+            (amt_node_id, info)
+        })
+        .collect()
+}
+
+fn assert_slot_allocations_derivable<P: DatabaseTrait<PendingTableName>>(
+    lvmt: &LvmtStore<'_, '_, P>,
+    commit: CommitID,
+) {
+    let stored: BTreeMap<_, _> = lvmt
+        .get_slot_alloc_store()
+        .get_versioned_store(&commit, false)
+        .unwrap()
+        .iter()
+        .unwrap()
+        .collect();
+    assert!(!stored.is_empty());
+    assert_eq!(slot_allocations_from_flat_kv(lvmt, commit), stored);
+}
+
+/// The slot allocations at a commit are determined by its flat key-values: a
+/// receiver of the flat key-values alone (e.g. by a snapshot sync) can rebuild
+/// them. Covers full leaves pushing keys to depths 2 and 3, deletions (also of a
+/// key new in the same commit), overwrites, a fork, and the historical part.
+#[test]
+fn test_lvmt_slot_allocations_derivable_from_flat_kv() {
+    use ethereum_types::H256;
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+
+    type Db = LvmtStorage<WrappedRocksDb<HistoricalTableName>, WrappedRocksDb<PendingTableName>>;
+    let historical_path = "__test_lvmt_slot_allocations_derivable_historical";
+    let pending_path = "__test_lvmt_slot_allocations_derivable_pending";
+    clear_dir_then_create(historical_path);
+    clear_dir_then_create(pending_path);
+    let mut db = Db::new(
+        Arc::new(WrappedRocksDb::open(historical_path).unwrap()),
+        Arc::new(WrappedRocksDb::open(pending_path).unwrap()),
+    )
+    .unwrap();
+
+    // Keys whose digests share all but the last byte: one leaf per depth, 5 slots
+    // each, so the 6th key goes to depth 2, the 11th to depth 3.
+    let colliding = |tail: u8| -> Box<[u8]> {
+        let mut digest = [0u8; 32];
+        digest[31] = tail;
+        [crate::lvmt::types::TEST_DIGEST_PREFIX, &digest[..]]
+            .concat()
+            .into()
+    };
+    let v = |x: u64| Some(u64_to_boxed_u8(x));
+    let mut rng = StdRng::seed_from_u64(7);
+    let mut random_changes = |n: usize| -> Vec<(Box<[u8]>, Option<Box<[u8]>>)> {
+        (0..n)
+            .map(|_| {
+                let key = u64_to_boxed_u8(rng.gen_range(0..300));
+                let value = if rng.gen_bool(0.2) {
+                    None
+                } else {
+                    v(rng.gen())
+                };
+                (key, value)
+            })
+            .collect()
+    };
+
+    let c = |i: u8| H256::repeat_byte(i);
+    // Main chain c1 -> c2 -> c3 -> c4, and a fork c2 -> c5.
+    let commits: Vec<(Option<CommitID>, CommitID, Vec<_>)> = vec![
+        (
+            None,
+            c(1),
+            (1..=7u8)
+                .map(|i| (colliding(i), v(i as u64)))
+                .chain(random_changes(100))
+                .collect(),
+        ),
+        (
+            Some(c(1)),
+            c(2),
+            (8..=12u8)
+                .map(|i| (colliding(i), v(i as u64)))
+                .chain([(colliding(2), None), (colliding(40), None)])
+                .chain(random_changes(100))
+                .collect(),
+        ),
+        (
+            Some(c(2)),
+            c(3),
+            [(colliding(13), v(13)), (colliding(1), v(100))]
+                .into_iter()
+                .chain(random_changes(100))
+                .collect(),
+        ),
+        (Some(c(3)), c(4), random_changes(100)),
+        (
+            Some(c(2)),
+            c(5),
+            (20..=26u8)
+                .map(|i| (colliding(i), v(i as u64)))
+                .chain(random_changes(100))
+                .collect(),
+        ),
+    ];
+
+    {
+        let mut lvmt = db.as_manager().unwrap();
+        for (base, commit, changes) in commits {
+            lvmt.commit(base, commit, changes.into_iter(), &AMT)
+                .unwrap();
+        }
+        // Full leaves pushed keys to depth 3, and on the fork to depth 4.
+        for (commit, key, depth) in [(c(3), colliding(13), 3), (c(5), colliding(26), 4)] {
+            assert_eq!(
+                lvmt.get(commit, key).unwrap().unwrap().allocation.depth,
+                depth
+            );
+        }
+        // A key new and deleted in the same commit still takes a slot, and stays in
+        // the flat key-values with no value.
+        let deleted = lvmt.get(c(2), colliding(40)).unwrap().unwrap();
+        assert_eq!((deleted.allocation.depth, deleted.get_value()), (3, None));
+        for i in 1..=5 {
+            assert_slot_allocations_derivable(&lvmt, c(i));
+            lvmt.check_consistency(c(i), &AMT).unwrap();
+        }
+    }
+
+    // The same through the historical part.
+    db.confirmed_pending_to_history_with_commit_id(c(4))
+        .unwrap();
+    {
+        let lvmt = db.as_manager().unwrap();
+        for i in 1..=4 {
+            assert_slot_allocations_derivable(&lvmt, c(i));
+        }
+    }
+
+    drop(db);
+    clear_dir(historical_path);
+    clear_dir(pending_path);
+}
