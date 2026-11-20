@@ -1,8 +1,12 @@
-//! The call sequence and the formats of the snapshot sync skeleton
-//! (`lvmt::snapshot_sync`): export a pending or historical commit from one store,
-//! import it in another, and the errors on the way.
+//! The snapshot sync of an LVMT commit (`lvmt::snapshot_export`,
+//! `lvmt::snapshot_sync`): export a pending or historical commit from one store,
+//! check that the chunks carry every item of the commit with everything its
+//! anchor needs, import them in another store, and the errors on the way.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    sync::Arc,
+};
 
 use rand_chacha::ChaChaRng;
 
@@ -10,9 +14,10 @@ use crate::{
     backends::{HistoricalTableName, PendingTableName, WrappedInMemoryDb},
     errors::{Result, SnapshotSyncError},
     lvmt::{
-        mmr::bag_peaks,
+        auth_changes::{amt_change_hash, key_value_hash},
+        mmr::{bag_peaks, MmrProof},
         snapshot_sync::{Applied, ChunkId, Manifest, ManifestHeader, SnapshotChunk},
-        types::{AmtId, AuthChangeKey},
+        types::{key_digest, AmtId, AuthChangeKey, AuthChangeNode},
     },
     middlewares::{get_rng_for_test, CommitID},
     StorageError,
@@ -48,20 +53,35 @@ impl Chain {
         }
     }
 
-    /// A commit on `parent` writing 5 new keys and overwriting one key of the
-    /// previous commit.
-    fn commit(&mut self, db: &mut Db, parent: Option<CommitID>) -> CommitID {
-        self.next += 1;
-        let n = self.next;
-        let changes = (0..5)
-            .map(|i| (u64_to_boxed_u8(n * 10 + i), Some(u64_to_boxed_u8(i))))
-            .chain((n > 1).then(|| (u64_to_boxed_u8((n - 1) * 10), Some(u64_to_boxed_u8(n)))));
+    fn commit_changes(
+        &mut self,
+        db: &mut Db,
+        parent: Option<CommitID>,
+        changes: Vec<(Box<[u8]>, Option<Box<[u8]>>)>,
+    ) -> CommitID {
         let id = gen_novel_commit_id(&mut self.rng, &mut self.previous);
         db.as_manager()
             .unwrap()
-            .commit(parent, id, changes, &AMT)
+            .commit(parent, id, changes.into_iter(), &AMT)
             .unwrap();
         id
+    }
+
+    /// A commit on `parent` writing 5 new keys, overwriting one key of the
+    /// previous commit and deleting one key of the commit before.
+    fn commit(&mut self, db: &mut Db, parent: Option<CommitID>) -> CommitID {
+        self.next += 1;
+        let n = self.next;
+        let mut changes: Vec<_> = (0..5)
+            .map(|i| (u64_to_boxed_u8(n * 10 + i), Some(u64_to_boxed_u8(i))))
+            .collect();
+        if n > 1 {
+            changes.push((u64_to_boxed_u8((n - 1) * 10), Some(u64_to_boxed_u8(n))));
+        }
+        if n > 2 {
+            changes.push((u64_to_boxed_u8((n - 2) * 10 + 1), None));
+        }
+        self.commit_changes(db, parent, changes)
     }
 
     fn chain(&mut self, db: &mut Db, parent: Option<CommitID>, n: usize) -> Vec<CommitID> {
@@ -82,40 +102,22 @@ fn sync_err<T>(result: Result<T>) -> SnapshotSyncError {
     }
 }
 
-/// The manifest and every chunk of the snapshot of `n`, checking the manifest
-/// against the sender's own reads.
-fn export(sender: &Db, n: CommitID) -> (Vec<u8>, Vec<Vec<u8>>) {
+/// The manifest and every chunk of the snapshot of `n`, chunks of at most
+/// `budget` bytes, checked by [`check_snapshot`].
+fn export_with(sender: &Db, n: CommitID, budget: usize) -> (Vec<u8>, Vec<Vec<u8>>) {
     let reader = sender.as_reader().unwrap();
-    let manifest_bytes = reader.load_manifest(n, MAX_CHUNK, MAX_MANIFEST).unwrap();
-
-    let header = ManifestHeader::from_manifest_bytes(&manifest_bytes).unwrap();
-    assert_eq!(header.commit_id, n);
-    assert_eq!(header.height, reader.commit_height(n).unwrap());
-    assert_eq!(Some(header.state_root), reader.get_state_root(n).unwrap());
-
+    let export = reader.prepare_snapshot(n, budget).unwrap();
+    let manifest_bytes = export.manifest_bytes(MAX_MANIFEST).unwrap();
     let manifest = Manifest::from_bytes(&manifest_bytes).unwrap();
     assert_eq!(manifest.to_bytes(), manifest_bytes);
-    assert_eq!(manifest.header, header);
-    assert_eq!(
-        manifest.state_root_parts,
-        reader.state_root_parts(n).unwrap()
-    );
-    assert_eq!(manifest.state_root_parts.state_root(), header.state_root);
-    assert_eq!(
-        bag_peaks(header.height, &manifest.parent_mmr_peaks),
-        manifest.state_root_parts.hroot
-    );
-    assert_eq!(
-        manifest.root_leaf_versions,
-        reader.get_root_leaf_versions(n).unwrap()
-    );
-    assert!(!manifest.chunks.is_empty());
-
-    let chunks = manifest
+    assert_eq!(&manifest, export.manifest());
+    assert_eq!(export.header(), manifest.header);
+    let chunks: Vec<_> = manifest
         .chunk_id_bytes()
         .iter()
         .map(|id| {
-            let chunk = reader.load_chunk(n, id, MAX_CHUNK).unwrap();
+            let chunk = export.load_chunk(&reader, id, 2 * budget).unwrap();
+            assert!(chunk.len() <= budget, "{} > {budget}", chunk.len());
             assert_eq!(
                 &SnapshotChunk::from_bytes(&chunk).unwrap().id().to_bytes(),
                 id
@@ -123,7 +125,166 @@ fn export(sender: &Db, n: CommitID) -> (Vec<u8>, Vec<Vec<u8>>) {
             chunk
         })
         .collect();
+    check_snapshot(sender, n, &manifest_bytes, &chunks);
     (manifest_bytes, chunks)
+}
+
+fn export(sender: &Db, n: CommitID) -> (Vec<u8>, Vec<Vec<u8>>) {
+    export_with(sender, n, MAX_CHUNK)
+}
+
+/// Checks a snapshot of `n` against the sender's own reads, the way a verifier
+/// would use it: the manifest against the state root of `n`; every anchor part
+/// closed under ancestors and hashing up to its commit's auth-change root; the
+/// data chunks holding exactly the keys and non-root AMTs of `n`, each in the
+/// chunk of its `w0`, and found in the received nodes of its anchor commit,
+/// which is the commit that last wrote it; the MMR nodes proving every anchor
+/// commit's state root in the `hroot` of `n`.
+fn check_snapshot(sender: &Db, n: CommitID, manifest_bytes: &[u8], chunks: &[Vec<u8>]) {
+    let reader = sender.as_reader().unwrap();
+    let manifest = Manifest::from_bytes(manifest_bytes).unwrap();
+    let header = ManifestHeader::from_manifest_bytes(manifest_bytes).unwrap();
+    assert_eq!(manifest.header, header);
+    assert_eq!(header.commit_id, n);
+    assert_eq!(header.height, reader.commit_height(n).unwrap());
+    assert_eq!(Some(header.state_root), reader.get_state_root(n).unwrap());
+    let parts = &manifest.state_root_parts;
+    assert_eq!(parts, &reader.state_root_parts(n).unwrap());
+    assert_eq!(parts.state_root(), header.state_root);
+    assert_eq!(
+        bag_peaks(header.height, &manifest.parent_mmr_peaks),
+        parts.hroot
+    );
+    assert_eq!(
+        manifest.root_leaf_versions,
+        reader.get_root_leaf_versions(n).unwrap()
+    );
+
+    // Anchor commits: ordered by height, with their parts, proven in the hroot.
+    let mmr_nodes: BTreeMap<_, _> = manifest.mmr_nodes.iter().copied().collect();
+    let mut previous_height = None;
+    for (c, height, c_parts) in &manifest.anchor_commits {
+        assert!(previous_height < Some(*height));
+        previous_height = Some(*height);
+        assert_eq!(*height, reader.commit_height(*c).unwrap());
+        assert_eq!(c_parts, &reader.state_root_parts(*c).unwrap());
+        if *c == n {
+            continue;
+        }
+        let siblings = MmrProof::sibling_positions(header.height, *height)
+            .unwrap()
+            .iter()
+            .map(|position| mmr_nodes[position])
+            .collect();
+        let proof = MmrProof {
+            leaf_count: header.height,
+            leaf_index: *height,
+            siblings,
+            peaks: manifest.parent_mmr_peaks.clone(),
+        };
+        assert!(proof.verify(&parts.hroot, &c_parts.state_root()));
+    }
+
+    // Chunks.
+    let mut trees: Vec<HashMap<AuthChangeKey, AuthChangeNode>> =
+        vec![HashMap::new(); manifest.anchor_commits.len()];
+    let mut keys = BTreeMap::new();
+    let mut amts = BTreeMap::new();
+    let ids: Vec<ChunkId> = chunks
+        .iter()
+        .map(|chunk| SnapshotChunk::from_bytes(chunk).unwrap().id())
+        .collect();
+    assert_eq!(ids, manifest.chunks);
+    let first_data = ids
+        .iter()
+        .position(|id| matches!(id, ChunkId::Data { .. }))
+        .unwrap();
+    assert!(ids[first_data..]
+        .iter()
+        .all(|id| matches!(id, ChunkId::Data { .. })));
+    let mut next_w0 = 0u32;
+    for chunk in chunks {
+        match SnapshotChunk::from_bytes(chunk).unwrap() {
+            SnapshotChunk::Anchor {
+                commit_index,
+                nodes,
+                ..
+            } => {
+                let root = manifest.anchor_commits[commit_index as usize]
+                    .2
+                    .auth_change_root;
+                let part: HashMap<_, _> = nodes.into_iter().collect();
+                assert_eq!(part[&AuthChangeKey::root()].hash(), root);
+                for (key, node) in &part {
+                    if let Some((parent, position)) = key.parent() {
+                        assert_eq!(part[&parent].hashes()[position], node.hash());
+                    }
+                }
+                trees[commit_index as usize].extend(part);
+            }
+            SnapshotChunk::Data {
+                w0_start,
+                w0_end,
+                flat_kv_pairs,
+                amt_versions,
+            } => {
+                assert_eq!(w0_start as u32, next_w0);
+                next_w0 = w0_end;
+                let in_range = |w0: u16| (w0_start as u32..w0_end).contains(&(w0 as u32));
+                for (key, value, anchor) in flat_kv_pairs {
+                    let digest = key_digest(&key);
+                    assert!(in_range(u16::from_be_bytes([digest[0], digest[1]])));
+                    assert!(keys.insert(key, (value, anchor)).is_none());
+                }
+                for (amt_id, version, anchor) in amt_versions {
+                    assert!(in_range(amt_id[0]));
+                    assert!(amts.insert(amt_id, (version, anchor)).is_none());
+                }
+            }
+        }
+    }
+    assert_eq!(next_w0, 1 << 16);
+
+    let in_tree = |anchor: u32, hash| {
+        let tree = &trees[anchor as usize];
+        let mut key = AuthChangeKey::root();
+        loop {
+            let node = &tree[&key];
+            if node.is_leaf() {
+                return node.hashes().contains(&hash);
+            }
+            key = key.child(node.child_for(&hash).unwrap());
+        }
+    };
+    let state = reader.get_state(n, false).unwrap();
+    let expected_keys: Vec<_> = state
+        .iter_range(Box::from(&[][..]), None)
+        .unwrap()
+        .collect();
+    assert_eq!(expected_keys.len(), keys.len());
+    for (key, value) in expected_keys {
+        let (got, anchor) = &keys[&key];
+        assert_eq!(got, &value);
+        let (c, _) = reader.get_key_last_modified(n, &key).unwrap().unwrap();
+        assert_eq!(manifest.anchor_commits[*anchor as usize].0, c);
+        assert!(in_tree(*anchor, key_value_hash(&key, &value)));
+    }
+    let amt_view = reader
+        .amt_node_reader()
+        .get_versioned_store(&n, false)
+        .unwrap();
+    let expected_amts: Vec<_> = amt_view
+        .iter_range(AmtId::root().child(0), None)
+        .unwrap()
+        .collect();
+    assert_eq!(expected_amts.len(), amts.len());
+    for (amt_id, point) in expected_amts {
+        let (version, anchor) = amts[&amt_id];
+        assert_eq!(version, point.version);
+        let (c, _) = reader.get_amt_last_modified(n, &amt_id).unwrap().unwrap();
+        assert_eq!(manifest.anchor_commits[anchor as usize].0, c);
+        assert!(in_tree(anchor, amt_change_hash(&amt_id, &point)));
+    }
 }
 
 /// Imports a snapshot, applying every chunk twice.
@@ -170,6 +331,55 @@ fn test_lvmt_snapshot_sync_round_trip() {
 }
 
 #[test]
+fn test_lvmt_snapshot_sync_chunks_by_budget() {
+    // A large first commit, then small ones; small chunks.
+    let mut sender = new_db();
+    let mut chain = Chain::new();
+    let load = (0..3000u64)
+        .map(|i| (u64_to_boxed_u8(1_000_000 + i), Some(u64_to_boxed_u8(i))))
+        .collect();
+    let first = chain.commit_changes(&mut sender, None, load);
+    let main = chain.chain(&mut sender, Some(first), 6);
+    sender
+        .confirmed_pending_to_history_with_commit_id(main[2])
+        .unwrap();
+    let n = main[4];
+
+    let budget = 4096;
+    let (manifest_bytes, chunks) = export_with(&sender, n, budget);
+    let manifest = Manifest::from_bytes(&manifest_bytes).unwrap();
+    let parts_of_first = manifest
+        .chunks
+        .iter()
+        .filter(|id| {
+            matches!(
+                id,
+                ChunkId::Anchor {
+                    commit_index: 0,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(manifest.anchor_commits[0].0, first);
+    assert!(parts_of_first > 1, "{parts_of_first}");
+    let data_chunks = manifest
+        .chunks
+        .iter()
+        .filter(|id| matches!(id, ChunkId::Data { .. }))
+        .count();
+    assert!(data_chunks > 1, "{data_chunks}");
+
+    // The same plan and bytes on every call.
+    assert_eq!(
+        export_with(&sender, n, budget),
+        (manifest_bytes.clone(), chunks.clone())
+    );
+    let mut receiver = new_db();
+    assert_eq!(import(&mut receiver, &manifest_bytes, &chunks), n);
+}
+
+#[test]
 fn test_lvmt_snapshot_sync_sender_errors() {
     let mut sender = new_db();
     let mut chain = Chain::new();
@@ -177,57 +387,65 @@ fn test_lvmt_snapshot_sync_sender_errors() {
     let fork = chain.chain(&mut sender, Some(main[3]), 2);
     let n = main[6];
     let reader = sender.as_reader().unwrap();
-    let manifest = reader.load_manifest(n, MAX_CHUNK, MAX_MANIFEST).unwrap();
-    let data_id = Manifest::from_bytes(&manifest).unwrap().chunk_id_bytes()[0].clone();
-    reader
-        .load_manifest(fork[1], MAX_CHUNK, MAX_MANIFEST)
+    let export = reader.prepare_snapshot(n, MAX_CHUNK).unwrap();
+    let ids = export.manifest().chunk_id_bytes();
+    let data_id = ids.last().unwrap().clone();
+    let fork_export = reader.prepare_snapshot(fork[1], MAX_CHUNK).unwrap();
+    let fork_id = fork_export.manifest().chunk_id_bytes()[0].clone();
+    fork_export
+        .load_chunk(&reader, &fork_id, MAX_CHUNK)
         .unwrap();
 
     let unknown = CommitID::repeat_byte(0xee);
     assert_eq!(
-        sync_err(reader.load_manifest(unknown, MAX_CHUNK, MAX_MANIFEST)),
-        SnapshotSyncError::CommitNotFound(unknown)
-    );
-    assert_eq!(
-        sync_err(reader.load_chunk(unknown, &data_id, MAX_CHUNK)),
+        sync_err(reader.prepare_snapshot(unknown, MAX_CHUNK)),
         SnapshotSyncError::CommitNotFound(unknown)
     );
     assert!(matches!(
-        sync_err(reader.load_manifest(n, MAX_CHUNK, 100)),
+        sync_err(export.manifest_bytes(100)),
         SnapshotSyncError::ManifestTooLarge { max: 100, .. }
     ));
     assert!(matches!(
-        sync_err(reader.load_chunk(n, &data_id, 5)),
+        sync_err(export.load_chunk(&reader, &data_id, 5)),
         SnapshotSyncError::ChunkTooLarge { max: 5, .. }
     ));
+    let n_anchors = export.manifest().anchor_commits.len() as u32;
     for id in [
         ChunkId::Data {
             w0_start: 0,
             w0_end: 7,
         },
         ChunkId::Anchor {
-            commit_index: 0,
+            commit_index: n_anchors,
             part: 0,
+        },
+        ChunkId::Anchor {
+            commit_index: 0,
+            part: 1000,
         },
     ] {
         assert_eq!(
-            sync_err(reader.load_chunk(n, &id.to_bytes(), MAX_CHUNK)),
+            sync_err(export.load_chunk(&reader, &id.to_bytes(), MAX_CHUNK)),
             SnapshotSyncError::UnknownChunk
         );
     }
     let mut bad_version = data_id.clone();
     bad_version[0] += 1;
     assert_eq!(
-        sync_err(reader.load_chunk(n, &bad_version, MAX_CHUNK)),
+        sync_err(export.load_chunk(&reader, &bad_version, MAX_CHUNK)),
         SnapshotSyncError::UnsupportedFormatVersion(bad_version[0])
     );
     drop(reader);
 
-    // A discarded commit can no longer be exported.
+    // A discarded commit can no longer be exported or served.
     assert!(sender.as_manager().unwrap().make_pivot(main[7]).unwrap());
     let reader = sender.as_reader().unwrap();
     assert_eq!(
-        sync_err(reader.load_manifest(fork[1], MAX_CHUNK, MAX_MANIFEST)),
+        sync_err(reader.prepare_snapshot(fork[1], MAX_CHUNK)),
+        SnapshotSyncError::CommitNotFound(fork[1])
+    );
+    assert_eq!(
+        sync_err(fork_export.load_chunk(&reader, &fork_id, MAX_CHUNK)),
         SnapshotSyncError::CommitNotFound(fork[1])
     );
 }

@@ -28,6 +28,19 @@ impl AuthChangeKey {
             index: 0,
         }
     }
+
+    /// The parent of this node and the position of this node among its
+    /// children, or `None` for the root.
+    pub fn parent(&self) -> Option<(Self, usize)> {
+        if self.is_root() {
+            return None;
+        }
+        let parent = Self {
+            height: self.height - 1,
+            index: self.index / MAX_NODE_SIZE,
+        };
+        Some((parent, self.index % MAX_NODE_SIZE))
+    }
 }
 
 impl Encode for AuthChangeKey {

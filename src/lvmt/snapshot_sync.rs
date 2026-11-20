@@ -1,4 +1,4 @@
-//! Chain-level snapshot sync of an LVMT commit (gate 3), skeleton.
+//! Chain-level snapshot sync of an LVMT commit (gate 3): formats and import.
 //!
 //! A sender exports the state of a commit `N` as a manifest plus chunks; a
 //! receiver imports them. Everything crosses the network as opaque bytes:
@@ -7,19 +7,16 @@
 //! [`SNAPSHOT_FORMAT_VERSION`]; bytes of another version are refused with
 //! [`SnapshotSyncError::UnsupportedFormatVersion`].
 //!
-//! - Sender: [`LvmtStoreReader::load_manifest`], then
-//!   [`LvmtStoreReader::load_chunk`] by chunk id, in whatever order the receiver
-//!   asks for them.
+//! - Sender: [`super::storage::LvmtStoreReader::prepare_snapshot`] makes a
+//!   [`super::snapshot_export::SnapshotExport`] of `N` (one pass over all items
+//!   of `N`; keep it while serving `N`), which serves the manifest and the chunks
+//!   by chunk id, in whatever order the receiver asks for them.
 //! - Receiver: [`LvmtStorage::begin_import`], [`ImportSession::apply_chunk`] for
 //!   each chunk (anchor chunks before the data chunks that use them, otherwise
 //!   [`Applied::Deferred`]), then [`ImportSession::finalize`].
 //!
-//! Skeleton status: the formats, the call sequence and the bookkeeping of the
-//! import session are in place. Not yet: the anchor pass over all items of `N`
-//! (the manifest has no anchor commits or MMR nodes yet, so there are no anchor
-//! chunks), the contents of data chunks (empty), chunk sizing by
-//! `max_chunk_bytes` (data chunks are fixed `w0` ranges), verification, and
-//! writing the imported state in `finalize`.
+//! Receiver status: skeleton. Chunks are decoded and checked against the
+//! manifest, not verified, and `finalize` writes nothing yet.
 
 use ethereum_types::H256;
 
@@ -37,7 +34,6 @@ use super::{
     example::LvmtStorage,
     proof::StateRootParts,
     state_root::StateRoot,
-    storage::LvmtStoreReader,
     types::{AmtId, AuthChangeKey, AuthChangeNode, CurvePointWithVersion, LvmtValue},
 };
 
@@ -45,11 +41,7 @@ use super::{
 pub const SNAPSHOT_FORMAT_VERSION: u8 = 1;
 
 /// Number of values of `w0`, the first 16-bit word of a key digest.
-const W0_COUNT: u32 = 1 << 16;
-
-/// Skeleton only: the `w0` span of every data chunk, until chunks are sized by
-/// their contents.
-const SKELETON_DATA_CHUNK_W0_SPAN: u32 = 1 << 12;
+pub(super) const W0_COUNT: u32 = 1 << 16;
 
 const KIND_MANIFEST: u8 = 0;
 const KIND_CHUNK_ID: u8 = 1;
@@ -130,15 +122,6 @@ pub enum Applied {
 }
 
 impl ChunkId {
-    fn data_ranges() -> impl Iterator<Item = Self> {
-        (0..W0_COUNT)
-            .step_by(SKELETON_DATA_CHUNK_W0_SPAN as usize)
-            .map(|start| ChunkId::Data {
-                w0_start: start as u16,
-                w0_end: (start + SKELETON_DATA_CHUNK_W0_SPAN).min(W0_COUNT),
-            })
-    }
-
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut w = Writer::new(KIND_CHUNK_ID);
         self.write(&mut w);
@@ -344,100 +327,6 @@ impl SnapshotChunk {
     }
 }
 
-// Sender
-impl<P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'_, '_, P> {
-    /// The encoded manifest of the snapshot of `commit`, pending or historical.
-    ///
-    /// Fails with [`SnapshotSyncError::CommitNotFound`] if `commit` is not in the
-    /// store (check [`Self::query_commit_existence`] before offering it), and
-    /// with [`SnapshotSyncError::ManifestTooLarge`] above `max_manifest_bytes`.
-    /// `max_chunk_bytes` is meant to size the chunks; the skeleton does not use
-    /// it yet.
-    pub fn load_manifest(
-        &self,
-        commit: CommitID,
-        max_chunk_bytes: usize,
-        max_manifest_bytes: usize,
-    ) -> Result<Vec<u8>> {
-        let _ = max_chunk_bytes;
-        self.check_snapshot_commit(commit)?;
-        let height = self.commit_height(commit)?;
-        let state_root_parts = self.state_root_parts(commit)?;
-        let parent_mmr_peaks = if height == 0 {
-            vec![]
-        } else {
-            let parent = self
-                .get_key_value_reader()
-                .get_ancestor_at_height(&commit, height - 1)?;
-            self.mmr_entry(parent)?.peaks
-        };
-        let manifest = Manifest {
-            header: ManifestHeader {
-                commit_id: commit,
-                height,
-                state_root: state_root_parts.state_root(),
-            },
-            state_root_parts,
-            parent_mmr_peaks,
-            root_leaf_versions: self.get_root_leaf_versions(commit)?,
-            anchor_commits: vec![],
-            mmr_nodes: vec![],
-            chunks: ChunkId::data_ranges().collect(),
-        };
-        let bytes = manifest.to_bytes();
-        if bytes.len() > max_manifest_bytes {
-            return Err(SnapshotSyncError::ManifestTooLarge {
-                size: bytes.len(),
-                max: max_manifest_bytes,
-            }
-            .into());
-        }
-        Ok(bytes)
-    }
-
-    /// The encoded chunk `chunk_id` (as listed in the manifest) of the snapshot of
-    /// `commit`, at most `max_bytes` long.
-    pub fn load_chunk(
-        &self,
-        commit: CommitID,
-        chunk_id: &[u8],
-        max_bytes: usize,
-    ) -> Result<Vec<u8>> {
-        self.check_snapshot_commit(commit)?;
-        let chunk = match ChunkId::from_bytes(chunk_id)? {
-            // The skeleton lists no anchor commits.
-            ChunkId::Anchor { .. } => return Err(SnapshotSyncError::UnknownChunk.into()),
-            id @ ChunkId::Data { w0_start, w0_end } => {
-                if !ChunkId::data_ranges().any(|planned| planned == id) {
-                    return Err(SnapshotSyncError::UnknownChunk.into());
-                }
-                SnapshotChunk::Data {
-                    w0_start,
-                    w0_end,
-                    flat_kv_pairs: vec![],
-                    amt_versions: vec![],
-                }
-            }
-        };
-        let bytes = chunk.to_bytes();
-        if bytes.len() > max_bytes {
-            return Err(SnapshotSyncError::ChunkTooLarge {
-                size: bytes.len(),
-                max: max_bytes,
-            }
-            .into());
-        }
-        Ok(bytes)
-    }
-
-    fn check_snapshot_commit(&self, commit: CommitID) -> Result<()> {
-        if !self.query_commit_existence(&commit)? {
-            return Err(SnapshotSyncError::CommitNotFound(commit).into());
-        }
-        Ok(())
-    }
-}
-
 // Receiver
 impl<D: DatabaseTrait<HistoricalTableName>, P: DatabaseTrait<PendingTableName>> LvmtStorage<D, P> {
     /// Starts importing the snapshot described by an encoded manifest.
@@ -540,7 +429,7 @@ impl ImportSession {
     }
 }
 
-fn malformed(what: &'static str) -> StorageError {
+pub(super) fn malformed(what: &'static str) -> StorageError {
     SnapshotSyncError::Malformed(what).into()
 }
 
@@ -564,7 +453,7 @@ fn read_parts(r: &mut Reader) -> Result<StateRootParts> {
 
 /// Little-endian writer of the snapshot formats: version tag, kind, then fields;
 /// sequences and byte strings are prefixed by a `u32` length.
-struct Writer(Vec<u8>);
+pub(super) struct Writer(pub(super) Vec<u8>);
 
 impl Writer {
     fn new(kind: u8) -> Self {

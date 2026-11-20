@@ -29,6 +29,6 @@ pub use lvmt::{
     verify_lvmt_proof, Anchor, AnchoredAmt, AnchoredKey, Applied, AuthChangeProof, ChunkId,
     ImportSession, LayerProof, LvmtProof, LvmtProofError, LvmtSnapshot, LvmtStorage, LvmtStore,
     LvmtStoreReader, LvmtValue, Manifest, ManifestHeader, MmrProof, PendingCleanup,
-    PendingSnapshot, PreparedCommit, ProofConfig, SnapshotChunk, StateRoot, StateRootParts,
-    EMPTY_AUTH_CHANGE_ROOT, EMPTY_HROOT, SNAPSHOT_FORMAT_VERSION,
+    PendingSnapshot, PreparedCommit, ProofConfig, SnapshotChunk, SnapshotExport, StateRoot,
+    StateRootParts, EMPTY_AUTH_CHANGE_ROOT, EMPTY_HROOT, SNAPSHOT_FORMAT_VERSION,
 };

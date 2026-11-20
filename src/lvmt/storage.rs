@@ -1078,6 +1078,12 @@ impl<'cache, 'db, P: DatabaseTrait<PendingTableName>> LvmtStoreReader<'cache, 'd
         &self.amt_node_reader
     }
 
+    pub(super) fn slot_alloc_reader(
+        &self,
+    ) -> &VersionedStoreReader<'cache, 'db, SlotAllocations, P> {
+        &self.slot_alloc_reader
+    }
+
     pub fn checkout_current(&self, commit: CommitID) -> Result<()> {
         self.key_value_reader.checkout_current(commit)
     }

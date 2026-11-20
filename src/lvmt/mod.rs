@@ -12,6 +12,7 @@ mod example;
 mod mmr;
 mod proof;
 mod snapshot;
+mod snapshot_export;
 mod snapshot_sync;
 mod state_root;
 mod storage;
@@ -28,6 +29,7 @@ pub use proof::{
     LvmtProofError, StateRootParts,
 };
 pub use snapshot::LvmtSnapshot;
+pub use snapshot_export::SnapshotExport;
 pub use snapshot_sync::{
     Applied, ChunkId, ImportSession, Manifest, ManifestHeader, SnapshotChunk,
     SNAPSHOT_FORMAT_VERSION,
